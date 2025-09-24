@@ -1,0 +1,10 @@
+mongodb/
+openssl-1.1.1w/
+*slurm*
+*.out
+.rag_vevn/
+data/
+EmbeddingModel/
+*log*
+spare_data/
+__pycache__/
