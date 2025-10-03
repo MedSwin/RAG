@@ -19,16 +19,14 @@ def chunk_field_based_splitting(df: pd.DataFrame, tokenizer: PreTrainedTokenizer
     for _, row in df.iterrows():
         input_text = str(row.get('input', '')).strip()
         output_text = str(row.get('output', '')).strip()
-        instruction_text = str(row.get('instruction', '')).strip()
-        if not input_text or not output_text or not instruction_text:
-            logger.warning(f"Skipping row {row.get('id', 'unknown')} due to empty input/output/instruction")
+        if not input_text or not output_text:
+            logger.warning(f"Skipping row {row.get('id', 'unknown')} due to empty input/output")
             strategies.append("skip")
             continue
         input_tokens = count_tokens(input_text, tokenizer)
         output_tokens = count_tokens(output_text, tokenizer)
-        instruction_tokens = count_tokens(f"Medical Task: {instruction_text}", tokenizer)
         
-        total_single_chunk_tokens = instruction_tokens + input_tokens + output_tokens + 20
+        total_single_chunk_tokens = input_tokens + output_tokens + 20
         
         if total_single_chunk_tokens <= TARGET_CHUNK_SIZE:
             strategy = "single_chunk"
@@ -91,12 +89,8 @@ def split_text_by_token(text: str, tokenizer: PreTrainedTokenizer, max_tokens: i
         chunks.append(current_chunk)
     return [c for c in chunks if c.strip()]
 
-def create_safe_chunk_content(instruction: str, content_parts: dict, tokenizer: PreTrainedTokenizer, max_tokens: int = 400) -> str:
-    instruction = str(instruction).strip()
-    if not instruction:
-        logger.warning("Empty instruction, using default")
-        instruction = "Medical dialogue"
-    base_parts = [f"Medical Task: {instruction}"]
+def create_safe_chunk_content(content_parts: dict, tokenizer: PreTrainedTokenizer, max_tokens: int = 400) -> str:
+    base_parts = []
     
     for key, value in content_parts.items():
         if value and str(value).strip():
@@ -112,8 +106,7 @@ def create_safe_chunk_content(instruction: str, content_parts: dict, tokenizer: 
         if content_parts[longest_key]:
             words = content_parts[longest_key].split()
             content_parts[longest_key] = " ".join(words[:-5]) + "..." if len(words) > 5 else ""
-            content = "\n\n".join([f"Medical Task: {instruction}"] + 
-                                 [f"{k}: {v}" for k, v in content_parts.items() if v])
+            content = "\n\n".join([f"{k}: {v}" for k, v in content_parts.items() if v])
         else:
             break
     
@@ -132,7 +125,7 @@ def single_chunk(df: pd.DataFrame, tokenizer: PreTrainedTokenizer) -> List[dict]
             logger.warning(f"Skipping row {row.get('id', 'unknown')} due to empty input/output")
             continue
         
-        chunk_text = create_safe_chunk_content(row.get('instruction', ''), content_parts, tokenizer)
+        chunk_text = create_safe_chunk_content(content_parts, tokenizer)
         if not chunk_text:
             logger.warning(f"Skipping row {row.get('id', 'unknown')} due to empty chunk text")
             continue
@@ -189,7 +182,7 @@ def split_input_chunk(df: pd.DataFrame, tokenizer: PreTrainedTokenizer) -> List[
             else:
                 content_type = f"patient_question_part{i}"
             
-            chunk_text = create_safe_chunk_content(row.get('instruction', ''), content_parts, tokenizer)
+            chunk_text = create_safe_chunk_content(content_parts, tokenizer)
             if not chunk_text:
                 logger.warning(f"Skipping row {row.get('id', 'unknown')} chunk {i} due to empty chunk text")
                 continue
@@ -237,7 +230,7 @@ def split_output_chunk(df: pd.DataFrame, tokenizer: PreTrainedTokenizer) -> List
                 "Patient": input_text if i == 1 else patient_input_ref,
                 "Doctor Response" if i == 1 else "Doctor Response (continued)": output_part
             }
-            chunk_text = create_safe_chunk_content(row.get('instruction', ''), content_parts, tokenizer)
+            chunk_text = create_safe_chunk_content(content_parts, tokenizer)
             if not chunk_text:
                 logger.warning(f"Skipping row {row.get('id', 'unknown')} chunk {i} due to empty chunk text")
                 continue
@@ -284,7 +277,7 @@ def create_split_both_chunks(df: pd.DataFrame, tokenizer: PreTrainedTokenizer) -
         
         for i, input_part in enumerate(input_parts):
             content_parts = {"Patient Question": input_part} if i == 0 else {"Patient Question (continued)": input_part}
-            chunk_text = create_safe_chunk_content(row.get('instruction', ''), content_parts, tokenizer)
+            chunk_text = create_safe_chunk_content(content_parts, tokenizer)
             if not chunk_text:
                 logger.warning(f"Skipping row {row.get('id', 'unknown')} chunk {chunk_sequence} due to empty chunk text")
                 continue
@@ -312,7 +305,7 @@ def create_split_both_chunks(df: pd.DataFrame, tokenizer: PreTrainedTokenizer) -
                 "Regarding patient concern": patient_summary,
                 response_key: output_part
             }
-            chunk_text = create_safe_chunk_content(row.get('instruction', ''), content_parts, tokenizer)
+            chunk_text = create_safe_chunk_content(content_parts, tokenizer)
             if not chunk_text:
                 logger.warning(f"Skipping row {row.get('id', 'unknown')} chunk {chunk_sequence} due to empty chunk text")
                 continue
