@@ -8,3 +8,6 @@ EmbeddingModel/
 *log*
 spare_data/
 __pycache__/
+quicktest.py
+reranker/
+model/
