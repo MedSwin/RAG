@@ -20,11 +20,13 @@ db.command({
     "validator": {
         "$jsonSchema": {
             "bsonType": "object",
-            'required': ['chunk_id', 'content', 'embedding', 'metadata'],
+            'required': ['chunk_id', 'content', 'embedding', 'metadata', 'embedding_model', 'embedding_dim'],
             'properties': {
                 'chunk_id': {'bsonType': 'string'},
                 'content': {'bsonType': 'string'},
                 'embedding': {'bsonType': 'array', 'items': {'bsonType': 'double'}},
+                'embedding_model': {'bsonType': 'string'},
+                'embedding_dim': {'bsonType': 'int', 'minimum': 1},
                 'metadata': {
                     'bsonType': 'object',
                     'required': ['parent_id', 'source', 'task', 'sequence', 'total_chunks', 'content_type'],
