@@ -24,8 +24,8 @@ def pre_store_validate(chunks_with_embeddings: List[dict]) -> List[dict]:
         if not isinstance(chunk['content'], str) or not chunk['content'].strip():
             logger.error(f"Invalid content in chunk {chunk_id}: {chunk['content'][:50]}...")
             continue
-        if not isinstance(chunk['embedding'], list) or len(chunk['embedding']) != 768:
-            logger.error(f"Invalid embedding in chunk {chunk_id}: len={len(chunk['embedding']) if isinstance(chunk['embedding'], list) else 'not list'}")
+        if not isinstance(chunk['embedding'], list) or len(chunk['embedding']) != chunk.get('embedding_dim', 768):
+            logger.error(f"Invalid embedding in chunk {chunk_id}: len={len(chunk['embedding']) if isinstance(chunk['embedding'], list) else 'not list'}, expected={chunk.get('embedding_dim', 768)}")
             continue
         if not all(isinstance(x, float) and np.isfinite(x) for x in chunk['embedding']):
             logger.error(f"Non-finite values in embedding for chunk {chunk_id}")
@@ -36,7 +36,7 @@ def pre_store_validate(chunks_with_embeddings: List[dict]) -> List[dict]:
         if not isinstance(chunk['embedding_model'], str):
             logger.error(f"Invalid embedding_model in chunk {chunk_id}: {chunk['embedding_model']}")
             continue
-        if not isinstance(chunk['embedding_dim'], int) or chunk['embedding_dim'] != 768:
+        if not isinstance(chunk['embedding_dim'], int) or chunk['embedding_dim'] < 1:
             logger.error(f"Invalid embedding_dim in chunk {chunk_id}: {chunk['embedding_dim']}")
             continue
         
