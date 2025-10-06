@@ -17,7 +17,17 @@ def load_embed_model(path: Path) -> tuple:
     embed_model = AutoModel.from_pretrained(path)
     embed_model = embed_model.to(device)
     embed_model.eval()
-    return tokenizer, embed_model, device
+    
+    # Detect embedding dimension by running a test input
+    test_input = tokenizer("test", return_tensors="pt", truncation=True, padding=True, max_length=512)
+    test_input = {k: v.to(device) for k, v in test_input.items()}
+    with torch.no_grad():
+        test_output = embed_model(**test_input)
+        test_embedding = mean_pooling(test_output.last_hidden_state, test_input['attention_mask'])
+        embedding_dim = test_embedding.shape[1]
+    
+    logger.info(f"Detected embedding dimension: {embedding_dim}")
+    return tokenizer, embed_model, device, embedding_dim
 
 def mean_pooling(token_embeddings: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
@@ -27,7 +37,7 @@ def mean_pooling(token_embeddings: torch.Tensor, attention_mask: torch.Tensor) -
     mean_embeddings = summed_embeddings / summed_mask
     return mean_embeddings
 
-def embedding_text(all_chunks: List[dict], tokenizer: PreTrainedTokenizer, embed_model: PreTrainedModel, device: torch.device, batch_size: int = 64) -> tuple:
+def embedding_text(all_chunks: List[dict], tokenizer: PreTrainedTokenizer, embed_model: PreTrainedModel, device: torch.device, embedding_dim: int, batch_size: int = 64) -> tuple:
     all_embeddings = []
     valid_chunk_indices = []
     
@@ -67,7 +77,7 @@ def embedding_text(all_chunks: List[dict], tokenizer: PreTrainedTokenizer, embed
         
         for idx, emb in zip(batch_indices, chunk_embeddings):
             emb_np = emb.cpu().numpy().astype(np.float64)
-            if len(emb_np) != 768 or np.any(np.isnan(emb_np)) or np.any(np.isinf(emb_np)):
+            if len(emb_np) != embedding_dim or np.any(np.isnan(emb_np)) or np.any(np.isinf(emb_np)):
                 logger.warning(f"Invalid embedding for chunk {all_chunks[idx]['metadata']['chunk_id']}: dim={len(emb_np)}, has NaN/Inf")
                 continue
             all_embeddings.append(emb_np)
@@ -80,7 +90,7 @@ def embedding_text(all_chunks: List[dict], tokenizer: PreTrainedTokenizer, embed
     logger.info(f"Generated embeddings shape: {final_embeddings.shape}")
     return final_embeddings, valid_chunk_indices
 
-def add_embeddings_to_chunks(all_chunks: List[dict], final_embeddings: torch.Tensor, valid_indices: List[int], embedded_model: str = "PubMedBERT-MNLI-MedNLI") -> List[dict]:
+def add_embeddings_to_chunks(all_chunks: List[dict], final_embeddings: torch.Tensor, valid_indices: List[int], embedding_dim: int, embedded_model: str = "MedEmbed-large-v0.1") -> List[dict]:
     embeddings_with_chunks = []
     emb_idx = 0
     
@@ -90,7 +100,7 @@ def add_embeddings_to_chunks(all_chunks: List[dict], final_embeddings: torch.Ten
             continue
         
         embedding = final_embeddings[emb_idx].numpy().astype(np.float64)
-        if len(embedding) != 768 or np.any(np.isnan(embedding)) or np.any(np.isinf(embedding)):
+        if len(embedding) != embedding_dim or np.any(np.isnan(embedding)) or np.any(np.isinf(embedding)):
             logger.warning(f"Skipping chunk {chunk['metadata']['chunk_id']} due to invalid embedding: dim={len(embedding)}")
             emb_idx += 1
             continue
@@ -113,7 +123,7 @@ def add_embeddings_to_chunks(all_chunks: List[dict], final_embeddings: torch.Ten
             },
             "embedding": [float(x) for x in embedding.tolist()],
             "embedding_model": embedded_model,
-            "embedding_dim": 768
+            "embedding_dim": embedding_dim
         }
         embeddings_with_chunks.append(embedded_chunk)
         emb_idx += 1
