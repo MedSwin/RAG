@@ -24,7 +24,7 @@ def parse_args():
     parser.add_argument("--data-dir", type=str, default="/fred/oz446/HenryNguyen/data/", 
                        help="Data directory containing CSV files")
     parser.add_argument("--embed-model-path", type=str, 
-                       default="/fred/oz446/HenryNguyen/EmbeddingModel/PubMedBERT-MNLI-MedNLI",
+                       default="/fred/oz446/HenryNguyen/EmbeddingModel/MedEmbed-large-v0.1",
                        help="Path to the model directory")
     parser.add_argument("--index-path", type=str,
                        help="Path to save the HNSW index file")
@@ -39,8 +39,8 @@ def parse_args():
 
 def run_pipeline(data_dir: str, model_path: str, index_path: str):
     # Load embedding model
-    tokenizer, embed_model, device = load_embed_model(Path(model_path))
-    logger.info(f"Loaded embedding model on {device}")
+    tokenizer, embed_model, device, embedding_dim = load_embed_model(Path(model_path))
+    logger.info(f"Loaded embedding model on {device} with dimension {embedding_dim}")
     
     # Use DocumentIngestionManager for incremental loading
     logger.info("Ingesting data with DocumentIngestionManager...")
@@ -62,13 +62,13 @@ def run_pipeline(data_dir: str, model_path: str, index_path: str):
     logger.info(f"Total chunks generated: {len(chunks)}")
     
     # Generate embeddings
-    embeddings, valid_indices = embedding_text(chunks, tokenizer, embed_model, device, batch_size=64)
+    embeddings, valid_indices = embedding_text(chunks, tokenizer, embed_model, device, embedding_dim, batch_size=64)
     if embeddings.shape[0] == 0:
         logger.error("No valid embeddings generated")
         return
     
     # Add embeddings to chunks
-    chunks_with_embeddings = add_embeddings_to_chunks(chunks, embeddings, valid_indices)
+    chunks_with_embeddings = add_embeddings_to_chunks(chunks, embeddings, valid_indices, embedding_dim)
     if not chunks_with_embeddings:
         logger.error("No chunks with valid embeddings")
         return
