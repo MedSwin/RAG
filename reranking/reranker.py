@@ -183,36 +183,4 @@ def load_reranker(model_name: str = "bge-reranker-v2-m3") -> DocumentReranker:
     
     return DocumentReranker(str(model_path))
 
-if __name__ == "__main__":
-    # Test the reranker
-    reranker = load_reranker("bge-reranker-v2-m3")
-    
-    # Example documents
-    test_documents = [
-        {
-            "chunk_id": "test_1",
-            "content": "Diabetes is a chronic condition that affects blood sugar levels. Common symptoms include frequent urination, excessive thirst, and unexplained weight loss.",
-            "metadata": {"source": "medical_guide"}
-        },
-        {
-            "chunk_id": "test_2", 
-            "content": "Heart disease is a leading cause of death. Risk factors include high cholesterol, smoking, and lack of exercise.",
-            "metadata": {"source": "health_tips"}
-        },
-        {
-            "chunk_id": "test_3",
-            "content": "Type 2 diabetes symptoms may develop slowly. Early signs include increased hunger, fatigue, and blurred vision.",
-            "metadata": {"source": "diabetes_info"}
-        }
-    ]
-    
-    query = "What are the symptoms of diabetes?"
-    
-    reranked = reranker.rerank_documents(query, test_documents, top_k=2)
-    
-    print("\nReranked Results:")
-    for i, doc in enumerate(reranked, 1):
-        print(f"{i}. Score: {doc['rerank_score']:.4f}")
-        print(f"   Content: {doc['content'][:100]}...")
-        print(f"   Chunk ID: {doc['chunk_id']}")
-        print()
+
