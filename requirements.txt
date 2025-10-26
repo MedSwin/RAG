@@ -1,0 +1,54 @@
+# FastAPI and web framework dependencies
+fastapi==0.117.1
+uvicorn[standard]==0.37.0
+python-multipart==0.0.20
+pydantic==2.11.9
+pydantic-settings==2.0.3
+
+# Database dependencies
+motor==3.3.2
+pymongo==4.14.1
+
+# Machine learning dependencies
+torch==2.8.0
+torchvision==0.23.0
+torchaudio==2.8.0
+transformers==4.56.1
+sentence-transformers==3.1.1
+scikit-learn==1.5.2
+
+# Vector search and indexing
+hnswlib==0.8.0
+faiss-cpu==1.8.0
+
+# Data processing
+pandas==2.3.2
+numpy==2.0.2
+scipy==1.13.1
+
+# HTTP and networking
+httpx==0.28.1
+requests==2.32.5
+aiohttp==3.12.15
+
+# Utilities
+python-dotenv==1.1.1
+python-dateutil==2.9.0.post0
+pytz==2025.2
+tqdm==4.67.1
+
+# Logging and monitoring
+prometheus-fastapi-instrumentator==7.1.0
+python-json-logger==3.3.0
+
+# Development and testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+httpx==0.28.1
+
+# Additional dependencies for the RAG system
+tokenizers==0.22.0
+safetensors==0.6.2
+huggingface-hub==0.34.4
+accelerate==1.1.1
+datasets==3.1.0

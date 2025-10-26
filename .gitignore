@@ -1,0 +1,16 @@
+mongodb/
+openssl-1.1.1w/
+*slurm*
+*.out
+data/
+EmbeddingModel/
+*log*
+spare_data/
+__pycache__/
+quicktest.py
+reranker/
+model/
+
+.env*
+.rag_vevn/
+key

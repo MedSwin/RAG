@@ -1,0 +1,267 @@
+{
+  "collections": {
+    "chunks": {
+      "description": "Main collection storing processed medical dialogue chunks with embeddings",
+      "schema": {
+        "type": "object",
+        "required": ["chunk_id", "content", "metadata", "embedding"],
+        "properties": {
+          "chunk_id": {
+            "type": "string",
+            "description": "Unique identifier for the chunk",
+            "example": "HealthCareMagic_12345_single"
+          },
+          "content": {
+            "type": "string",
+            "description": "Raw text content used for embedding generation",
+            "example": "What are the symptoms of diabetes?\n\nContext: Patient is a 45-year-old male with family history of diabetes.\n\nDiabetes symptoms include increased thirst, frequent urination, unexplained weight loss, fatigue, blurred vision, and slow-healing sores."
+          },
+          "metadata": {
+            "type": "object",
+            "required": ["chunk_id", "parent_id", "source", "sequence", "total_chunks", "content_type", "task", "chunk_length", "token_count", "created_timestamp"],
+            "properties": {
+              "chunk_id": {
+                "type": "string",
+                "description": "Unique chunk identifier",
+                "example": "HealthCareMagic_12345_single"
+              },
+              "parent_id": {
+                "type": "string",
+                "description": "ID of the original document this chunk came from",
+                "example": "12345"
+              },
+              "source": {
+                "type": "string",
+                "description": "Dataset source identifier",
+                "example": "HealthCareMagic"
+              },
+              "sequence": {
+                "type": "integer",
+                "description": "Sequence number of this chunk within the parent document",
+                "example": 1
+              },
+              "total_chunks": {
+                "type": "integer",
+                "description": "Total number of chunks for this parent document",
+                "example": 1
+              },
+              "content_type": {
+                "type": "string",
+                "description": "Type of content in this chunk",
+                "enum": ["complete_dialogue", "question_part1", "question_final_and_answer", "answer_part1", "answer_continuation", "question_and_answer_part1"],
+                "example": "complete_dialogue"
+              },
+              "task": {
+                "type": "string",
+                "description": "Task type for this medical dialogue",
+                "example": "medical_dialogue"
+              },
+              "chunk_length": {
+                "type": "integer",
+                "description": "Character length of the chunk content",
+                "example": 245
+              },
+              "token_count": {
+                "type": "integer",
+                "description": "Number of tokens in the chunk content",
+                "example": 58
+              },
+              "created_timestamp": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Timestamp when the chunk was created",
+                "example": "2024-01-15T10:30:00Z"
+              },
+              "related_chunks": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Array of related chunk IDs",
+                "example": []
+              },
+              "question": {
+                "type": "string",
+                "description": "Original question from QCA format",
+                "example": "What are the symptoms of diabetes?"
+              },
+              "context": {
+                "type": "string",
+                "description": "Additional context from QCA format",
+                "example": "Patient is a 45-year-old male with family history of diabetes."
+              },
+              "answer": {
+                "type": "string",
+                "description": "Answer from QCA format",
+                "example": "Diabetes symptoms include increased thirst, frequent urination, unexplained weight loss, fatigue, blurred vision, and slow-healing sores."
+              }
+            }
+          },
+          "embedding": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "Vector embedding for semantic search (768 dimensions)",
+            "example": [0.1234, -0.5678, 0.9012, -0.3456, 0.7890]
+          }
+        }
+      },
+      "sample_documents": [
+        {
+          "chunk_id": "HealthCareMagic_12345_single",
+          "content": "What are the symptoms of diabetes?\n\nContext: Patient is a 45-year-old male with family history of diabetes.\n\nDiabetes symptoms include increased thirst, frequent urination, unexplained weight loss, fatigue, blurred vision, and slow-healing sores.",
+          "metadata": {
+            "chunk_id": "HealthCareMagic_12345_single",
+            "parent_id": "12345",
+            "source": "HealthCareMagic",
+            "sequence": 1,
+            "total_chunks": 1,
+            "content_type": "complete_dialogue",
+            "task": "medical_dialogue",
+            "chunk_length": 245,
+            "token_count": 58,
+            "created_timestamp": "2024-01-15T10:30:00Z",
+            "related_chunks": [],
+            "question": "What are the symptoms of diabetes?",
+            "context": "Patient is a 45-year-old male with family history of diabetes.",
+            "answer": "Diabetes symptoms include increased thirst, frequent urination, unexplained weight loss, fatigue, blurred vision, and slow-healing sores."
+          },
+          "embedding": [0.1234, -0.5678, 0.9012, -0.3456, 0.7890, -0.1234, 0.4567, -0.8901, 0.2345, -0.6789]
+        },
+        {
+          "chunk_id": "iCliniq_67890_01",
+          "content": "I have been experiencing chest pain for the past week. The pain is sharp and occurs mainly when I breathe deeply or cough.\n\nContext: 32-year-old female, non-smoker, no previous cardiac history.\n\nChest pain can have various causes. Given your symptoms and age, it's important to rule out serious conditions like pleurisy, costochondritis, or even cardiac issues. I recommend immediate evaluation with chest X-ray and ECG.",
+          "metadata": {
+            "chunk_id": "iCliniq_67890_01",
+            "parent_id": "67890",
+            "source": "iCliniq",
+            "sequence": 1,
+            "total_chunks": 1,
+            "content_type": "complete_dialogue",
+            "task": "medical_dialogue",
+            "chunk_length": 312,
+            "token_count": 72,
+            "created_timestamp": "2024-01-15T11:15:00Z",
+            "related_chunks": [],
+            "question": "I have been experiencing chest pain for the past week. The pain is sharp and occurs mainly when I breathe deeply or cough.",
+            "context": "32-year-old female, non-smoker, no previous cardiac history.",
+            "answer": "Chest pain can have various causes. Given your symptoms and age, it's important to rule out serious conditions like pleurisy, costochondritis, or even cardiac issues. I recommend immediate evaluation with chest X-ray and ECG."
+          },
+          "embedding": [-0.2345, 0.6789, -0.1234, 0.5678, -0.9012, 0.3456, -0.7890, 0.1234, -0.4567, 0.8901]
+        }
+      ]
+    },
+    "dataset_status": {
+      "description": "Collection tracking processing status of datasets",
+      "schema": {
+        "type": "object",
+        "required": ["dataset_name", "status", "total_rows", "processed_rows", "created_timestamp"],
+        "properties": {
+          "dataset_name": {
+            "type": "string",
+            "description": "Name of the dataset",
+            "example": "HealthCareMagic"
+          },
+          "status": {
+            "type": "string",
+            "description": "Current processing status",
+            "enum": ["not_processed", "processing", "processed", "error"],
+            "example": "processed"
+          },
+          "total_rows": {
+            "type": "integer",
+            "description": "Total number of rows in the dataset",
+            "example": 112165
+          },
+          "processed_rows": {
+            "type": "integer",
+            "description": "Number of rows processed so far",
+            "example": 112165
+          },
+          "processing_progress": {
+            "type": "number",
+            "description": "Processing progress percentage",
+            "minimum": 0,
+            "maximum": 100,
+            "example": 100.0
+          },
+          "size_gb": {
+            "type": "number",
+            "description": "Size of the dataset in GB",
+            "example": 2.5
+          },
+          "created_timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when processing started",
+            "example": "2024-01-15T10:30:00Z"
+          },
+          "completed_timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when processing completed",
+            "example": "2024-01-15T12:30:00Z"
+          }
+        }
+      },
+      "sample_documents": [
+        {
+          "dataset_name": "HealthCareMagic",
+          "status": "processed",
+          "total_rows": 112165,
+          "processed_rows": 112165,
+          "processing_progress": 100.0,
+          "size_gb": 2.5,
+          "created_timestamp": "2024-01-15T10:30:00Z",
+          "completed_timestamp": "2024-01-15T12:30:00Z"
+        },
+        {
+          "dataset_name": "iCliniq",
+          "status": "processing",
+          "total_rows": 11000,
+          "processed_rows": 7500,
+          "processing_progress": 68.2,
+          "size_gb": 0.8,
+          "created_timestamp": "2024-01-15T10:30:00Z",
+          "completed_timestamp": null
+        }
+      ]
+    }
+  },
+  "database_info": {
+    "name": "medical_rag_db",
+    "description": "MongoDB database for Medical RAG System",
+    "total_collections": 2,
+    "total_documents": 1000000,
+    "total_size_gb": 12.4
+  },
+  "ingestion_pipeline": {
+    "description": "Current ingestion pipeline with QCA format",
+    "steps": [
+      "Data Crawling (Hugging Face)",
+      "QCA Parsing (Question, Context, Answer)",
+      "Preprocessing & Chunking",
+      "Embedding Generation",
+      "Deduplication",
+      "MongoDB Storage",
+      "HNSW Index Building"
+    ]
+  },
+  "retrieval_format": {
+    "description": "Format of retrieved documents",
+    "example_response": {
+      "chunk_id": "HealthCareMagic_12345_single",
+      "content": "What are the symptoms of diabetes?\n\nContext: Patient is a 45-year-old male with family history of diabetes.\n\nDiabetes symptoms include increased thirst, frequent urination, unexplained weight loss, fatigue, blurred vision, and slow-healing sores.",
+      "metadata": {
+        "source": "HealthCareMagic",
+        "content_type": "complete_dialogue"
+      },
+      "distance": 0.234,
+      "rerank_score": 0.89,
+      "question": "What are the symptoms of diabetes?",
+      "context": "Patient is a 45-year-old male with family history of diabetes.",
+      "answer": "Diabetes symptoms include increased thirst, frequent urination, unexplained weight loss, fatigue, blurred vision, and slow-healing sores."
+    }
+  }
+}

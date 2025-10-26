@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # MongoDB service
+  mongodb:
+    image: mongo:6.0
+    container_name: rag_mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+      MONGO_INITDB_DATABASE: medical_rag_db
+    volumes:
+      - mongodb_data:/data/db
+      - ./database/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - rag_network
+
+  # RAG API service
+  rag_api:
+    build: .
+    container_name: rag_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_URL=mongodb://admin:password123@mongodb:27017/medical_rag_db?authSource=admin
+      - MONGODB_DATABASE=medical_rag_db
+      - EMBEDDING_MODEL_PATH=/app/models/MedEmbed-large-v0.1
+      - RERANKER_MODEL_PATH=/app/models/bge-reranker-v2-m3
+      - HNSW_INDEX_PATH=/app/data/hnsw_index.bin
+      - HNSW_MAPPING_PATH=/app/data/hnsw_mapping.json
+      - DATA_DIR=/app/data
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./storage:/app/storage
+    depends_on:
+      - mongodb
+    networks:
+      - rag_network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Nginx reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: rag_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - rag_api
+    networks:
+      - rag_network
+
+volumes:
+  mongodb_data:
+    driver: local
+
+networks:
+  rag_network:
+    driver: bridge
