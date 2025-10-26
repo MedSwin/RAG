@@ -7,7 +7,7 @@ import json
 import numpy as np
 from pathlib import Path
 
-from app.main import model_manager
+from app.core.state import get_model_manager
 from app.core.config import settings
 from app.core.database import get_sync_database
 
@@ -53,14 +53,14 @@ class IndexInfo(BaseModel):
 def get_embedding_model():
     """Dependency to get embedding model."""
     try:
-        return model_manager.get_embedding_model()
+        return get_model_manager().get_embedding_model()
     except Exception as e:
         logger.error(f"Failed to get embedding model: {e}")
         raise HTTPException(status_code=503, detail="Embedding model not available")
 
 def get_reranker_model():
     """Dependency to get reranker model."""
-    return model_manager.get_reranker_model()
+    return get_model_manager().get_reranker_model()
 
 @router.post("/search", response_model=RetrievalResponse)
 async def search_documents(
@@ -169,7 +169,7 @@ async def get_index_info():
         
         # Get embedding dimension from model
         try:
-            _, _, _, embedding_dim = model_manager.get_embedding_model()
+            _, _, _, embedding_dim = get_model_manager().get_embedding_model()
         except:
             embedding_dim = settings.EMBEDDING_DIMENSION
         

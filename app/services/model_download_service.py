@@ -21,7 +21,7 @@ class ModelDownloadService:
         # Model configurations
         self.models = {
             "embedding": {
-                "repo_id": "MedAI-COS30018/MedEmbed-large-v0.1",
+                "repo_id": "sentence-transformers/all-MiniLM-L6-v2",
                 "local_path": settings.EMBEDDING_MODEL_PATH,
                 "type": "embedding"
             },

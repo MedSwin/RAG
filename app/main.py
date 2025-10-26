@@ -7,9 +7,8 @@ from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.core.database import init_database
+from app.core.state import initialize_services, get_model_manager, get_model_download_service, cleanup_services
 from app.api.v1.router import api_router
-from app.services.model_manager import ModelManager
-from app.services.model_download_service import ModelDownloadService
 
 # Configure logging
 logging.basicConfig(
@@ -22,9 +21,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global model manager and download service
-model_manager = ModelManager()
-model_download_service = ModelDownloadService()
+# Initialize global services
+initialize_services()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,6 +37,7 @@ async def lifespan(app: FastAPI):
     # Download models if not present
     try:
         logger.info("Checking and downloading models...")
+        model_download_service = get_model_download_service()
         download_results = await model_download_service.download_all_models()
         for model_name, result in download_results.items():
             if result["success"]:
@@ -51,19 +50,19 @@ async def lifespan(app: FastAPI):
     
     # Load models
     try:
+        model_manager = get_model_manager()
         await model_manager.load_embedding_model()
         await model_manager.load_reranker_model()
         logger.info("Models loaded successfully")
     except Exception as e:
         logger.error(f"Failed to load models: {e}")
-        raise
+        logger.warning("Continuing without models - some features may not be available")
     
     yield
     
     # Shutdown
     logger.info("Shutting down RAG application...")
-    model_manager.cleanup()
-    model_download_service.cleanup()
+    cleanup_services()
 
 # Create FastAPI application
 app = FastAPI(
@@ -100,6 +99,7 @@ async def health_check():
     """Health check endpoint."""
     try:
         # Check if models are loaded
+        model_manager = get_model_manager()
         embedding_loaded = model_manager.embedding_model is not None
         reranker_loaded = model_manager.reranker_model is not None
         

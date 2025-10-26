@@ -11,7 +11,7 @@ from app.core.database import get_sync_database
 from app.services.hf_dataset_service import HuggingFaceDatasetService
 from app.services.preprocessing_service import PreprocessingService
 from app.services.storage_service import StorageService
-from app.main import model_manager
+from app.core.state import get_model_manager
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class IngestionPipelineService:
             
             # Step 3: Chunk data
             logger.info(f"Step 3: Chunking data for {dataset_name}")
-            tokenizer, _, _, _ = model_manager.get_embedding_model()
+            tokenizer, _, _, _ = get_model_manager().get_embedding_model()
             preprocessing_service = PreprocessingService(tokenizer)
             
             chunks = await preprocessing_service.chunk_medical_dialogues(df)
@@ -108,7 +108,7 @@ class IngestionPipelineService:
         """Generate embeddings for chunks."""
         try:
             # Get embedding model
-            tokenizer, embed_model, device, embedding_dim = model_manager.get_embedding_model()
+            tokenizer, embed_model, device, embedding_dim = get_model_manager().get_embedding_model()
             
             # Run embedding generation in thread pool
             loop = asyncio.get_event_loop()

@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 import logging
 
-from app.main import model_manager
+from app.core.state import get_model_manager
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ class BatchEmbeddingResponse(BaseModel):
 def get_embedding_model():
     """Dependency to get embedding model."""
     try:
-        return model_manager.get_embedding_model()
+        return get_model_manager().get_embedding_model()
     except Exception as e:
         logger.error(f"Failed to get embedding model: {e}")
         raise HTTPException(status_code=503, detail="Embedding model not available")

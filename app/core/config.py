@@ -1,4 +1,4 @@
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 from typing import List, Optional
 import os
 from pathlib import Path
@@ -23,15 +23,15 @@ class Settings(BaseSettings):
     MONGODB_DATABASE: str = "medical_rag_db"
     
     # Model settings
-    EMBEDDING_MODEL_PATH: str = "/app/models/MedEmbed-large-v0.1"
-    RERANKER_MODEL_PATH: str = "/app/models/bge-reranker-v2-m3"
+    EMBEDDING_MODEL_PATH: str = "./models/MedEmbed-large-v0.1"
+    RERANKER_MODEL_PATH: str = "./models/bge-reranker-v2-m3"
     EMBEDDING_DIMENSION: int = 768
     MAX_SEQUENCE_LENGTH: int = 512
     
     # Storage settings
-    HNSW_INDEX_PATH: str = "/app/data/hnsw_index.bin"
-    HNSW_MAPPING_PATH: str = "/app/data/hnsw_mapping.json"
-    DATA_DIR: str = "/app/data"
+    HNSW_INDEX_PATH: str = "./data/hnsw_index.bin"
+    HNSW_MAPPING_PATH: str = "./data/hnsw_mapping.json"
+    DATA_DIR: str = "./data"
     
     # Retrieval settings
     DEFAULT_TOP_K: int = 5
@@ -49,7 +49,10 @@ class Settings(BaseSettings):
     
     # Logging settings
     LOG_LEVEL: str = "INFO"
-    LOG_FILE: str = "/app/logs/app.log"
+    LOG_FILE: str = "./logs/app.log"
+    
+    # Hugging Face settings
+    HF_TOKEN: Optional[str] = None
     
     # AWS settings (for EC2 deployment)
     AWS_REGION: str = "us-east-1"
@@ -70,9 +73,9 @@ def ensure_directories():
         Path(settings.EMBEDDING_MODEL_PATH).parent,
         Path(settings.RERANKER_MODEL_PATH).parent,
         Path(settings.LOG_FILE).parent,
-        Path("/app/models"),
-        Path("/app/data"),
-        Path("/app/logs")
+        Path("./models"),
+        Path("./data"),
+        Path("./logs")
     ]
     
     for directory in directories:

@@ -1,3 +1,4 @@
+# HPC
 mongodb/
 openssl-1.1.1w/
 *slurm*
@@ -6,11 +7,32 @@ data/
 EmbeddingModel/
 *log*
 spare_data/
+
+# Cache
 __pycache__/
+
+# Usages
 quicktest.py
 reranker/
 model/
 
+# Environment
 .env*
 .rag_vevn/
-key
+
+# Key
+key/
+
+# Build
+*.bak
+*.tar*
+*.zip
+*.rar
+*.7z
+*.iso
+*.dmg
+*.pkg
+*.deb
+*.rpm
+*.msi
+*.exe

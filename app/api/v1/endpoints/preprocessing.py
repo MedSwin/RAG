@@ -8,7 +8,7 @@ from pathlib import Path
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
-from app.main import model_manager
+from app.core.state import get_model_manager
 from app.core.config import settings
 from app.services.preprocessing_service import PreprocessingService
 
@@ -37,7 +37,7 @@ class PreprocessingStatus(BaseModel):
 def get_preprocessing_service():
     """Dependency to get preprocessing service."""
     try:
-        tokenizer, _, _, _ = model_manager.get_embedding_model()
+        tokenizer, _, _, _ = get_model_manager().get_embedding_model()
         return PreprocessingService(tokenizer)
     except Exception as e:
         logger.error(f"Failed to get preprocessing service: {e}")
