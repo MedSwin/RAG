@@ -7,12 +7,22 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import hnswlib
 import numpy as np
 from pathlib import Path
 
 from app.core.config import settings
 from app.core.database import get_sync_database, get_database
+from app.core.indexing import (
+    HNSWIndexBuilder,
+    FAISSIndexBuilder,
+    TreeIndexBuilder
+)
+from app.services.index_strategy_manager import (
+    IndexStrategyManager,
+    IndexType,
+    IndexStrategy,
+    analyze_chunk_characteristics
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +156,13 @@ class StorageService:
             logger.error(f"Error building HNSW index: {e}")
             raise
     
-    def _build_hnsw_index_sync(self, index_path: str, mapping_path: str) -> Dict[str, Any]:
-        """Synchronous HNSW index building function."""
+    def _build_hnsw_index_sync(
+        self,
+        index_path: str,
+        mapping_path: str,
+        index_type: IndexType = IndexType.HNSW
+    ) -> Dict[str, Any]:
+        """Synchronous index building function using modular index builders."""
         try:
             # Get database
             db = get_sync_database()
@@ -156,7 +171,7 @@ class StorageService:
             # Get all chunks with embeddings
             chunks = list(coll.find(
                 {"embedding": {"$exists": True, "$ne": []}},
-                {"chunk_id": 1, "embedding": 1, "embedding_dim": 1}
+                {"chunk_id": 1, "embedding": 1, "embedding_dim": 1, "metadata": 1}
             ))
             
             if not chunks:
@@ -173,53 +188,60 @@ class StorageService:
             
             # Prepare embeddings and mapping
             embeddings = []
-            mapping = {}
+            chunk_ids = []
             
-            for i, chunk in enumerate(chunks):
-                embedding = chunk['embedding']
-                if len(embedding) == embedding_dim:
-                    embeddings.append(embedding)
-                    mapping[str(i)] = chunk['chunk_id']
-                else:
-                    logger.warning(f"Chunk {chunk['chunk_id']} has invalid embedding dimension: {len(embedding)}")
+            for chunk in chunks:
+                embeddings.append(chunk['embedding'])
+                chunk_ids.append(chunk['chunk_id'])
             
-            if not embeddings:
-                return {
-                    "success": False,
-                    "index_path": index_path,
-                    "mapping_path": mapping_path,
-                    "total_vectors": 0,
-                    "message": "No valid embeddings found"
-                }
+            # Initialize strategy manager
+            strategy_manager = IndexStrategyManager()
             
-            # Convert to numpy array
-            embeddings_array = np.array(embeddings, dtype=np.float32)
+            # Select appropriate index builder based on type
+            if index_type == IndexType.HNSW:
+                config = strategy_manager.get_index_config(
+                    IndexStrategy.HNSW_ONLY,
+                    embedding_dim,
+                    len(chunks)
+                )
+                builder = HNSWIndexBuilder(embedding_dim, config.get("hnsw"))
+                
+            elif index_type == IndexType.FAISS_IVF:
+                config = strategy_manager.get_index_config(
+                    IndexStrategy.FAISS_ONLY,
+                    embedding_dim,
+                    len(chunks)
+                )
+                builder = FAISSIndexBuilder(embedding_dim, config.get("faiss_ivf"))
+                
+            elif index_type == IndexType.FAISS_TREE:
+                config = strategy_manager.get_index_config(
+                    IndexStrategy.TREE_ONLY,
+                    embedding_dim,
+                    len(chunks)
+                )
+                builder = TreeIndexBuilder(embedding_dim, config.get("faiss_tree"))
+                
+            else:
+                # Default to HNSW
+                config = strategy_manager.get_index_config(
+                    IndexStrategy.HNSW_ONLY,
+                    embedding_dim,
+                    len(chunks)
+                )
+                builder = HNSWIndexBuilder(embedding_dim, config.get("hnsw"))
             
-            # Create HNSW index
-            index = hnswlib.Index(space='cosine', dim=embedding_dim)
-            index.init_index(max_elements=len(embeddings_array), ef_construction=200, M=16)
-            index.add_items(embeddings_array)
+            # Build the index
+            result = builder.build(embeddings, chunk_ids, index_path, mapping_path)
             
-            # Save index
-            Path(index_path).parent.mkdir(parents=True, exist_ok=True)
-            index.save_index(index_path)
+            logger.info(
+                f"{index_type.value.upper()} index built: {result['message']}"
+            )
             
-            # Save mapping
-            with open(mapping_path, 'w') as f:
-                json.dump(mapping, f)
-            
-            logger.info(f"HNSW index built successfully with {len(embeddings)} vectors")
-            
-            return {
-                "success": True,
-                "index_path": index_path,
-                "mapping_path": mapping_path,
-                "total_vectors": len(embeddings),
-                "message": f"Index built successfully with {len(embeddings)} vectors"
-            }
+            return result
             
         except Exception as e:
-            logger.error(f"Error building HNSW index: {e}")
+            logger.error(f"Error building index: {e}")
             return {
                 "success": False,
                 "index_path": index_path,
@@ -353,7 +375,7 @@ class StorageService:
             index_valid = False
             if index_exists and mapping_exists:
                 try:
-                    # Try to load the index
+                    # Try to load the index using HNSW builder
                     with open(mapping_path, 'r') as f:
                         mapping = json.load(f)
                     
@@ -362,9 +384,8 @@ class StorageService:
                         sample_chunk = coll.find_one({"embedding": {"$exists": True, "$ne": []}})
                         if sample_chunk:
                             embedding_dim = sample_chunk.get('embedding_dim', settings.EMBEDDING_DIMENSION)
-                            index = hnswlib.Index(space='cosine', dim=embedding_dim)
-                            index.load_index(str(index_path))
-                            index_valid = True
+                            builder = HNSWIndexBuilder(embedding_dim)
+                            index_valid = builder.load(str(index_path), str(mapping_path))
                 except Exception as e:
                     logger.warning(f"Index validation failed: {e}")
             

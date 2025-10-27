@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import logging
-import hnswlib
 import json
 import numpy as np
 from pathlib import Path
@@ -10,6 +9,19 @@ from pathlib import Path
 from app.core.state import get_model_manager
 from app.core.config import settings
 from app.core.database import get_sync_database
+from app.core.indexing import (
+    HNSWIndexBuilder,
+    FAISSIndexBuilder,
+    TreeIndexBuilder,
+    load_hnsw_index,
+    load_faiss_ivf_index,
+    load_tree_index
+)
+from app.services.index_strategy_manager import (
+    IndexStrategyManager,
+    IndexStrategy,
+    analyze_query_characteristics
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -91,8 +103,17 @@ async def search_documents(
             device
         )
         
-        # Load HNSW index
-        index = await _load_hnsw_index(embedding_dim)
+        # Select index strategy based on query characteristics
+        strategy_manager = IndexStrategyManager()
+        query_char = analyze_query_characteristics(
+            request.query,
+            top_k,
+            request.use_reranking
+        )
+        strategy = strategy_manager.select_retrieval_strategy(query_char)
+        
+        # Load appropriate index
+        index = await _load_index(embedding_dim, strategy)
         
         # Retrieve documents
         if request.use_reranking and reranker_model:
@@ -207,35 +228,67 @@ async def _embed_query(query: str, tokenizer, embed_model, device) -> np.ndarray
     
     return query_embedding.cpu().numpy().astype(np.float64)
 
-async def _load_hnsw_index(embedding_dim: int) -> hnswlib.Index:
-    """Load HNSW index."""
+async def _load_index(
+    embedding_dim: int,
+    strategy: IndexStrategy = IndexStrategy.HNSW_ONLY
+) -> Any:
+    """
+    Load index based on strategy.
+    
+    Args:
+        embedding_dim: Dimension of embeddings
+        strategy: Index strategy to use
+        
+    Returns:
+        Loaded index builder
+    """
     index_path = Path(settings.HNSW_INDEX_PATH)
+    mapping_path = Path(settings.HNSW_MAPPING_PATH)
     
     if not index_path.exists():
-        raise HTTPException(status_code=404, detail="HNSW index not found")
+        raise HTTPException(status_code=404, detail="Index not found")
     
-    index = hnswlib.Index(space='cosine', dim=embedding_dim)
-    index.load_index(str(index_path))
+    # Load appropriate index based on strategy
+    if strategy in [IndexStrategy.HNSW_ONLY, IndexStrategy.HNSW_FAISS]:
+        builder = HNSWIndexBuilder(embedding_dim)
+        if builder.load(str(index_path), str(mapping_path)):
+            return builder
+        else:
+            raise HTTPException(status_code=500, detail="Failed to load HNSW index")
     
-    return index
+    elif strategy == IndexStrategy.FAISS_ONLY:
+        builder = FAISSIndexBuilder(embedding_dim)
+        if builder.load(str(index_path), str(mapping_path)):
+            return builder
+        else:
+            raise HTTPException(status_code=500, detail="Failed to load FAISS index")
+    
+    elif strategy == IndexStrategy.TREE_ONLY:
+        builder = TreeIndexBuilder(embedding_dim)
+        if builder.load(str(index_path), str(mapping_path)):
+            return builder
+        else:
+            raise HTTPException(status_code=500, detail="Failed to load Tree index")
+    
+    else:
+        # Default to HNSW
+        builder = HNSWIndexBuilder(embedding_dim)
+        if builder.load(str(index_path), str(mapping_path)):
+            return builder
+        else:
+            raise HTTPException(status_code=500, detail="Failed to load index")
 
 async def _retrieve_simple(
     query_embedding: np.ndarray,
-    index: hnswlib.Index,
+    index: Any,  # Can be HNSWIndexBuilder, FAISSIndexBuilder, or TreeIndexBuilder
     top_k: int
 ) -> List[DocumentResponse]:
     """Simple retrieval without reranking."""
-    # Ensure query embedding is 2D
-    if query_embedding.ndim == 1:
-        query_embedding = query_embedding.reshape(1, -1)
-    
     # Search index
-    labels, distances = index.knn_query(query_embedding, k=top_k)
+    labels, distances = index.query(query_embedding, top_k)
     
-    # Load mapping
-    mapping_path = Path(settings.HNSW_MAPPING_PATH)
-    with open(mapping_path, 'r') as f:
-        mapping = json.load(f)
+    # Get mapping from the index builder
+    mapping = index.mapping
     
     # Get database
     db = get_sync_database()
@@ -272,22 +325,17 @@ async def _retrieve_simple(
 async def _retrieve_with_reranking(
     query_embedding: np.ndarray,
     query: str,
-    index: hnswlib.Index,
+    index: Any,  # Can be HNSWIndexBuilder, FAISSIndexBuilder, or TreeIndexBuilder
     reranker_model,
     initial_top_k: int,
     final_top_k: int
 ) -> List[DocumentResponse]:
     """Retrieve documents with reranking."""
     # First, retrieve more documents
-    if query_embedding.ndim == 1:
-        query_embedding = query_embedding.reshape(1, -1)
+    labels, distances = index.query(query_embedding, initial_top_k)
     
-    labels, distances = index.knn_query(query_embedding, k=initial_top_k)
-    
-    # Load mapping
-    mapping_path = Path(settings.HNSW_MAPPING_PATH)
-    with open(mapping_path, 'r') as f:
-        mapping = json.load(f)
+    # Get mapping from the index builder
+    mapping = index.mapping
     
     # Get database
     db = get_sync_database()

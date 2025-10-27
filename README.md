@@ -7,7 +7,7 @@ A comprehensive Retrieval-Augmented Generation (RAG) system for medical document
 - **Document Processing**: Upload and process medical documents (CSV, JSON, TXT)
 - **Intelligent Chunking**: Smart text chunking with multiple strategies
 - **Embedding Generation**: Generate embeddings using medical-specific models
-- **Vector Search**: Fast similarity search using HNSW indexing
+- **Dynamic Vector Search**: Fast similarity search with automatic index selection (HNSW, FAISS-ivf, Tree), see [Indexing Strategy](INDEXING.md)  
 - **Reranking**: Improve retrieval quality with advanced reranking models
 - **RESTful API**: Complete FastAPI-based API with automatic documentation
 - **Docker Support**: Containerized deployment with Docker and Docker Compose
@@ -17,7 +17,7 @@ A comprehensive Retrieval-Augmented Generation (RAG) system for medical document
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   FastAPI App   │    │   MongoDB       │    │   HNSW Index    │
+│   FastAPI App   │    │   MongoDB       │    │  Dynamic Index  │
 │                 │    │                 │    │                 │
 │ - Preprocessing │◄──►│ - Chunks        │◄──►│ - Vector Search │
 │ - Embedding     │    │ - Metadata      │    │ - Similarity    │
@@ -32,7 +32,7 @@ A comprehensive Retrieval-Augmented Generation (RAG) system for medical document
 RAG/
 ├── app/                    # FastAPI production application
 │   ├── api/               # API endpoints
-│   ├── core/              # Core configuration
+│   ├── core/              # Core configuration and indexing
 │   ├── services/          # Business logic services
 │   └── main.py            # Application entry point
 ├── lab/                    # Lab environment (HPC/research)
@@ -146,7 +146,7 @@ For detailed lab setup and usage instructions, see [lab/README.md](lab/README.md
 
 ### Storage
 - `POST /api/v1/storage/chunks` - Store chunks
-- `POST /api/v1/storage/index/build` - Build HNSW index
+- `POST /api/v1/storage/index/build` - Build dynamic index
 - `GET /api/v1/storage/stats` - Get storage statistics
 - `DELETE /api/v1/storage/chunks` - Clear chunks
 
@@ -159,9 +159,16 @@ For detailed lab setup and usage instructions, see [lab/README.md](lab/README.md
 | `MONGODB_URL` | MongoDB connection string | `mongodb://localhost:27017` |
 | `EMBEDDING_MODEL_PATH` | Path to embedding model | `/app/models/MedEmbed-large-v0.1` |
 | `RERANKER_MODEL_PATH` | Path to reranker model | `/app/models/bge-reranker-v2-m3` |
-| `HNSW_INDEX_PATH` | Path to HNSW index file | `/app/data/hnsw_index.bin` |
+| `HNSW_INDEX_PATH` | Path to HNSW index file (.bin) | `/app/data/hnsw_index.bin` |
+| `HNSW_MAPPING_PATH` | Path to HNSW mapping file (.json) | `/app/data/hnsw_mapping.json` |
+| `FAISS_INDEX_PATH` | Path to FAISS index file (.bin) | `/app/data/faiss_index.bin` |
+| `FAISS_MAPPING_PATH` | Path to FAISS mapping file (.json) | `/app/data/faiss_mapping.json` |
+| `TREE_INDEX_PATH` | Path to Tree embeddings file (.npy) | `/app/data/tree_index.npy` |
+| `TREE_MAPPING_PATH` | Path to Tree mapping file (.json) | `/app/data/tree_mapping.json` |
 | `DEFAULT_TOP_K` | Default number of results | `5` |
 | `TARGET_CHUNK_SIZE` | Target chunk size in tokens | `400` |
+| `INDEX_STRATEGY_MODE` | Dynamic indexing mode | `dynamic` |
+| `DEFAULT_INDEX_TYPE` | Default index type | `hnsw` |
 
 ### Model Requirements
 
