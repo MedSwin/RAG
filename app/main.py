@@ -9,6 +9,8 @@ from app.core.config import settings
 from app.core.database import init_database
 from app.core.state import initialize_services, get_model_manager, get_model_download_service, cleanup_services
 from app.api.v1.router import api_router
+from app.services.hf_dataset_service import HuggingFaceDatasetService
+import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -30,9 +32,13 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting RAG application...")
     
-    # Initialize database
-    await init_database()
-    logger.info("Database initialized")
+    # Initialize database (with retries and graceful failure)
+    try:
+        await init_database()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.warning(f"Database connection failed (this is expected if security group not configured): {e}")
+        logger.warning("Application will start but database features may not be available")
     
     # Download models if not present
     try:
@@ -57,6 +63,31 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to load models: {e}")
         logger.warning("Continuing without models - some features may not be available")
+    
+    # Preload dataset information in background (non-blocking)
+    async def preload_datasets():
+        """Preload dataset information in background."""
+        try:
+            logger.info("Preloading dataset information from Hugging Face...")
+            hf_service = HuggingFaceDatasetService()
+            
+            # Preload all dataset info with timeout (use_cache=False to force fresh load)
+            try:
+                stats = await asyncio.wait_for(
+                    hf_service.get_total_statistics(use_cache=False),
+                    timeout=300.0  # 5 minute timeout
+                )
+                logger.info(f"Dataset preloading completed: {stats['total_datasets']} datasets, {stats['total_rows']} total rows")
+                logger.info("Dataset statistics cached and ready for dashboard")
+            except asyncio.TimeoutError:
+                logger.warning("Dataset preloading timed out - will load on demand")
+            except Exception as e:
+                logger.warning(f"Dataset preloading failed: {e} - will load on demand")
+        except Exception as e:
+            logger.warning(f"Error setting up dataset preloading: {e} - will load on demand")
+    
+    # Start dataset preloading in background (don't wait for it)
+    asyncio.create_task(preload_datasets())
     
     yield
     

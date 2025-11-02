@@ -839,11 +839,11 @@ async def dashboard_ui():
             // Load dashboard on page load
             loadDashboard();
             
-            // Auto-refresh every 30 seconds
+            // Auto-refresh every 5 minutes (300000ms) to avoid timeout issues
             refreshInterval = setInterval(() => {
                 showRefreshIndicator();
                 loadDashboard();
-            }, 30000);
+            }, 300000);
             
             // Cleanup on page unload
             window.addEventListener('beforeunload', () => {
@@ -862,10 +862,11 @@ async def get_dashboard_stats(hf_service = Depends(get_hf_service)):
     """Get dashboard statistics."""
     import asyncio
     try:
-        # Add timeout to prevent hanging
+        # Use cache if available, otherwise load with short timeout
+        # Cache is populated during server startup preloading
         stats = await asyncio.wait_for(
-            hf_service.get_total_statistics(),
-            timeout=120.0  # 2 minute timeout
+            hf_service.get_total_statistics(use_cache=True),
+            timeout=10.0  # 10 second timeout (should be instant if cached)
         )
         
         # Convert to response format

@@ -15,6 +15,10 @@ from app.core.database import get_sync_database
 
 logger = logging.getLogger(__name__)
 
+# Global cache for dataset statistics
+_dataset_stats_cache = None
+_cache_timestamp = None
+
 class HuggingFaceDatasetService:
     """Service for crawling and processing Hugging Face datasets."""
     
@@ -402,8 +406,18 @@ class HuggingFaceDatasetService:
         
         return dataset_infos
     
-    async def get_total_statistics(self) -> Dict[str, Any]:
+    async def get_total_statistics(self, use_cache: bool = True) -> Dict[str, Any]:
         """Get total statistics across all datasets."""
+        global _dataset_stats_cache, _cache_timestamp
+        
+        # Check cache first (valid for 10 minutes)
+        if use_cache and _dataset_stats_cache is not None and _cache_timestamp is not None:
+            import time
+            if time.time() - _cache_timestamp < 600:  # 10 minute cache
+                logger.info("Returning cached dataset statistics")
+                return _dataset_stats_cache
+        
+        # Load fresh data
         dataset_infos = await self.get_all_datasets_info()
         
         total_rows = sum(info.get("actual_rows", 0) for info in dataset_infos)
@@ -415,13 +429,27 @@ class HuggingFaceDatasetService:
             status = info.get("status", "unknown")
             status_counts[status] = status_counts.get(status, 0) + 1
         
-        return {
+        result = {
             "total_datasets": len(dataset_infos),
             "total_rows": total_rows,
             "total_size_gb": round(total_size_gb, 2),
             "status_counts": status_counts,
             "datasets": dataset_infos
         }
+        
+        # Cache the result
+        import time
+        _dataset_stats_cache = result
+        _cache_timestamp = time.time()
+        
+        return result
+    
+    @staticmethod
+    def clear_cache():
+        """Clear the dataset statistics cache."""
+        global _dataset_stats_cache, _cache_timestamp
+        _dataset_stats_cache = None
+        _cache_timestamp = None
     
     def cleanup(self):
         """Cleanup resources."""
