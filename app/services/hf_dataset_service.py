@@ -68,6 +68,8 @@ class HuggingFaceDatasetService:
         
         dataset_config = self.datasets[dataset_name]
         
+        # Try to get dataset info from Hugging Face first
+        dataset_info = None
         try:
             # Load dataset info without downloading
             loop = asyncio.get_event_loop()
@@ -76,14 +78,29 @@ class HuggingFaceDatasetService:
                 self._get_dataset_info_sync,
                 dataset_config["repo_id"]
             )
-            
-            # Get processing status from database
+        except Exception as e:
+            logger.error(f"Error loading dataset info from Hugging Face for {dataset_name}: {e}")
+            # Continue to return basic info even if HF loading fails
+        
+        # Try to get processing status from database (but don't fail if DB isn't connected)
+        current_status = "not_processed"
+        last_processed = None
+        processing_progress = 0
+        try:
             db = get_sync_database()
-            status_collection = db['dataset_status']
-            status_doc = status_collection.find_one({"dataset_name": dataset_name})
-            
-            current_status = status_doc["status"] if status_doc else "not_processed"
-            
+            if db is not None:
+                status_collection = db['dataset_status']
+                status_doc = status_collection.find_one({"dataset_name": dataset_name})
+                if status_doc:
+                    current_status = status_doc.get("status", "not_processed")
+                    last_processed = status_doc.get("last_processed")
+                    processing_progress = status_doc.get("processing_progress", 0)
+        except Exception as e:
+            logger.warning(f"Could not get dataset status from database for {dataset_name}: {e}")
+            # Continue with default status
+        
+        # Return dataset info
+        if dataset_info:
             return {
                 "name": dataset_name,
                 "description": dataset_config["description"],
@@ -93,12 +110,11 @@ class HuggingFaceDatasetService:
                 "actual_rows": dataset_info["num_rows"],
                 "size_gb": dataset_info["size_gb"],
                 "status": current_status,
-                "last_processed": status_doc["last_processed"] if status_doc else None,
-                "processing_progress": status_doc["processing_progress"] if status_doc else 0
+                "last_processed": last_processed,
+                "processing_progress": processing_progress
             }
-            
-        except Exception as e:
-            logger.error(f"Error getting dataset info for {dataset_name}: {e}")
+        else:
+            # Return info with default values if HF loading failed
             return {
                 "name": dataset_name,
                 "description": dataset_config["description"],
@@ -107,15 +123,41 @@ class HuggingFaceDatasetService:
                 "expected_rows": dataset_config["expected_rows"],
                 "actual_rows": 0,
                 "size_gb": 0,
-                "status": "error",
-                "error": str(e)
+                "status": current_status if current_status != "not_processed" else "error",
+                "last_processed": last_processed,
+                "processing_progress": processing_progress
             }
     
     def _get_dataset_info_sync(self, repo_id: str) -> Dict[str, Any]:
         """Synchronous function to get dataset info."""
         try:
-            # Load dataset info
-            dataset = load_dataset(repo_id, token=self.hf_token)
+            # Use streaming=False to get actual row counts (but this loads metadata only, not full dataset)
+            # For large datasets, use streaming=True for faster access but we need to count rows differently
+            try:
+                # Try to load dataset info using dataset builder (faster, metadata only)
+                from datasets import load_dataset_builder
+                builder = load_dataset_builder(repo_id, token=self.hf_token)
+                
+                # Get dataset info from builder
+                if hasattr(builder.info, 'splits') and builder.info.splits:
+                    total_rows = sum(split.num_examples for split in builder.info.splits.values())
+                    # Estimate size from config if available
+                    if hasattr(builder.info, 'dataset_size') and builder.info.dataset_size:
+                        size_bytes = builder.info.dataset_size
+                        size_gb = size_bytes / (1024 ** 3)
+                    else:
+                        size_gb = total_rows * 0.001  # Rough estimate
+                    
+                    return {
+                        "num_rows": total_rows,
+                        "size_gb": round(size_gb, 2),
+                        "splits": list(builder.info.splits.keys())
+                    }
+            except Exception as builder_error:
+                logger.warning(f"Could not use dataset builder for {repo_id}, falling back to load_dataset: {builder_error}")
+            
+            # Fallback: Load actual dataset (slower but works for all datasets)
+            dataset = load_dataset(repo_id, token=self.hf_token, streaming=False)
             
             # Calculate total rows
             total_rows = sum(len(split) for split in dataset.values())

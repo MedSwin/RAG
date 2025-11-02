@@ -70,7 +70,8 @@ def get_database():
 def get_sync_database():
     """Get synchronous database instance for compatibility."""
     if not sync_client:
-        raise Exception("Sync database client not initialized")
+        logger.warning("Sync database client not initialized - returning None")
+        return None
     return sync_client[settings.MONGODB_DATABASE]
 
 async def close_database():
