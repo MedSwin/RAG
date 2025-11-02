@@ -86,13 +86,9 @@ app.include_router(api_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
-    """Root endpoint with system information."""
-    return {
-        "message": "Medical RAG System API",
-        "version": "1.0.0",
-        "status": "running",
-        "docs": "/docs"
-    }
+    """Root endpoint - redirects to dashboard."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/api/v1/dashboard/")
 
 @app.get("/health")
 async def health_check():

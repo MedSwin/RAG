@@ -7,11 +7,13 @@ from pathlib import Path
 
 try:
     import faiss
+    # Test if faiss works by checking for required attributes
+    _ = faiss.IndexFlatL2
     FAISS_AVAILABLE = True
-except ImportError:
+except (ImportError, AttributeError) as e:
     FAISS_AVAILABLE = False
     logger = logging.getLogger(__name__)
-    logger.warning("FAISS not available. Install with: pip install faiss-cpu or faiss-gpu")
+    logger.warning(f"FAISS not available: {e}. Install with: pip install faiss-cpu or faiss-gpu")
 
 from app.core.indexing.base import BaseIndexBuilder
 from app.core.config import settings

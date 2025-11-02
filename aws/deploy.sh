@@ -1,17 +1,17 @@
 #!/bin/bash
 
-# AWS EC2 Deployment Script for RAG System
-# This script deploys the RAG system to AWS EC2
+# AWS EC2 Deployment Script for RAG System to Existing Instance
+# This script deploys the RAG system to an existing AWS EC2 instance
 
 set -e
 
 # Configuration
+EC2_HOST="ec2-98-93-155-138.compute-1.amazonaws.com"
+EC2_USER="${EC2_USER:-ubuntu}"  # Allow override via environment variable
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SSH_KEY="${PROJECT_ROOT}/key/RAGServerKey.pem"
 REGION="us-east-1"
-INSTANCE_TYPE="g4dn.xlarge"
-KEY_NAME="rag-system-key"
-SECURITY_GROUP="rag-system-sg"
-AMI_ID="ami-0c02fb55956c7d316"  # Deep Learning AMI (Ubuntu 20.04) Version 60.0
-VOLUME_SIZE=100  # GB
 
 # Colors for output
 RED='\033[0;31m'
@@ -19,162 +19,183 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}Starting RAG System Deployment to AWS EC2${NC}"
+echo -e "${GREEN}Starting RAG System Deployment to Existing EC2 Instance${NC}"
+echo -e "${YELLOW}Target: ${EC2_HOST}${NC}"
 
-# Check if AWS CLI is installed
-if ! command -v aws &> /dev/null; then
-    echo -e "${RED}AWS CLI is not installed. Please install it first.${NC}"
+# Check if SSH key exists
+if [ ! -f "$SSH_KEY" ]; then
+    echo -e "${RED}SSH key not found: ${SSH_KEY}${NC}"
     exit 1
 fi
 
-# Check if Docker is installed
-if ! command -v docker &> /dev/null; then
-    echo -e "${RED}Docker is not installed. Please install it first.${NC}"
-    exit 1
-fi
+# Set correct permissions on SSH key
+chmod 400 "$SSH_KEY"
 
-# Create security group if it doesn't exist
-echo -e "${YELLOW}Creating security group...${NC}"
-if ! aws ec2 describe-security-groups --group-names $SECURITY_GROUP --region $REGION &> /dev/null; then
-    aws ec2 create-security-group \
-        --group-name $SECURITY_GROUP \
-        --description "Security group for RAG system" \
-        --region $REGION
-    
-    # Add inbound rules
-    aws ec2 authorize-security-group-ingress \
-        --group-name $SECURITY_GROUP \
-        --protocol tcp \
-        --port 22 \
-        --cidr 0.0.0.0/0 \
-        --region $REGION
-    
-    aws ec2 authorize-security-group-ingress \
-        --group-name $SECURITY_GROUP \
-        --protocol tcp \
-        --port 80 \
-        --cidr 0.0.0.0/0 \
-        --region $REGION
-    
-    aws ec2 authorize-security-group-ingress \
-        --group-name $SECURITY_GROUP \
-        --protocol tcp \
-        --port 443 \
-        --cidr 0.0.0.0/0 \
-        --region $REGION
-    
-    aws ec2 authorize-security-group-ingress \
-        --group-name $SECURITY_GROUP \
-        --protocol tcp \
-        --port 8000 \
-        --cidr 0.0.0.0.0/0 \
-        --region $REGION
-else
-    echo -e "${GREEN}Security group already exists${NC}"
-fi
-
-# Create key pair if it doesn't exist
-echo -e "${YELLOW}Creating key pair...${NC}"
-if ! aws ec2 describe-key-pairs --key-names $KEY_NAME --region $REGION &> /dev/null; then
-    aws ec2 create-key-pair \
-        --key-name $KEY_NAME \
-        --region $REGION \
-        --query 'KeyMaterial' \
-        --output text > ${KEY_NAME}.pem
-    
-    chmod 400 ${KEY_NAME}.pem
-    echo -e "${GREEN}Key pair created: ${KEY_NAME}.pem${NC}"
-else
-    echo -e "${GREEN}Key pair already exists${NC}"
-fi
-
-# Build Docker image
-echo -e "${YELLOW}Building Docker image...${NC}"
-docker build -t rag-system:latest .
-
-# Save Docker image
-echo -e "${YELLOW}Saving Docker image...${NC}"
-docker save rag-system:latest | gzip > rag-system.tar.gz
-
-# Launch EC2 instance
-echo -e "${YELLOW}Launching EC2 instance...${NC}"
-INSTANCE_ID=$(aws ec2 run-instances \
-    --image-id $AMI_ID \
-    --count 1 \
-    --instance-type $INSTANCE_TYPE \
-    --key-name $KEY_NAME \
-    --security-groups $SECURITY_GROUP \
-    --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":$VOLUME_SIZE,\"VolumeType\":\"gp3\"}}]" \
-    --region $REGION \
-    --query 'Instances[0].InstanceId' \
-    --output text)
-
-echo -e "${GREEN}Instance launched: $INSTANCE_ID${NC}"
-
-# Wait for instance to be running
-echo -e "${YELLOW}Waiting for instance to be running...${NC}"
-aws ec2 wait instance-running --instance-ids $INSTANCE_ID --region $REGION
-
-# Get instance public IP
-PUBLIC_IP=$(aws ec2 describe-instances \
-    --instance-ids $INSTANCE_ID \
-    --region $REGION \
-    --query 'Reservations[0].Instances[0].PublicIpAddress' \
-    --output text)
-
-echo -e "${GREEN}Instance public IP: $PUBLIC_IP${NC}"
-
-# Wait for SSH to be available
-echo -e "${YELLOW}Waiting for SSH to be available...${NC}"
-until ssh -i ${KEY_NAME}.pem -o ConnectTimeout=5 -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP "echo 'SSH is ready'" &> /dev/null; do
-    echo "Waiting for SSH..."
-    sleep 10
+# Check SSH connectivity
+echo -e "${YELLOW}Checking SSH connectivity...${NC}"
+SSH_SUCCESS=false
+# Try common EC2 users
+for USER in ubuntu ec2-user admin; do
+    if ssh -i "$SSH_KEY" -o ConnectTimeout=10 -o StrictHostKeyChecking=no "${USER}@${EC2_HOST}" "echo 'SSH connection successful'" &> /dev/null; then
+        EC2_USER="$USER"
+        echo -e "${GREEN}SSH connection successful as ${EC2_USER}${NC}"
+        SSH_SUCCESS=true
+        break
+    fi
 done
 
-# Copy files to instance
-echo -e "${YELLOW}Copying files to instance...${NC}"
-scp -i ${KEY_NAME}.pem -r . ubuntu@$PUBLIC_IP:~/rag-system/
-scp -i ${KEY_NAME}.pem rag-system.tar.gz ubuntu@$PUBLIC_IP:~/rag-system/
+if [ "$SSH_SUCCESS" = false ]; then
+    echo -e "${RED}Failed to connect to EC2 instance. Please check:${NC}"
+    echo -e "${RED}  - Instance is running${NC}"
+    echo -e "${RED}  - Security group allows SSH (port 22)${NC}"
+    echo -e "${RED}  - SSH key is correct and matches the instance${NC}"
+    echo -e "${YELLOW}You can manually specify the SSH user by setting EC2_USER environment variable${NC}"
+    echo -e "${YELLOW}Example: EC2_USER=ubuntu ./aws/deploy.sh${NC}"
+    exit 1
+fi
 
-# Install Docker on instance
-echo -e "${YELLOW}Installing Docker on instance...${NC}"
-ssh -i ${KEY_NAME}.pem ubuntu@$PUBLIC_IP << 'EOF'
-    sudo apt-get update
-    sudo apt-get install -y docker.io docker-compose
-    sudo usermod -aG docker ubuntu
-    sudo systemctl start docker
-    sudo systemctl enable docker
-EOF
+# Prepare deployment package (exclude unnecessary files)
+echo -e "${YELLOW}Preparing deployment package...${NC}"
+TEMP_DIR=$(mktemp -d)
+DEPLOY_DIR="${TEMP_DIR}/rag-system"
 
-# Load Docker image on instance
-echo -e "${YELLOW}Loading Docker image on instance...${NC}"
-ssh -i ${KEY_NAME}.pem ubuntu@$PUBLIC_IP << 'EOF'
+# Create deployment directory structure
+mkdir -p "${DEPLOY_DIR}"
+mkdir -p "${DEPLOY_DIR}/app"
+mkdir -p "${DEPLOY_DIR}/lab"
+mkdir -p "${DEPLOY_DIR}/aws"
+mkdir -p "${DEPLOY_DIR}/nginx"
+
+# Copy necessary files
+echo -e "${YELLOW}Copying files...${NC}"
+cp -r app/ "${DEPLOY_DIR}/"
+cp -r lab/ "${DEPLOY_DIR}/"
+cp -r nginx/ "${DEPLOY_DIR}/"
+cp docker-compose.yml "${DEPLOY_DIR}/"
+cp Dockerfile "${DEPLOY_DIR}/"
+cp requirements.txt "${DEPLOY_DIR}/"
+cp env.example "${DEPLOY_DIR}/"
+cp .gitignore "${DEPLOY_DIR}/"
+
+# Remove unnecessary files from deployment
+find "${DEPLOY_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find "${DEPLOY_DIR}" -type f -name "*.pyc" -delete 2>/dev/null || true
+find "${DEPLOY_DIR}" -type d -name ".git" -exec rm -rf {} + 2>/dev/null || true
+
+echo -e "${GREEN}Files prepared${NC}"
+
+# Copy files to EC2 instance
+echo -e "${YELLOW}Copying files to EC2 instance...${NC}"
+scp -i "$SSH_KEY" -o StrictHostKeyChecking=no -r "${DEPLOY_DIR}/" "${EC2_USER}@${EC2_HOST}:~/rag-system/"
+
+echo -e "${GREEN}Files copied successfully${NC}"
+
+# Deploy on EC2 instance
+echo -e "${YELLOW}Deploying on EC2 instance...${NC}"
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "${EC2_USER}@${EC2_HOST}" << 'ENDSSH'
+    set -e
+    
     cd ~/rag-system
-    sudo docker load < rag-system.tar.gz
-EOF
+    
+    # Install Docker if not installed
+    if ! command -v docker &> /dev/null; then
+        echo "Installing Docker..."
+        sudo apt-get update
+        sudo apt-get install -y ca-certificates curl gnupg lsb-release
+        sudo mkdir -p /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        echo \
+          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+          $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        sudo apt-get update
+        sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        sudo usermod -aG docker $USER || sudo usermod -aG docker ubuntu || true
+        sudo systemctl start docker
+        sudo systemctl enable docker
+    fi
+    
+    # Install docker-compose if not installed
+    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+        echo "Installing docker-compose..."
+        sudo apt-get update
+        sudo apt-get install -y docker-compose
+    fi
+    
+    # Stop existing containers if running
+    echo "Stopping existing containers..."
+    sudo docker-compose down 2>/dev/null || docker compose down 2>/dev/null || true
+    
+    # Create necessary directories
+    mkdir -p models data logs storage nginx/ssl
+    
+    # Set permissions
+    sudo chown -R $USER:$USER models data logs storage nginx 2>/dev/null || sudo chown -R ubuntu:ubuntu models data logs storage nginx 2>/dev/null || true
+    
+    # Build Docker image on EC2
+    echo "Building Docker image on EC2..."
+    sudo docker-compose build || docker compose build
+    
+    # Start services with docker-compose
+    echo "Starting services..."
+    sudo docker-compose up -d || docker compose up -d
+    
+    echo "Waiting for services to start..."
+    sleep 30
+    
+    # Check service status
+    echo "Checking service status..."
+    sudo docker-compose ps || docker compose ps
+    
+ENDSSH
 
-# Start services
-echo -e "${YELLOW}Starting services...${NC}"
-ssh -i ${KEY_NAME}.pem ubuntu@$PUBLIC_IP << 'EOF'
-    cd ~/rag-system
-    sudo docker-compose up -d
-EOF
+echo -e "${GREEN}Deployment completed${NC}"
+
+# Cleanup local temp directory
+rm -rf "${TEMP_DIR}"
 
 # Wait for services to be ready
 echo -e "${YELLOW}Waiting for services to be ready...${NC}"
-sleep 60
+sleep 30
 
-# Test the API
-echo -e "${YELLOW}Testing API...${NC}"
-if curl -f http://$PUBLIC_IP/health; then
-    echo -e "${GREEN}API is running successfully!${NC}"
-    echo -e "${GREEN}API URL: http://$PUBLIC_IP${NC}"
-    echo -e "${GREEN}API Docs: http://$PUBLIC_IP/docs${NC}"
+# Test the API and Frontend
+echo -e "${YELLOW}Testing deployment...${NC}"
+
+# Test health endpoint
+if curl -f -s "http://${EC2_HOST}/health" > /dev/null; then
+    echo -e "${GREEN}✓ Health endpoint is accessible${NC}"
 else
-    echo -e "${RED}API is not responding${NC}"
+    echo -e "${YELLOW}⚠ Health endpoint check failed (may need more time)${NC}"
 fi
 
-echo -e "${GREEN}Deployment completed!${NC}"
-echo -e "${GREEN}Instance ID: $INSTANCE_ID${NC}"
-echo -e "${GREEN}Public IP: $PUBLIC_IP${NC}"
-echo -e "${GREEN}SSH Command: ssh -i ${KEY_NAME}.pem ubuntu@$PUBLIC_IP${NC}"
+# Test API root endpoint
+if curl -f -s "http://${EC2_HOST}/" > /dev/null; then
+    echo -e "${GREEN}✓ API root endpoint is accessible${NC}"
+else
+    echo -e "${YELLOW}⚠ API root endpoint check failed${NC}"
+fi
+
+# Test frontend dashboard
+if curl -f -s "http://${EC2_HOST}/api/v1/dashboard/" > /dev/null; then
+    echo -e "${GREEN}✓ Frontend dashboard is accessible${NC}"
+    echo -e "${GREEN}Frontend URL: http://${EC2_HOST}/api/v1/dashboard/${NC}"
+else
+    echo -e "${YELLOW}⚠ Frontend dashboard check failed (may need more time)${NC}"
+fi
+
+# Display deployment summary
+echo ""
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Deployment Summary${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo -e "Instance: ${EC2_HOST}"
+echo -e "API: http://${EC2_HOST}"
+echo -e "Health: http://${EC2_HOST}/health"
+echo -e "Frontend: http://${EC2_HOST}/api/v1/dashboard/"
+echo -e "API Docs: http://${EC2_HOST}/docs"
+echo -e ""
+echo -e "${YELLOW}SSH Command:${NC}"
+echo -e "ssh -i ${SSH_KEY} ${EC2_USER}@${EC2_HOST}"
+echo -e ""
+echo -e "${YELLOW}View logs:${NC}"
+echo -e "ssh -i ${SSH_KEY} ${EC2_USER}@${EC2_HOST} 'cd ~/rag-system && sudo docker-compose logs -f'"
+echo -e ""
