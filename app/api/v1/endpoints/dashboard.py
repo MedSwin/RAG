@@ -860,8 +860,13 @@ async def dashboard_ui():
 @router.get("/stats", response_model=DashboardStats)
 async def get_dashboard_stats(hf_service = Depends(get_hf_service)):
     """Get dashboard statistics."""
+    import asyncio
     try:
-        stats = await hf_service.get_total_statistics()
+        # Add timeout to prevent hanging
+        stats = await asyncio.wait_for(
+            hf_service.get_total_statistics(),
+            timeout=120.0  # 2 minute timeout
+        )
         
         # Convert to response format
         datasets = []
@@ -876,9 +881,26 @@ async def get_dashboard_stats(hf_service = Depends(get_hf_service)):
             datasets=datasets
         )
         
+    except asyncio.TimeoutError:
+        logger.error("Timeout getting dashboard stats")
+        # Return empty stats instead of error
+        return DashboardStats(
+            total_datasets=0,
+            total_rows=0,
+            total_size_gb=0.0,
+            status_counts={},
+            datasets=[]
+        )
     except Exception as e:
         logger.error(f"Error getting dashboard stats: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get dashboard stats: {str(e)}")
+        # Return empty stats instead of error
+        return DashboardStats(
+            total_datasets=0,
+            total_rows=0,
+            total_size_gb=0.0,
+            status_counts={},
+            datasets=[]
+        )
 
 @router.post("/ingest/{dataset_name}", response_model=IngestionResponse)
 async def start_dataset_ingestion(

@@ -131,49 +131,42 @@ class HuggingFaceDatasetService:
     def _get_dataset_info_sync(self, repo_id: str) -> Dict[str, Any]:
         """Synchronous function to get dataset info."""
         try:
-            # Use streaming=False to get actual row counts (but this loads metadata only, not full dataset)
-            # For large datasets, use streaming=True for faster access but we need to count rows differently
-            try:
-                # Try to load dataset info using dataset builder (faster, metadata only)
-                from datasets import load_dataset_builder
-                builder = load_dataset_builder(repo_id, token=self.hf_token)
+            # Try to load dataset info using dataset builder (faster, metadata only)
+            from datasets import load_dataset_builder
+            builder = load_dataset_builder(repo_id, token=self.hf_token)
+            
+            # Get dataset info from builder
+            if hasattr(builder.info, 'splits') and builder.info.splits:
+                total_rows = sum(split.num_examples for split in builder.info.splits.values())
+                # Estimate size from config if available
+                if hasattr(builder.info, 'dataset_size') and builder.info.dataset_size:
+                    size_bytes = builder.info.dataset_size
+                    size_gb = size_bytes / (1024 ** 3)
+                else:
+                    size_gb = total_rows * 0.001  # Rough estimate
                 
-                # Get dataset info from builder
-                if hasattr(builder.info, 'splits') and builder.info.splits:
-                    total_rows = sum(split.num_examples for split in builder.info.splits.values())
-                    # Estimate size from config if available
-                    if hasattr(builder.info, 'dataset_size') and builder.info.dataset_size:
-                        size_bytes = builder.info.dataset_size
-                        size_gb = size_bytes / (1024 ** 3)
-                    else:
-                        size_gb = total_rows * 0.001  # Rough estimate
-                    
-                    return {
-                        "num_rows": total_rows,
-                        "size_gb": round(size_gb, 2),
-                        "splits": list(builder.info.splits.keys())
-                    }
-            except Exception as builder_error:
-                logger.warning(f"Could not use dataset builder for {repo_id}, falling back to load_dataset: {builder_error}")
+                return {
+                    "num_rows": total_rows,
+                    "size_gb": round(size_gb, 2),
+                    "splits": list(builder.info.splits.keys())
+                }
             
-            # Fallback: Load actual dataset (slower but works for all datasets)
-            dataset = load_dataset(repo_id, token=self.hf_token, streaming=False)
-            
-            # Calculate total rows
-            total_rows = sum(len(split) for split in dataset.values())
-            
-            # Estimate size (rough calculation)
-            size_gb = total_rows * 0.001  # Rough estimate: 1KB per row
-            
+            # If builder doesn't have splits info, return defaults
+            logger.warning(f"Dataset builder for {repo_id} doesn't have splits info, using defaults")
             return {
-                "num_rows": total_rows,
-                "size_gb": round(size_gb, 2),
-                "splits": list(dataset.keys())
+                "num_rows": 0,
+                "size_gb": 0,
+                "splits": []
             }
             
         except Exception as e:
-            logger.error(f"Error loading dataset {repo_id}: {e}")
-            raise
+            logger.error(f"Error loading dataset info for {repo_id}: {e}")
+            # Return defaults instead of raising exception
+            return {
+                "num_rows": 0,
+                "size_gb": 0,
+                "splits": []
+            }
     
     async def crawl_dataset(self, dataset_name: str) -> Dict[str, Any]:
         """Crawl and download a dataset from Hugging Face."""
