@@ -89,7 +89,7 @@ rag/
 │   │       │   ├── retrieval.py
 │   │       │   └── storage.py
 │   │       └── router.py         # API router
-│   ├── core/                      # Core configuration and infrastructure
+│   ├── core/                     # Core configuration and infrastructure
 │   │   ├── config.py             # Application settings (updated for MedSwin)
 │   │   ├── database.py           # MongoDB connection
 │   │   ├── state.py              # Global state management
@@ -98,33 +98,33 @@ rag/
 │   │       ├── hnsw.py           # HNSW index builder
 │   │       ├── faiss.py          # FAISS index builder
 │   │       └── tree.py           # Tree index builder
-│   ├── models/                    # Data models (NEW)
+│   ├── models/                   # Data models (NEW)
 │   │   ├── medswin.py            # MedSwin Pydantic models
 │   │   ├── manager.py            # Model manager
-│   │   └── download.py          # Model download utilities
-│   ├── repositories/              # MongoDB repositories (NEW)
+│   │   └── download.py           # Model download utilities
+│   ├── repositories/             # MongoDB repositories (NEW)
 │   │   ├── base.py               # Base repository with org-aware partitioning
 │   │   ├── chunks.py             # Chunk repository
 │   │   ├── documents.py          # Document repository
 │   │   ├── sessions.py           # Session repository
 │   │   └── traces.py             # Trace repository
-│   ├── services/                  # Business logic services
+│   ├── services/                 # Business logic services
 │   │   ├── adapters/             # External service adapters (NEW)
 │   │   │   ├── llm.py            # LLM client (OpenAI-compatible)
-│   │   │   ├── embedding.py     # Embedding service client
-│   │   │   └── reranker.py      # Reranker service client
+│   │   │   ├── embedding.py      # Embedding service client
+│   │   │   └── reranker.py       # Reranker service client
 │   │   ├── medswin/              # MedSwin services (NEW)
-│   │   │   ├── orchestrator.py  # Multi-agent orchestrator
+│   │   │   ├── orchestrator.py   # Multi-agent orchestrator
 │   │   │   ├── policy.py         # Evidence sufficiency policy
-│   │   │   └── retrieval.py     # Two-stage retrieval pipeline
+│   │   │   └── retrieval.py      # Two-stage retrieval pipeline
 │   │   ├── dataset.py            # HuggingFace dataset service
 │   │   ├── ingestion.py          # Ingestion pipeline service
 │   │   ├── preprocessing.py      # Preprocessing service
 │   │   ├── reranker.py           # Reranker service
 │   │   ├── storage.py            # Storage service
-│   │   └── strategy.py          # Index strategy manager
+│   │   └── strategy.py           # Index strategy manager
 │   └── main.py                   # Application entry point
-├── lab/                           # Lab environment (HPC/research)
+├── lab/                          # Lab environment (HPC/research)
 │   ├── preprocessing/            # Data preprocessing and chunking
 │   ├── embedding/                # Embedding model operations
 │   ├── storage/                  # Data storage and indexing
@@ -132,10 +132,10 @@ rag/
 │   ├── reranking/                # Document reranking
 │   ├── database/                 # Database schema and utilities
 │   └── README.md                 # Lab setup documentation
-├── docs/                          # Documentation (NEW)
+├── docs/                         # Documentation (NEW)
 │   ├── MEDSWIN.md                # MedSwin architecture guide
 │   └── INDEXING.md               # Dynamic indexing strategy
-├── aws/                           # AWS deployment scripts
+├── aws/                          # AWS deployment scripts
 │   ├── deploy.sh
 │   └── cleanup.sh
 ├── nginx/                         # Nginx configuration
