@@ -17,7 +17,7 @@ from app.core.indexing import (
     FAISSIndexBuilder,
     TreeIndexBuilder
 )
-from app.services.index_strategy_manager import (
+from app.services.strategy import (
     IndexStrategyManager,
     IndexType,
     IndexStrategy,

@@ -5,8 +5,8 @@ without creating circular imports.
 """
 
 from typing import Optional
-from app.services.model_manager import ModelManager
-from app.services.model_download_service import ModelDownloadService
+from app.models.manager import ModelManager
+from app.models.download import ModelDownloadService
 
 # Global instances
 model_manager: Optional[ModelManager] = None

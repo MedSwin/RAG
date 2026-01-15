@@ -4,9 +4,9 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import logging
 
-from app.services.hf_dataset_service import HuggingFaceDatasetService
-from app.services.ingestion_pipeline_service import IngestionPipelineService
-from app.services.model_download_service import ModelDownloadService
+from app.services.dataset import HuggingFaceDatasetService
+from app.services.ingestion import IngestionPipelineService
+from app.models.download import ModelDownloadService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

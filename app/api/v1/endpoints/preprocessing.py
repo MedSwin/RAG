@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from app.core.state import get_model_manager
 from app.core.config import settings
-from app.services.preprocessing_service import PreprocessingService
+from app.services.preprocessing import PreprocessingService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

@@ -17,7 +17,7 @@ from app.core.indexing import (
     load_faiss_ivf_index,
     load_tree_index
 )
-from app.services.index_strategy_manager import (
+from app.services.strategy import (
     IndexStrategyManager,
     IndexStrategy,
     analyze_query_characteristics

@@ -8,9 +8,9 @@ import json
 
 from app.core.config import settings
 from app.core.database import get_sync_database
-from app.services.hf_dataset_service import HuggingFaceDatasetService
-from app.services.preprocessing_service import PreprocessingService
-from app.services.storage_service import StorageService
+from app.services.dataset import HuggingFaceDatasetService
+from app.services.preprocessing import PreprocessingService
+from app.services.storage import StorageService
 from app.core.state import get_model_manager
 
 logger = logging.getLogger(__name__)

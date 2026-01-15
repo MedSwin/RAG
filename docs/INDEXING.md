@@ -75,9 +75,40 @@ Automatically selects index type based on:
 
 ---
 
+## MedSwin Integration
+
+MedSwin leverages dynamic indexing for its two-stage retrieval pipeline:
+
+### Stage 1: Candidate Retrieval
+- Uses dynamic index selection (HNSW/FAISS/Tree) based on query characteristics
+- Retrieves candidate pool (default K=80, expanded K'=120)
+- Optional BM25 lexical union for rare terms/abbreviations
+
+### Stage 2: Reranking
+- Reranker service (port 8004) scores `(query, passage)` pairs
+- Produces calibrated probabilities `p_hat(q,d)`
+- Works with all index types (HNSW, FAISS, Tree)
+
+### BM25 Integration
+- BM25 index built per organization from tokenized chunk text
+- Stored in MongoDB chunks collection (`tokenized_text` field)
+- Union with dense candidates for comprehensive coverage
+- Enabled via `ENABLE_BM25` environment variable
+
+### Index Selection for MedSwin
+- **HNSW**: Default for general retrieval, high recall
+- **FAISS IVF**: Large datasets, fast ingestion
+- **Tree**: Small structured content, metadata-filtered queries
+
+The `IndexStrategyManager` automatically selects the optimal index based on:
+- Query characteristics (top_k, filters, reranking enabled)
+- Dataset size
+- Content type
+
 ## Next Steps
 
-1. Install dependencies: `pip install faiss-cpu scikit-learn`
+1. Install dependencies: `pip install faiss-cpu scikit-learn rank-bm25`
 2. Run performance benchmarks
 3. Monitor strategy usage and effectiveness
 4. Tune parameters based on production metrics
+5. Configure BM25 for rare medical terms/acronyms

@@ -30,6 +30,7 @@ scipy==1.13.1
 httpx==0.28.1
 requests==2.32.5
 aiohttp==3.12.15
+tenacity==9.0.0
 
 # Utilities
 python-dotenv==1.1.1
@@ -52,3 +53,5 @@ safetensors==0.6.2
 huggingface-hub==0.34.4
 accelerate==1.1.1
 datasets==3.1.0
+rank-bm25==0.2.2
+tiktoken==0.8.0

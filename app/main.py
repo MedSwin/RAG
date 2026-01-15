@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.database import init_database
 from app.core.state import initialize_services, get_model_manager, get_model_download_service, cleanup_services
 from app.api.v1.router import api_router
-from app.services.hf_dataset_service import HuggingFaceDatasetService
+from app.services.dataset import HuggingFaceDatasetService
 import asyncio
 
 # Configure logging
@@ -152,8 +152,8 @@ async def global_exception_handler(request, exc):
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",
-        port=8000,
+        host=settings.APP_HOST,
+        port=settings.APP_PORT,
         reload=settings.DEBUG,
         log_level="info"
     )

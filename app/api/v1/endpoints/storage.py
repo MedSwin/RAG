@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from app.core.state import get_model_manager
 from app.core.config import settings
 from app.core.database import get_sync_database, get_database
-from app.services.storage_service import StorageService
+from app.services.storage import StorageService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

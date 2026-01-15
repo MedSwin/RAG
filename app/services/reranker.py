@@ -166,3 +166,4 @@ class DocumentReranker:
         
         logger.info(f"Reranking complete. Top {len(top_documents)} documents selected.")
         return top_documents
+

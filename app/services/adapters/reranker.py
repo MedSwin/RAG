@@ -1,0 +1,119 @@
+"""Reranker client adapter with retries and timeouts."""
+
+import httpx
+import logging
+from typing import List, Dict, Any, Optional
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class RerankerClient:
+    """Client for reranker endpoints."""
+    
+    def __init__(self, base_url: str, timeout: int = None):
+        """Initialize reranker client.
+        
+        Args:
+            base_url: Base URL for the reranker endpoint
+            timeout: Timeout in seconds (defaults to RERANK_TIMEOUT_S)
+        """
+        self.base_url = base_url
+        self.timeout = timeout or settings.RERANK_TIMEOUT_S
+        self.client = httpx.AsyncClient(timeout=self.timeout)
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
+        reraise=True
+    )
+    async def rerank(
+        self,
+        query: str,
+        passages: List[str],
+        return_logits: bool = False,
+        request_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Rerank passages for a query.
+        
+        Args:
+            query: Query text
+            passages: List of passage texts to rerank
+            return_logits: Whether to return raw logits
+            request_id: Optional request ID for tracing
+            
+        Returns:
+            List of dicts with 'index', 'score', 'logit' (optional), 'p_hat' (calibrated probability)
+            
+        Raises:
+            httpx.HTTPError: If request fails after retries
+        """
+        if not passages:
+            return []
+        
+        payload = {
+            "query": query,
+            "passages": passages,
+            "return_logits": return_logits
+        }
+        
+        headers = {}
+        if request_id:
+            headers["X-Request-ID"] = request_id
+        
+        try:
+            logger.debug(f"Calling reranker at {self.base_url} for {len(passages)} passages")
+            response = await self.client.post(
+                self.base_url,
+                json=payload,
+                headers=headers
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            # Extract scores from response
+            results = []
+            if "results" in data:
+                # Structured format
+                for item in data["results"]:
+                    results.append({
+                        "index": item.get("index", 0),
+                        "score": item.get("score", 0.0),
+                        "logit": item.get("logit"),
+                        "p_hat": item.get("p_hat", item.get("score", 0.0))  # Use score as p_hat if not provided
+                    })
+            elif "scores" in data:
+                # Simple scores array
+                for idx, score in enumerate(data["scores"]):
+                    results.append({
+                        "index": idx,
+                        "score": float(score),
+                        "p_hat": float(score)  # Assume score is already calibrated
+                    })
+            else:
+                # Assume direct list of scores
+                for idx, score in enumerate(data):
+                    results.append({
+                        "index": idx,
+                        "score": float(score),
+                        "p_hat": float(score)
+                    })
+            
+            # Sort by score descending
+            results.sort(key=lambda x: x["score"], reverse=True)
+            
+            return results
+            
+        except httpx.HTTPError as e:
+            logger.error(f"Reranker request failed: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in reranker call: {e}")
+            raise
+    
+    async def close(self):
+        """Close the HTTP client."""
+        await self.client.aclose()
+

@@ -189,3 +189,4 @@ class ModelDownloadService:
         """Cleanup resources."""
         if self.executor:
             self.executor.shutdown(wait=True)
+

@@ -7,7 +7,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from app.core.config import settings
-from app.services.reranker_service import DocumentReranker
+from app.services.reranker import DocumentReranker
 
 logger = logging.getLogger(__name__)
 
@@ -123,3 +123,4 @@ class ModelManager:
             torch.cuda.empty_cache()
         
         logger.info("Model manager cleaned up")
+
