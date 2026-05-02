@@ -23,6 +23,7 @@ class DatasetInfo(BaseModel):
     status: str
     last_processed: Optional[str] = None
     processing_progress: float = 0
+    row_count_source: str = "builder"
 
 class IngestionRequest(BaseModel):
     """Request model for dataset ingestion."""
@@ -727,6 +728,7 @@ async def dashboard_ui():
                 
                 const statusClass = `status-${dataset.status.replace('_', '-')}`;
                 const progress = dataset.processing_progress || 0;
+                const rowLabel = dataset.row_count_source === 'builder' ? 'Rows' : 'Rows (estimated)';
                 
                 card.innerHTML = `
                     <div class="dataset-header">
@@ -740,7 +742,7 @@ async def dashboard_ui():
                     <div class="dataset-stats">
                         <div class="stat-item">
                             <div class="stat-value">${dataset.actual_rows.toLocaleString()}</div>
-                            <div class="stat-desc">Rows</div>
+                            <div class="stat-desc">${rowLabel}</div>
                         </div>
                         <div class="stat-item">
                             <div class="stat-value">${dataset.size_gb} GB</div>

@@ -214,8 +214,50 @@ class Settings(BaseSettings):
         mode = "cloud" if self.CLOUD_MODE else "local"
         return f"{mode}:{self.active_embedding_model()}"
 
+def _path_is_under_app_root(path_value: str) -> bool:
+    """Return True when a configured path targets the Docker /app tree."""
+    return path_value.startswith("/app/")
+
+
+def _local_runtime_path(path_value: str) -> str:
+    """Map a Docker-only /app path to the equivalent local workspace path."""
+    return "." + path_value[4:]
+
+
+def _normalize_runtime_paths(settings: Settings) -> None:
+    """Keep Docker defaults portable in local dev.
+
+    Root Cause vs Logic: the repo ships Docker-oriented defaults under /app,
+    but local imports run from the checkout and cannot create directories in
+    that read-only filesystem. We preserve the same relative layout while
+    rewriting only the /app paths to local workspace equivalents outside
+    containers.
+    """
+    if os.access("/app", os.W_OK):
+        return
+
+    path_fields = [
+        "EMBEDDING_MODEL_PATH",
+        "RERANKER_MODEL_PATH",
+        "HNSW_INDEX_PATH",
+        "HNSW_MAPPING_PATH",
+        "FAISS_INDEX_PATH",
+        "FAISS_MAPPING_PATH",
+        "TREE_INDEX_PATH",
+        "TREE_MAPPING_PATH",
+        "DATA_DIR",
+        "LOG_FILE",
+    ]
+
+    for field_name in path_fields:
+        current_value = getattr(settings, field_name)
+        if isinstance(current_value, str) and _path_is_under_app_root(current_value):
+            setattr(settings, field_name, _local_runtime_path(current_value))
+
+
 # Create settings instance
 settings = Settings()
+_normalize_runtime_paths(settings)
 
 # Validate fusion weights on startup
 if not settings.validate_fusion_weights():
@@ -238,7 +280,7 @@ def ensure_directories():
         Path(settings.LOG_FILE).parent,
         Path("./models"),
         Path("./data"),
-        Path("./logs")
+        Path("./logs"),
     ]
     
     for directory in directories:

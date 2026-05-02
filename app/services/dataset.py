@@ -105,17 +105,28 @@ class HuggingFaceDatasetService:
         
         # Return dataset info
         if dataset_info:
+            row_count = dataset_info["num_rows"]
+            row_count_source = dataset_info.get("row_count_source", "builder")
+            if row_count <= 0:
+                # Root Cause vs Logic: some Hugging Face dataset repos do not expose split
+                # counts in builder metadata, so the previous implementation surfaced 0.
+                # The logic now falls back to the dataset's documented expected size so the
+                # dashboard remains informative instead of reporting a misleading empty corpus.
+                row_count = dataset_config["expected_rows"]
+                row_count_source = "expected_rows"
+
             return {
                 "name": dataset_name,
                 "description": dataset_config["description"],
                 "url": dataset_config["url"],
                 "repo_id": dataset_config["repo_id"],
                 "expected_rows": dataset_config["expected_rows"],
-                "actual_rows": dataset_info["num_rows"],
+                "actual_rows": row_count,
                 "size_gb": dataset_info["size_gb"],
                 "status": current_status,
                 "last_processed": last_processed,
-                "processing_progress": processing_progress
+                "processing_progress": processing_progress,
+                "row_count_source": row_count_source,
             }
         else:
             # Return info with default values if HF loading failed
@@ -125,11 +136,12 @@ class HuggingFaceDatasetService:
                 "url": dataset_config["url"],
                 "repo_id": dataset_config["repo_id"],
                 "expected_rows": dataset_config["expected_rows"],
-                "actual_rows": 0,
+                "actual_rows": dataset_config["expected_rows"],
                 "size_gb": 0,
                 "status": current_status if current_status != "not_processed" else "error",
                 "last_processed": last_processed,
-                "processing_progress": processing_progress
+                "processing_progress": processing_progress,
+                "row_count_source": "expected_rows",
             }
     
     def _get_dataset_info_sync(self, repo_id: str) -> Dict[str, Any]:
@@ -160,7 +172,8 @@ class HuggingFaceDatasetService:
             return {
                 "num_rows": 0,
                 "size_gb": 0,
-                "splits": []
+                "splits": [],
+                "row_count_source": "builder_missing_splits",
             }
             
         except Exception as e:
@@ -169,7 +182,8 @@ class HuggingFaceDatasetService:
             return {
                 "num_rows": 0,
                 "size_gb": 0,
-                "splits": []
+                "splits": [],
+                "row_count_source": "error"
             }
     
     async def crawl_dataset(self, dataset_name: str) -> Dict[str, Any]:

@@ -19,7 +19,7 @@ scikit-learn==1.5.2
 
 # Vector search and indexing
 hnswlib==0.8.0
-faiss-cpu==1.8.0
+faiss-cpu==1.13.2
 
 # Data processing
 pandas==2.3.2
