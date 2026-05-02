@@ -21,7 +21,7 @@ from typing import Any
 
 import ir_datasets
 
-from app.io_utils import write_jsonl
+from app.io import write_jsonl
 
 
 QUERY_TYPE_TO_FACETS = {

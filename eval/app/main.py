@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .io_utils import read_jsonl_cases
+from .io import read_jsonl_cases
 from .runner import run_benchmark
 from .schemas import RunRequest
 

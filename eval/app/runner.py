@@ -7,7 +7,7 @@ from typing import Any
 
 from .audit import aggregate_run, audit_case
 from .config import Settings
-from .io_utils import read_jsonl_cases, write_json
+from .io import read_jsonl_cases, write_json
 from .client import MedSwinClient
 from .schemas import RunAudit, RunRequest
 
