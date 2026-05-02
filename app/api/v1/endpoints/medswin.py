@@ -65,8 +65,8 @@ def get_orchestrator() -> MedSwinOrchestrator:
     """Get or create orchestrator instance."""
     global _orchestrator
     if _orchestrator is None:
-        embedding_client = EmbeddingClient(settings.EMBEDDING_URL)
-        reranker_client = RerankerClient(settings.RERANKER_URL)
+        embedding_client = EmbeddingClient(settings.active_embedding_url())
+        reranker_client = RerankerClient(settings.active_reranker_url())
         _orchestrator = MedSwinOrchestrator(
             embedding_client=embedding_client,
             reranker_client=reranker_client

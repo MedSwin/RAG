@@ -109,7 +109,8 @@ class RetrievalPipeline:
         top_k: Optional[int] = None,
         source_type_filter: Optional[SourceType] = None,
         patient_id: Optional[str] = None,
-        hints: Optional[Dict[str, Any]] = None
+        hints: Optional[Dict[str, Any]] = None,
+        constraints: Optional[Dict[str, Any]] = None
     ) -> List[CandidatePassage]:
         """Perform two-stage retrieval.
         
@@ -136,7 +137,8 @@ class RetrievalPipeline:
             org_id,
             k,
             source_type_filter,
-            patient_id
+            patient_id,
+            constraints
         )
         
         # Stage 1: Lexical retrieval (BM25) if enabled
@@ -147,7 +149,8 @@ class RetrievalPipeline:
                 org_id,
                 k,
                 source_type_filter,
-                patient_id
+                patient_id,
+                constraints
             )
         
         # Union candidates
@@ -164,7 +167,8 @@ class RetrievalPipeline:
         org_id: str,
         k: int,
         source_type_filter: Optional[SourceType],
-        patient_id: Optional[str]
+        patient_id: Optional[str],
+        constraints: Optional[Dict[str, Any]] = None
     ) -> List[CandidatePassage]:
         """Perform dense vector retrieval."""
         try:
@@ -191,11 +195,8 @@ class RetrievalPipeline:
                     chunk_ids.append(chunk_id)
             
             # Fetch chunks with filters
-            filter_dict = {"org_id": org_id, "chunk_id": {"$in": chunk_ids}}
-            if source_type_filter:
-                filter_dict["source_type"] = source_type_filter.value
-            if patient_id:
-                filter_dict["patient_id"] = patient_id
+            filter_dict = self._retrieval_filter(org_id, source_type_filter, patient_id, constraints)
+            filter_dict["chunk_id"] = {"$in": chunk_ids}
             
             db = get_database()
             chunks_cursor = db.chunks.find(filter_dict)
@@ -238,12 +239,13 @@ class RetrievalPipeline:
         org_id: str,
         k: int,
         source_type_filter: Optional[SourceType],
-        patient_id: Optional[str]
+        patient_id: Optional[str],
+        constraints: Optional[Dict[str, Any]] = None
     ) -> List[CandidatePassage]:
         """Perform BM25 lexical retrieval."""
         try:
             # Get or build BM25 index for org
-            bm25 = await self._get_bm25_index(org_id, source_type_filter, patient_id)
+            bm25 = await self._get_bm25_index(org_id, source_type_filter, patient_id, constraints)
             if not bm25:
                 return []
             
@@ -258,11 +260,7 @@ class RetrievalPipeline:
             
             # Fetch chunks
             db = get_database()
-            filter_dict = {"org_id": org_id}
-            if source_type_filter:
-                filter_dict["source_type"] = source_type_filter.value
-            if patient_id:
-                filter_dict["patient_id"] = patient_id
+            filter_dict = self._retrieval_filter(org_id, source_type_filter, patient_id, constraints)
             
             chunks_cursor = db.chunks.find(filter_dict)
             chunks = await chunks_cursor.to_list(length=None)
@@ -296,10 +294,11 @@ class RetrievalPipeline:
         self,
         org_id: str,
         source_type_filter: Optional[SourceType],
-        patient_id: Optional[str]
+        patient_id: Optional[str],
+        constraints: Optional[Dict[str, Any]] = None
     ) -> Optional[BM25Okapi]:
         """Get or build BM25 index for organization."""
-        cache_key = f"{org_id}_{source_type_filter}_{patient_id}"
+        cache_key = f"{org_id}_{source_type_filter}_{patient_id}_{constraints}_{settings.active_embedding_space() if settings.CLOUD_MODE else 'local'}"
         
         if cache_key in self._bm25_cache:
             return self._bm25_cache[cache_key]
@@ -307,11 +306,7 @@ class RetrievalPipeline:
         try:
             # Fetch chunks
             db = get_database()
-            filter_dict = {"org_id": org_id}
-            if source_type_filter:
-                filter_dict["source_type"] = source_type_filter.value
-            if patient_id:
-                filter_dict["patient_id"] = patient_id
+            filter_dict = self._retrieval_filter(org_id, source_type_filter, patient_id, constraints)
             
             chunks_cursor = db.chunks.find(filter_dict, {"chunk_id": 1, "text": 1, "content": 1, "tokenized_text": 1})
             chunks = await chunks_cursor.to_list(length=None)
@@ -338,6 +333,73 @@ class RetrievalPipeline:
         except Exception as e:
             logger.error(f"Failed to build BM25 index: {e}")
             return None
+
+    def _retrieval_filter(
+        self,
+        org_id: str,
+        source_type_filter: Optional[SourceType],
+        patient_id: Optional[str],
+        constraints: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Build Mongo retrieval filters from policy constraints."""
+        constraints = constraints or {}
+        filter_dict: Dict[str, Any] = {"org_id": org_id}
+
+        source_policy = constraints.get("source_policy")
+        if source_type_filter:
+            filter_dict["source_type"] = source_type_filter.value
+        elif source_policy and source_policy != "ANY":
+            filter_dict["source_type"] = source_policy
+
+        if patient_id:
+            filter_dict["patient_id"] = patient_id
+
+        if settings.CLOUD_MODE:
+            filter_dict["embedding_space"] = settings.active_embedding_space()
+            filter_dict["embedding_model"] = settings.CLOUD_EMBEDDING
+
+        min_grade = constraints.get("min_evidence_grade")
+        if min_grade is not None:
+            try:
+                min_grade_value = float(min_grade)
+                filter_dict["$or"] = [
+                    {"evidence_grade.score": {"$gte": min_grade_value}},
+                    {"metadata.evidence_grade.score": {"$gte": min_grade_value}},
+                    {"source_reliability": {"$gte": min_grade_value}},
+                ]
+            except (TypeError, ValueError):
+                pass
+
+        timeframe = constraints.get("timeframe")
+        if isinstance(timeframe, dict):
+            date_filter = {}
+            if timeframe.get("start"):
+                date_filter["$gte"] = timeframe["start"]
+            if timeframe.get("end"):
+                date_filter["$lte"] = timeframe["end"]
+            if date_filter:
+                filter_dict["$and"] = filter_dict.get("$and", []) + [
+                    {"$or": [{"timestamp": date_filter}, {"metadata.effective_date": date_filter}]}
+                ]
+        elif isinstance(timeframe, str) and len(timeframe) == 4 and timeframe.isdigit():
+            filter_dict["$and"] = filter_dict.get("$and", []) + [
+                {"$or": [
+                    {"timestamp": {"$gte": f"{timeframe}-01-01", "$lte": f"{timeframe}-12-31"}},
+                    {"metadata.effective_date": {"$gte": f"{timeframe}-01-01", "$lte": f"{timeframe}-12-31"}},
+                ]}
+            ]
+
+        specialties = constraints.get("specialties") or []
+        if specialties:
+            filter_dict["$and"] = filter_dict.get("$and", []) + [
+                {"$or": [
+                    {"tags": {"$in": specialties}},
+                    {"metadata.specialty": {"$in": specialties}},
+                    {"metadata.specialties": {"$in": specialties}},
+                ]}
+            ]
+
+        return filter_dict
     
     def _union_candidates(
         self,
@@ -405,7 +467,7 @@ class RetrievalPipeline:
                     candidates[idx].rerank_score = p_hat
                     candidates[idx].calibrated_score = p_hat
                     candidates[idx].metadata["rerank_logit"] = result.get("logit")
-                    candidates[idx].metadata["calibration_version"] = result.get("calibration_version")
+                    candidates[idx].metadata["calibration_version"] = result.get("calibration_version") or "identity:raw-rerank"
             
             # Sort by rerank score
             candidates.sort(key=lambda x: x.rerank_score or 0.0, reverse=True)
@@ -576,7 +638,47 @@ class RetrievalPipeline:
             else:
                 break
 
+        self._preserve_critical_safety_evidence(selected, remaining, token_budget)
         return selected
+
+    def _preserve_critical_safety_evidence(
+        self,
+        selected: List[CandidatePassage],
+        remaining: List[CandidatePassage],
+        token_budget: int,
+    ) -> None:
+        """Keep high-severity safety/conflict evidence from being pruned away."""
+        if not remaining:
+            return
+        selected_ids = {item.chunk_id for item in selected}
+        critical = [
+            item for item in remaining
+            if item.chunk_id not in selected_ids
+            and ((item.safety_score or self._compute_safety_score(item)) >= 0.48
+                 or (item.contradiction_score or self._compute_contradiction_score(item)) >= 0.48)
+        ]
+        if not critical:
+            return
+        current_tokens = sum(self._token_count(item) for item in selected)
+        for item in sorted(critical, key=lambda c: ((c.safety_score or 0.0) + (c.contradiction_score or 0.0), c.fusion_score or 0.0), reverse=True):
+            tokens = self._token_count(item)
+            if current_tokens + tokens <= token_budget and len(selected) < settings.MMR_MAX_EVIDENCE_CHUNKS:
+                item.selected_reason = "protected_critical_safety_or_contradiction"
+                selected.append(item)
+                current_tokens += tokens
+                return
+            replaceable = [
+                candidate for candidate in selected
+                if (candidate.safety_score or 0.0) < 0.48 and (candidate.contradiction_score or 0.0) < 0.48
+            ]
+            if replaceable:
+                victim = min(replaceable, key=lambda candidate: candidate.fusion_score or 0.0)
+                projected = current_tokens - self._token_count(victim) + tokens
+                if projected <= token_budget:
+                    selected.remove(victim)
+                    item.selected_reason = "protected_critical_safety_or_contradiction"
+                    selected.append(item)
+                    return
 
     def _candidate_marginal_utility(
         self,

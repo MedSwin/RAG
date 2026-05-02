@@ -13,7 +13,13 @@ logger = logging.getLogger(__name__)
 class EmbeddingClient:
     """Client for embedding endpoints."""
     
-    def __init__(self, base_url: str, timeout: int = None):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: int = None,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
         """Initialize embedding client.
         
         Args:
@@ -22,6 +28,8 @@ class EmbeddingClient:
         """
         self.base_url = base_url
         self.timeout = timeout or settings.EMBED_TIMEOUT_S
+        self.model = model or (settings.CLOUD_EMBEDDING if settings.CLOUD_MODE else "default")
+        self.api_key = api_key or (settings.AZURE_AI_FOUNDRY_API_KEY if settings.CLOUD_MODE else None)
         self.client = httpx.AsyncClient(timeout=self.timeout)
     
     @retry(
@@ -48,10 +56,12 @@ class EmbeddingClient:
         
         payload = {
             "input": texts,
-            "model": "default"  # Most embedding APIs accept this
+            "model": self.model
         }
         
         headers = {}
+        if self.api_key:
+            headers["api-key"] = self.api_key
         if request_id:
             headers["X-Request-ID"] = request_id
         
@@ -91,4 +101,3 @@ class EmbeddingClient:
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()
-

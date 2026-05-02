@@ -12,7 +12,14 @@ logger = logging.getLogger(__name__)
 class RerankerClient:
     """Client for reranker endpoints."""
     
-    def __init__(self, base_url: str, timeout: int = None):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: int = None,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        provider: Optional[str] = None,
+    ):
         """Initialize reranker client.
         
         Args:
@@ -21,6 +28,9 @@ class RerankerClient:
         """
         self.base_url = base_url
         self.timeout = timeout or settings.RERANK_TIMEOUT_S
+        self.model = model or (settings.CLOUD_RERANKER if settings.CLOUD_MODE else "default")
+        self.api_key = api_key or (settings.AZURE_AI_FOUNDRY_API_KEY if settings.CLOUD_MODE else None)
+        self.provider = provider or ("cohere" if settings.CLOUD_MODE else "default")
         self.client = httpx.AsyncClient(timeout=self.timeout)
     
     @retry(
@@ -53,13 +63,23 @@ class RerankerClient:
         if not passages:
             return []
         
-        payload = {
-            "query": query,
-            "passages": passages,
-            "return_logits": return_logits
-        }
+        if self.provider == "cohere":
+            payload = {
+                "model": self.model,
+                "query": query,
+                "documents": passages,
+                "top_n": len(passages),
+            }
+        else:
+            payload = {
+                "query": query,
+                "passages": passages,
+                "return_logits": return_logits
+            }
         
         headers = {}
+        if self.api_key:
+            headers["api-key"] = self.api_key
         if request_id:
             headers["X-Request-ID"] = request_id
         
@@ -75,14 +95,24 @@ class RerankerClient:
             
             # Extract scores from response
             results = []
-            if "results" in data:
+            if self.provider == "cohere" and "results" in data:
+                for item in data["results"]:
+                    score = float(item.get("relevance_score", item.get("score", 0.0)))
+                    results.append({
+                        "index": item.get("index", 0),
+                        "score": score,
+                        "p_hat": score,
+                        "calibration_version": "identity:cohere-v2",
+                    })
+            elif "results" in data:
                 # Structured format
                 for item in data["results"]:
                     results.append({
                         "index": item.get("index", 0),
                         "score": item.get("score", 0.0),
                         "logit": item.get("logit"),
-                        "p_hat": item.get("p_hat", item.get("score", 0.0))  # Use score as p_hat if not provided
+                        "p_hat": item.get("p_hat", item.get("score", 0.0)),
+                        "calibration_version": item.get("calibration_version"),
                     })
             elif "scores" in data:
                 # Simple scores array
@@ -116,4 +146,3 @@ class RerankerClient:
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()
-

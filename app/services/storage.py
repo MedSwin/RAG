@@ -1,6 +1,11 @@
-import pymongo
-from pymongo import MongoClient
-from motor.motor_asyncio import AsyncIOMotorClient
+try:
+    import pymongo
+except ModuleNotFoundError:
+    pymongo = None
+try:
+    from pymongo import MongoClient
+except ModuleNotFoundError:
+    MongoClient = None
 import json
 import logging
 from typing import List, Dict, Any, Optional
@@ -12,11 +17,15 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.database import get_sync_database, get_database
-from app.core.indexing import (
-    HNSWIndexBuilder,
-    FAISSIndexBuilder,
-    TreeIndexBuilder
-)
+from app.services.adapters.embedding import EmbeddingClient
+try:
+    from app.core.indexing import (
+        HNSWIndexBuilder,
+        FAISSIndexBuilder,
+        TreeIndexBuilder
+    )
+except ModuleNotFoundError:
+    HNSWIndexBuilder = FAISSIndexBuilder = TreeIndexBuilder = None
 from app.services.strategy import (
     IndexStrategyManager,
     IndexType,
@@ -25,6 +34,17 @@ from app.services.strategy import (
 )
 
 logger = logging.getLogger(__name__)
+
+EMBEDDING_REFRESH_STATUS: Dict[str, Any] = {
+    "running": False,
+    "ready": not settings.CLOUD_MODE,
+    "updated": 0,
+    "stale": 0,
+    "error": None,
+    "embedding_space": settings.active_embedding_space(),
+    "started_at": None,
+    "completed_at": None,
+}
 
 class StorageService:
     """Service for managing data storage and indexing."""
@@ -155,6 +175,89 @@ class StorageService:
         except Exception as e:
             logger.error(f"Error building HNSW index: {e}")
             raise
+
+    async def refresh_cloud_embeddings(self, batch_size: Optional[int] = None) -> Dict[str, Any]:
+        """Refresh stale chunk embeddings for the active cloud embedding space.
+
+        Motivation vs Logic: Cloud embedding models occupy a different vector
+        space from local models, so mixed indexes would silently corrupt
+        retrieval. Refresh runs in the background and marks readiness only after
+        chunks are re-embedded and the active index is rebuilt.
+        """
+        if not settings.CLOUD_MODE:
+            EMBEDDING_REFRESH_STATUS.update({"running": False, "ready": True, "error": None})
+            return EMBEDDING_REFRESH_STATUS.copy()
+
+        batch_size = batch_size or settings.BATCH_SIZE
+        EMBEDDING_REFRESH_STATUS.update({
+            "running": True,
+            "ready": False,
+            "updated": 0,
+            "error": None,
+            "embedding_space": settings.active_embedding_space(),
+            "started_at": datetime.now(timezone.utc),
+            "completed_at": None,
+        })
+
+        try:
+            db = get_database()
+            coll = db["chunks"]
+            stale_filter = self._stale_embedding_filter()
+            stale_count = await coll.count_documents(stale_filter)
+            EMBEDDING_REFRESH_STATUS["stale"] = stale_count
+
+            client = EmbeddingClient(settings.active_embedding_url())
+            try:
+                while True:
+                    cursor = coll.find(stale_filter).limit(batch_size)
+                    chunks = await cursor.to_list(length=batch_size)
+                    if not chunks:
+                        break
+                    texts = [chunk.get("text") or chunk.get("content", "") for chunk in chunks]
+                    embeddings = await client.embed(texts)
+                    for chunk, embedding in zip(chunks, embeddings):
+                        await coll.update_one(
+                            {"_id": chunk["_id"]},
+                            {"$set": {
+                                "embedding": embedding.tolist(),
+                                "embedding_model": settings.CLOUD_EMBEDDING,
+                                "embedding_dim": int(len(embedding)),
+                                "embedding_space": settings.active_embedding_space(),
+                                "embedding_updated_at": datetime.now(timezone.utc),
+                            }},
+                        )
+                        EMBEDDING_REFRESH_STATUS["updated"] += 1
+            finally:
+                await client.close()
+
+            await self.build_hnsw_index_async(force_rebuild=True)
+            EMBEDDING_REFRESH_STATUS.update({
+                "running": False,
+                "ready": True,
+                "completed_at": datetime.now(timezone.utc),
+            })
+        except Exception as e:
+            logger.error(f"Cloud embedding refresh failed: {e}", exc_info=True)
+            EMBEDDING_REFRESH_STATUS.update({
+                "running": False,
+                "ready": False,
+                "error": str(e),
+                "completed_at": datetime.now(timezone.utc),
+            })
+        return EMBEDDING_REFRESH_STATUS.copy()
+
+    def get_embedding_refresh_status(self) -> Dict[str, Any]:
+        return EMBEDDING_REFRESH_STATUS.copy()
+
+    def _stale_embedding_filter(self) -> Dict[str, Any]:
+        return {
+            "$or": [
+                {"embedding_space": {"$ne": settings.active_embedding_space()}},
+                {"embedding_space": {"$exists": False}},
+                {"embedding_model": {"$ne": settings.CLOUD_EMBEDDING}},
+                {"embedding_model": {"$exists": False}},
+            ]
+        }
     
     def _build_hnsw_index_sync(
         self,
@@ -170,7 +273,7 @@ class StorageService:
             
             # Get all chunks with embeddings
             chunks = list(coll.find(
-                {"embedding": {"$exists": True, "$ne": []}},
+                self._index_embedding_filter(),
                 {"chunk_id": 1, "embedding": 1, "embedding_dim": 1, "metadata": 1}
             ))
             
@@ -249,6 +352,13 @@ class StorageService:
                 "total_vectors": 0,
                 "message": f"Index building failed: {str(e)}"
             }
+
+    def _index_embedding_filter(self) -> Dict[str, Any]:
+        filter_dict: Dict[str, Any] = {"embedding": {"$exists": True, "$ne": []}}
+        if settings.CLOUD_MODE:
+            filter_dict["embedding_space"] = settings.active_embedding_space()
+            filter_dict["embedding_model"] = settings.CLOUD_EMBEDDING
+        return filter_dict
     
     async def get_storage_stats(self) -> Dict[str, Any]:
         """Get storage statistics."""
@@ -259,6 +369,12 @@ class StorageService:
             # Get basic stats
             total_chunks = coll.count_documents({})
             total_embeddings = coll.count_documents({"embedding": {"$exists": True, "$ne": []}})
+            if settings.CLOUD_MODE:
+                active_embeddings = coll.count_documents(self._index_embedding_filter())
+                stale_embeddings = coll.count_documents(self._stale_embedding_filter())
+            else:
+                active_embeddings = total_embeddings
+                stale_embeddings = 0
             
             # Check index existence
             index_path = Path(settings.HNSW_INDEX_PATH)
@@ -278,6 +394,12 @@ class StorageService:
             return {
                 "total_chunks": total_chunks,
                 "total_embeddings": total_embeddings,
+                "active_embeddings": active_embeddings,
+                "stale_embeddings": stale_embeddings,
+                "cloud_mode": settings.CLOUD_MODE,
+                "active_embedding_model": settings.active_embedding_model(),
+                "active_embedding_space": settings.active_embedding_space(),
+                "embedding_refresh": self.get_embedding_refresh_status(),
                 "index_exists": index_exists,
                 "index_size": index_size,
                 "last_updated": last_updated

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import logging
 import asyncio
@@ -47,6 +47,12 @@ class StorageStats(BaseModel):
     """Model for storage statistics."""
     total_chunks: int
     total_embeddings: int
+    active_embeddings: int = 0
+    stale_embeddings: int = 0
+    cloud_mode: bool = False
+    active_embedding_model: Optional[str] = None
+    active_embedding_space: Optional[str] = None
+    embedding_refresh: Dict[str, Any] = Field(default_factory=dict)
     index_exists: bool
     index_size: Optional[int] = None
     last_updated: Optional[datetime] = None

@@ -1,7 +1,6 @@
 """MedSwin orchestrator with supervisor + specialist agents."""
 
 import logging
-import json
 import uuid
 from typing import Dict, Any, Optional, List
 from datetime import datetime
@@ -12,6 +11,12 @@ from app.services.adapters.embedding import EmbeddingClient
 from app.services.adapters.reranker import RerankerClient
 from app.services.medswin.retrieval import RetrievalPipeline
 from app.services.medswin.policy import EvidenceSufficiencyPolicy
+from app.services.prompts import answer as answer_prompt
+from app.services.prompts import emr as emr_prompt
+from app.services.prompts import guideline as guideline_prompt
+from app.services.prompts import query as query_prompt
+from app.services.prompts import safety as safety_prompt
+from app.services.prompts.structured import extract_json_object
 from app.repositories.chunks import ChunkRepository
 from app.repositories.documents import DocumentRepository
 from app.repositories.sessions import SessionRepository
@@ -52,13 +57,14 @@ class MedSwinOrchestrator:
             reranker_client: Optional reranker client
         """
         # Initialize clients
-        self.supervisor_client = LLMClient(settings.SUPERVISOR_URL)
-        self.agent1_client = LLMClient(settings.AGENT1_URL)
-        self.agent2_client = LLMClient(settings.AGENT2_URL)
-        self.agent3_client = LLMClient(settings.AGENT3_URL)
+        cloud_model = settings.CLOUD_MODEL if settings.CLOUD_MODE else None
+        self.supervisor_client = LLMClient(settings.active_llm_url(settings.SUPERVISOR_URL), model=cloud_model)
+        self.agent1_client = LLMClient(settings.active_llm_url(settings.AGENT1_URL), model=cloud_model)
+        self.agent2_client = LLMClient(settings.active_llm_url(settings.AGENT2_URL), model=cloud_model)
+        self.agent3_client = LLMClient(settings.active_llm_url(settings.AGENT3_URL), model=cloud_model)
         
-        self.embedding_client = embedding_client or EmbeddingClient(settings.EMBEDDING_URL)
-        self.reranker_client = reranker_client or RerankerClient(settings.RERANKER_URL)
+        self.embedding_client = embedding_client or EmbeddingClient(settings.active_embedding_url())
+        self.reranker_client = reranker_client or RerankerClient(settings.active_reranker_url())
         
         # Initialize services
         self.retrieval_pipeline = RetrievalPipeline(
@@ -235,7 +241,7 @@ class MedSwinOrchestrator:
         messages = [
             {
                 "role": "system",
-                "content": "You are a medical query normalization system. Extract canonical terms, abbreviations, and retrieval hints from medical queries."
+                "content": query_prompt.SYSTEM
             },
             {
                 "role": "user",
@@ -246,29 +252,10 @@ class MedSwinOrchestrator:
         try:
             response = await self.supervisor_client.call_llm(
                 messages,
-                json_schema={
-                    "type": "object",
-                    "properties": {
-                        "canonical_terms": {"type": "array", "items": {"type": "string"}},
-                        "abbreviations": {"type": "object"},
-                        "retrieval_hints": {"type": "object"},
-                        "specialty": {"type": "string"},
-                        "medications": {"type": "array", "items": {"type": "string"}},
-                        "labs": {"type": "array", "items": {"type": "string"}},
-                        "clinical_scope": {"type": "string"},
-                        "facets": {"type": "array", "items": {"type": "object"}}
-                    }
-                }
+                json_schema=query_prompt.SCHEMA
             )
             
-            # Parse JSON from response
-            content = response["content"]
-            if content.startswith("```json"):
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif content.startswith("```"):
-                content = content.split("```")[1].split("```")[0].strip()
-            
-            spec_data = json.loads(content)
+            spec_data = extract_json_object(response["content"])
             spec_data.setdefault("clinical_scope", ClinicalScope.CLINICIAN_CDS.value)
             query_spec = QuerySpec(**spec_data)
             
@@ -331,7 +318,8 @@ class MedSwinOrchestrator:
                 org_id=org_id,
                 source_type_filter=source_type_filter,
                 patient_id=patient_id,
-                hints=hints
+                hints=hints,
+                constraints=constraints,
             )
             
             # Rerank
@@ -434,7 +422,7 @@ class MedSwinOrchestrator:
         messages = [
             {
                 "role": "system",
-                "content": "You are a medical EMR summarization system. Extract structured patient state from EMR passages."
+                "content": emr_prompt.SYSTEM
             },
             {
                 "role": "user",
@@ -445,27 +433,10 @@ class MedSwinOrchestrator:
         try:
             response = await self.agent2_client.call_llm(
                 messages,
-                json_schema={
-                    "type": "object",
-                    "properties": {
-                        "timeline": {"type": "array"},
-                        "problems": {"type": "array", "items": {"type": "string"}},
-                        "medications": {"type": "array", "items": {"type": "string"}},
-                        "allergies": {"type": "array", "items": {"type": "string"}},
-                        "vitals": {"type": "object"},
-                        "labs": {"type": "object"},
-                        "contraindications_flags": {"type": "array", "items": {"type": "string"}}
-                    }
-                }
+                json_schema=emr_prompt.SCHEMA
             )
             
-            content = response["content"]
-            if content.startswith("```json"):
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif content.startswith("```"):
-                content = content.split("```")[1].split("```")[0].strip()
-            
-            summary_data = json.loads(content)
+            summary_data = extract_json_object(response["content"])
             emr_summary = EMRSummary(patient_id=patient_id, **summary_data)
             
             trace.messages.append(AgentMessage(
@@ -499,7 +470,7 @@ class MedSwinOrchestrator:
         messages = [
             {
                 "role": "system",
-                "content": "You are a clinical guideline synthesis system. Extract actionable recommendations and contraindications from guideline passages."
+                "content": guideline_prompt.SYSTEM
             },
             {
                 "role": "user",
@@ -510,25 +481,10 @@ class MedSwinOrchestrator:
         try:
             response = await self.agent3_client.call_llm(
                 messages,
-                json_schema={
-                    "type": "object",
-                    "properties": {
-                        "recommendations": {"type": "array", "items": {"type": "string"}},
-                        "contraindications": {"type": "array", "items": {"type": "string"}},
-                        "guideline_strength": {"type": "string"},
-                        "guideline_grade": {"type": "string"},
-                        "source_guidelines": {"type": "array", "items": {"type": "string"}}
-                    }
-                }
+                json_schema=guideline_prompt.SCHEMA
             )
             
-            content = response["content"]
-            if content.startswith("```json"):
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif content.startswith("```"):
-                content = content.split("```")[1].split("```")[0].strip()
-            
-            summary_data = json.loads(content)
+            summary_data = extract_json_object(response["content"])
             guideline_summary = GuidelineSummary(**summary_data)
             
             trace.messages.append(AgentMessage(
@@ -557,7 +513,7 @@ class MedSwinOrchestrator:
         messages = [
             {
                 "role": "system",
-                "content": "You are a medical safety critique system. Check missing evidence, conflicts, unsafe suggestions, and clinician-CDS boundary violations. Do not make a final diagnosis."
+                "content": safety_prompt.SYSTEM
             },
             {
                 "role": "user",
@@ -568,26 +524,10 @@ class MedSwinOrchestrator:
         try:
             response = await self.supervisor_client.call_llm(
                 messages,
-                json_schema={
-                    "type": "object",
-                    "properties": {
-                        "missing_evidence": {"type": "array", "items": {"type": "string"}},
-                        "conflicts": {"type": "array", "items": {"type": "string"}},
-                        "unsafe_suggestions": {"type": "array", "items": {"type": "string"}},
-                        "insufficient_evidence": {"type": "boolean"},
-                        "requires_clarification": {"type": "boolean"},
-                        "clarification_questions": {"type": "array", "items": {"type": "string"}}
-                    }
-                }
+                json_schema=safety_prompt.SCHEMA
             )
             
-            content = response["content"]
-            if content.startswith("```json"):
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif content.startswith("```"):
-                content = content.split("```")[1].split("```")[0].strip()
-            
-            report_data = json.loads(content)
+            report_data = extract_json_object(response["content"])
             safety_report = SafetyReport(**report_data)
             
             trace.messages.append(AgentMessage(
@@ -622,7 +562,7 @@ class MedSwinOrchestrator:
         messages = [
             {
                 "role": "system",
-                "content": "You are a clinician decision-support assistant. Provide evidence-based support with citations, uncertainty, and safety caveats. Never claim to make or finalize a diagnosis."
+                "content": answer_prompt.SYSTEM
             },
             {
                 "role": "user",
@@ -651,8 +591,9 @@ Do not present autonomous diagnosis or treatment orders."""
         ]
         
         try:
-            response = await self.supervisor_client.call_llm(messages)
-            answer = ensure_cds_language(response["content"])
+            response = await self.supervisor_client.call_llm(messages, json_schema=answer_prompt.SCHEMA)
+            answer_data = extract_json_object(response["content"])
+            answer = ensure_cds_language(self._render_final_answer(answer_data, evidence_bundle))
             
             trace.messages.append(AgentMessage(
                 role="assistant",
@@ -667,6 +608,31 @@ Do not present autonomous diagnosis or treatment orders."""
         except Exception as e:
             logger.error(f"Final answer generation failed: {e}")
             return "I encountered an error generating the answer. Please try again."
+
+    def _render_final_answer(self, answer_data: Dict[str, Any], evidence_bundle: EvidenceBundle) -> str:
+        """Render structured final answer while rejecting fabricated citations."""
+        allowed_chunk_ids = {passage.chunk_id for passage in evidence_bundle.passages}
+        cited_items = []
+        for item in answer_data.get("evidence_used", []):
+            chunk_id = str(item.get("chunk_id", ""))
+            if chunk_id in allowed_chunk_ids:
+                cited_items.append(f"- {chunk_id}: {item.get('use', 'supporting evidence')}")
+
+        sections = [str(answer_data.get("answer", "")).strip()]
+        if cited_items:
+            sections.append("Evidence used:\n" + "\n".join(cited_items))
+        else:
+            sections.append("Evidence used: No valid retrieved chunk citations were provided by the model.")
+        uncertainty = answer_data.get("uncertainty")
+        if uncertainty:
+            sections.append(f"Uncertainty: {uncertainty}")
+        risks = [str(item) for item in answer_data.get("contraindications_risks", []) if item]
+        if risks:
+            sections.append("Contraindications/risks:\n" + "\n".join(f"- {item}" for item in risks))
+        next_steps = [str(item) for item in answer_data.get("next_steps", []) if item]
+        if next_steps:
+            sections.append("Next steps:\n" + "\n".join(f"- {item}" for item in next_steps))
+        return "\n\n".join(part for part in sections if part)
 
     def _build_citations(self, evidence_bundle: EvidenceBundle) -> List[Dict[str, Any]]:
         """Build rich citations from selected evidence and ledger facets."""

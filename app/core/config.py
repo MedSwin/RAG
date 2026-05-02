@@ -1,15 +1,17 @@
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 from typing import List, Optional
 import os
 from pathlib import Path
 
 class Settings(BaseSettings):
     """Application settings for MedSwin."""
+    model_config = ConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
     
     # Application settings
     APP_NAME: str = "MedSwin"
     DEBUG: bool = False
-    VERSION: str = "1.0.0"
+    VERSION: str = "1.1.0"
     
     # Server settings
     APP_HOST: str = "0.0.0.0"
@@ -32,6 +34,18 @@ class Settings(BaseSettings):
     AGENT3_URL: str = "http://localhost:8003/v1/chat/completions"
     RERANKER_URL: str = "http://localhost:8004/rerank"
     EMBEDDING_URL: str = "http://localhost:8005/embeddings"
+
+    # Cloud mode with Azure AI Foundry
+    # Root Cause vs Logic: Azure variables were already present in local .env,
+    # but pydantic rejected unknown keys during import. Cloud settings are
+    # first-class now, while extra env keys stay non-fatal for deploy drift.
+    CLOUD_MODE: bool = False
+    CLOUD_MODEL: str = "gpt-5.4"
+    CLOUD_EMBEDDING: str = "embed-v-4-0"
+    CLOUD_RERANKER: str = "Cohere-rerank-v4.0-fast"
+    AZURE_AI_FOUNDRY_ENDPOINT: Optional[str] = None
+    AZURE_AI_FOUNDRY_API_KEY: Optional[str] = None
+    CLOUD_RERANKER_URI: str = "https://parth-miy1kx0s-eastus2.services.ai.azure.com/providers/cohere/v2/rerank"
     
     # Service timeouts
     LLM_TIMEOUT_S: int = 60
@@ -141,10 +155,6 @@ class Settings(BaseSettings):
     AWS_REGION: str = "us-east-1"
     EC2_INSTANCE_TYPE: str = "g4dn.xlarge"
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-    
     def validate_fusion_weights(self) -> bool:
         """Validate that base fusion weights are within a stable range."""
         total = (
@@ -169,6 +179,40 @@ class Settings(BaseSettings):
         if self.FUSION_LOGIT_CLIP <= 0:
             return False
         return True
+
+    def cloud_openai_base_url(self) -> str:
+        """Return Azure AI Foundry OpenAI v1 base URL."""
+        endpoint = (self.AZURE_AI_FOUNDRY_ENDPOINT or "").strip()
+        if not endpoint:
+            return ""
+        endpoint = endpoint.rstrip("/")
+        if endpoint.endswith("/openai/v1"):
+            return f"{endpoint}/"
+        if endpoint.endswith("/openai"):
+            return f"{endpoint}/v1/"
+        return f"{endpoint}/openai/v1/"
+
+    def cloud_chat_url(self) -> str:
+        return f"{self.cloud_openai_base_url()}chat/completions"
+
+    def cloud_embedding_url(self) -> str:
+        return f"{self.cloud_openai_base_url()}embeddings"
+
+    def active_llm_url(self, fallback_url: str) -> str:
+        return self.cloud_chat_url() if self.CLOUD_MODE else fallback_url
+
+    def active_embedding_url(self) -> str:
+        return self.cloud_embedding_url() if self.CLOUD_MODE else self.EMBEDDING_URL
+
+    def active_reranker_url(self) -> str:
+        return self.CLOUD_RERANKER_URI if self.CLOUD_MODE else self.RERANKER_URL
+
+    def active_embedding_model(self) -> str:
+        return self.CLOUD_EMBEDDING if self.CLOUD_MODE else self.EMBEDDING_MODEL_PATH
+
+    def active_embedding_space(self) -> str:
+        mode = "cloud" if self.CLOUD_MODE else "local"
+        return f"{mode}:{self.active_embedding_model()}"
 
 # Create settings instance
 settings = Settings()
@@ -198,7 +242,11 @@ def ensure_directories():
     ]
     
     for directory in directories:
-        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            import warnings
+            warnings.warn(f"Could not create configured directory {directory}: {exc}")
 
 # Initialize directories
 ensure_directories()

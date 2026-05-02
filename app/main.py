@@ -10,6 +10,7 @@ from app.core.database import init_database
 from app.core.state import initialize_services, get_model_manager, get_model_download_service, cleanup_services
 from app.api.v1.router import api_router
 from app.services.dataset import HuggingFaceDatasetService
+from app.services.storage import StorageService
 import asyncio
 
 # Configure logging
@@ -40,29 +41,36 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Database connection failed (this is expected if security group not configured): {e}")
         logger.warning("Application will start but database features may not be available")
     
-    # Download models if not present
-    try:
-        logger.info("Checking and downloading models...")
-        model_download_service = get_model_download_service()
-        download_results = await model_download_service.download_all_models()
-        for model_name, result in download_results.items():
-            if result["success"]:
-                logger.info(f"Model {model_name}: {result['message']}")
-            else:
-                logger.warning(f"Model {model_name}: {result.get('error', 'Unknown error')}")
-    except Exception as e:
-        logger.error(f"Failed to download models: {e}")
-        # Continue without failing startup
-    
-    # Load models
-    try:
-        model_manager = get_model_manager()
-        await model_manager.load_embedding_model()
-        await model_manager.load_reranker_model()
-        logger.info("Models loaded successfully")
-    except Exception as e:
-        logger.error(f"Failed to load models: {e}")
-        logger.warning("Continuing without models - some features may not be available")
+    if settings.CLOUD_MODE:
+        logger.info("Cloud mode enabled; skipping local HF model download/load")
+        try:
+            asyncio.create_task(StorageService().refresh_cloud_embeddings())
+        except Exception as e:
+            logger.warning(f"Could not start cloud embedding refresh: {e}")
+    else:
+        # Download models if not present
+        try:
+            logger.info("Checking and downloading models...")
+            model_download_service = get_model_download_service()
+            download_results = await model_download_service.download_all_models()
+            for model_name, result in download_results.items():
+                if result["success"]:
+                    logger.info(f"Model {model_name}: {result['message']}")
+                else:
+                    logger.warning(f"Model {model_name}: {result.get('error', 'Unknown error')}")
+        except Exception as e:
+            logger.error(f"Failed to download models: {e}")
+            # Continue without failing startup
+        
+        # Load models
+        try:
+            model_manager = get_model_manager()
+            await model_manager.load_embedding_model()
+            await model_manager.load_reranker_model()
+            logger.info("Models loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load models: {e}")
+            logger.warning("Continuing without models - some features may not be available")
     
     # Preload dataset information in background (non-blocking)
     async def preload_datasets():
@@ -125,6 +133,20 @@ async def root():
 async def health_check():
     """Health check endpoint."""
     try:
+        if settings.CLOUD_MODE:
+            refresh = StorageService().get_embedding_refresh_status()
+            return {
+                "status": "healthy",
+                "cloud_mode": True,
+                "llm_model": settings.CLOUD_MODEL,
+                "embedding_model": settings.CLOUD_EMBEDDING,
+                "reranker_model": settings.CLOUD_RERANKER,
+                "active_embedding_space": settings.active_embedding_space(),
+                "active_index_ready": refresh.get("ready", False),
+                "embedding_refresh": refresh,
+                "database": "connected"
+            }
+
         # Check if models are loaded
         model_manager = get_model_manager()
         embedding_loaded = model_manager.embedding_model is not None
@@ -132,6 +154,7 @@ async def health_check():
         
         return {
             "status": "healthy",
+            "cloud_mode": False,
             "embedding_model": "loaded" if embedding_loaded else "not_loaded",
             "reranker_model": "loaded" if reranker_loaded else "not_loaded",
             "database": "connected"  # Add actual DB check if needed

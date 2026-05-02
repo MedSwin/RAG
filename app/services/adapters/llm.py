@@ -5,6 +5,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from app.core.config import settings
+from app.services.prompts.structured import schema_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,13 @@ logger = logging.getLogger(__name__)
 class LLMClient:
     """Client for OpenAI-compatible LLM endpoints."""
     
-    def __init__(self, base_url: str, timeout: int = None):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: int = None,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
         """Initialize LLM client.
         
         Args:
@@ -21,6 +28,8 @@ class LLMClient:
         """
         self.base_url = base_url
         self.timeout = timeout or settings.LLM_TIMEOUT_S
+        self.model = model or (settings.CLOUD_MODEL if settings.CLOUD_MODE else "default")
+        self.api_key = api_key or (settings.AZURE_AI_FOUNDRY_API_KEY if settings.CLOUD_MODE else None)
         self.client = httpx.AsyncClient(timeout=self.timeout)
     
     @retry(
@@ -53,7 +62,7 @@ class LLMClient:
             httpx.HTTPError: If request fails after retries
         """
         payload = {
-            "model": "default",  # Most OpenAI-compatible APIs accept this
+            "model": self.model,
             "messages": messages,
             "temperature": temperature,
         }
@@ -65,12 +74,14 @@ class LLMClient:
         if json_schema:
             system_msg = {
                 "role": "system",
-                "content": f"You must respond with valid JSON matching this schema: {json_schema}. Return only the JSON, no additional text."
+                "content": schema_instruction(json_schema)
             }
             messages_with_schema = [system_msg] + messages
             payload["messages"] = messages_with_schema
         
         headers = {}
+        if self.api_key:
+            headers["api-key"] = self.api_key
         if request_id:
             headers["X-Request-ID"] = request_id
         
@@ -114,4 +125,3 @@ class LLMClient:
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()
-
