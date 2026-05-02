@@ -10,16 +10,25 @@ Example:
   python scripts/prepare_trec_cds.py \
     --dataset pmc/v2/trec-cds-2016 \
     --out data/trec_cds_2016/cases.jsonl \
-    --max-topics 30
+    --max-topics 30 \
+    --max-docs-per-topic 200
 """
 from __future__ import annotations
 
 import argparse
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import ir_datasets
+
+# Root Cause vs Logic: this script is commonly run as `python3 scripts/...`
+# from either the `eval/` directory or the repo root, so `eval/` is not always
+# on `sys.path`. We add the package root explicitly before importing `app`.
+EVAL_ROOT = Path(__file__).resolve().parents[1]
+if str(EVAL_ROOT) not in sys.path:
+    sys.path.insert(0, str(EVAL_ROOT))
 
 from app.io import write_jsonl
 
@@ -57,7 +66,28 @@ def get_patient_context(query: Any) -> str:
     return ""
 
 
-def prepare(dataset_name: str, out_path: str, max_topics: int | None) -> None:
+def select_gold_docs(
+    qid: str,
+    qrels_by_qid: dict[str, list[str]],
+    relevance_by_qid: dict[str, dict[str, int]],
+    max_docs_per_topic: int | None,
+) -> list[str]:
+    docs = list(dict.fromkeys(qrels_by_qid.get(qid, [])))
+    # Motivation vs Logic: TREC CDS runs should stay reproducible, so we cap
+    # evidence deterministically rather than sampling randomly. We prefer higher
+    # relevance grades first and use doc_id as a stable tiebreaker.
+    if max_docs_per_topic is None or len(docs) <= max_docs_per_topic:
+        return sorted(docs)
+    return sorted(
+        docs,
+        key=lambda doc_id: (
+            -int(relevance_by_qid.get(qid, {}).get(doc_id, 0)),
+            doc_id,
+        ),
+    )[:max_docs_per_topic]
+
+
+def prepare(dataset_name: str, out_path: str, max_topics: int | None, max_docs_per_topic: int | None) -> None:
     dataset = ir_datasets.load(dataset_name)
     qrels_by_qid: dict[str, list[str]] = defaultdict(list)
     relevance_by_qid: dict[str, dict[str, int]] = defaultdict(dict)
@@ -75,7 +105,7 @@ def prepare(dataset_name: str, out_path: str, max_topics: int | None) -> None:
         qid = str(getattr(query, "query_id"))
         qtype = str(getattr(query, "type", "clinical")).lower()
         patient_context = get_patient_context(query)
-        gold_docs = sorted(set(qrels_by_qid.get(qid, [])))
+        gold_docs = select_gold_docs(qid, qrels_by_qid, relevance_by_qid, max_docs_per_topic)
         facets = QUERY_TYPE_TO_FACETS.get(qtype, [
             {"facet_id": "clinical_evidence", "name": "clinically relevant evidence", "weight": 1.0, "critical": True},
             {"facet_id": "patient_fit", "name": "patient applicability", "weight": 1.0, "critical": True},
@@ -115,9 +145,10 @@ def main() -> None:
     parser.add_argument("--dataset", default="pmc/v2/trec-cds-2016")
     parser.add_argument("--out", default="data/trec_cds_2016/cases.jsonl")
     parser.add_argument("--max-topics", type=int, default=None)
+    parser.add_argument("--max-docs-per-topic", type=int, default=200)
     args = parser.parse_args()
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    prepare(args.dataset, args.out, args.max_topics)
+    prepare(args.dataset, args.out, args.max_topics, args.max_docs_per_topic)
 
 
 if __name__ == "__main__":

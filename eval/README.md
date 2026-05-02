@@ -97,10 +97,11 @@ docker compose up --build
 python scripts/prepare_trec_cds.py \
   --dataset pmc/v2/trec-cds-2016 \
   --out data/trec_cds_2016/cases.jsonl \
-  --max-topics 30
+  --max-topics 30 \
+  --max-docs-per-topic 200
 ```
 
-The script seeds `gold_facets` from TREC qrels. For final paper numbers, refine the facet labels manually or with clinician adjudication, because qrels are document-level relevance judgments rather than facet-level clinical labels.
+The script seeds `gold_facets` from TREC qrels. For final paper numbers, refine the facet labels manually or with clinician adjudication, because qrels are document-level relevance judgments rather than facet-level clinical labels. Evidence documents are capped deterministically per topic, prioritizing higher relevance grades first and using `doc_id` as the stable tiebreaker.
 
 ## Ingesting the PMC evidence corpus
 
