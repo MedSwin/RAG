@@ -2,20 +2,57 @@
 
 import logging
 from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime, timezone
+import math
 import numpy as np
-from rank_bm25 import BM25Okapi
-import tiktoken
+
+try:
+    import tiktoken
+except ModuleNotFoundError:
+    class _WhitespaceEncoding:
+        def encode(self, text):
+            return text.split()
+
+    class tiktoken:
+        @staticmethod
+        def get_encoding(_name):
+            return _WhitespaceEncoding()
+
+try:
+    from rank_bm25 import BM25Okapi
+except ModuleNotFoundError:
+    class BM25Okapi:
+        """Small fallback scorer used when rank-bm25 is unavailable."""
+
+        def __init__(self, corpus):
+            self.corpus = corpus
+
+        def get_scores(self, query_tokens):
+            query = set(query_tokens)
+            scores = []
+            for doc in self.corpus:
+                doc_terms = set(doc)
+                scores.append(float(len(query & doc_terms)) / max(len(query), 1))
+            return np.array(scores, dtype=np.float32)
 
 from app.core.config import settings
 from app.core.database import get_database
-from app.core.indexing import (
-    HNSWIndexBuilder,
-    FAISSIndexBuilder,
-    TreeIndexBuilder,
-    load_hnsw_index,
-    load_faiss_ivf_index,
-    load_tree_index
-)
+try:
+    from app.core.indexing import (
+        HNSWIndexBuilder,
+        FAISSIndexBuilder,
+        TreeIndexBuilder,
+        load_hnsw_index,
+        load_faiss_ivf_index,
+        load_tree_index
+    )
+except ModuleNotFoundError:
+    HNSWIndexBuilder = FAISSIndexBuilder = TreeIndexBuilder = None
+
+    def _missing_index_loader(*_args, **_kwargs):
+        raise RuntimeError("Vector index dependencies are not installed")
+
+    load_hnsw_index = load_faiss_ivf_index = load_tree_index = _missing_index_loader
 from app.services.strategy import (
     IndexStrategyManager,
     IndexStrategy,
@@ -23,8 +60,18 @@ from app.services.strategy import (
 )
 from app.services.adapters.embedding import EmbeddingClient
 from app.services.adapters.reranker import RerankerClient
-from app.models.medswin import CandidatePassage, SourceType, EvidenceBundle
+from app.models.medswin import (
+    CandidatePassage,
+    SourceType,
+    EvidenceBundle,
+    ClinicalFacet,
+    EvidenceLedgerEntry,
+    FacetCoverage,
+    ContradictionPair,
+    PolicyDecision,
+)
 from app.repositories.chunks import ChunkRepository
+from app.services.medswin.governance import clamp, evidence_grade_from_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +221,8 @@ class RetrievalPipeline:
                     offset_start=chunk.get("offset_start"),
                     offset_end=chunk.get("offset_end"),
                     metadata=chunk.get("metadata", {}),
+                    token_count=chunk.get("token_count") or chunk.get("metadata", {}).get("token_count"),
+                    evidence_grade_score=(chunk.get("evidence_grade") or {}).get("score") if isinstance(chunk.get("evidence_grade"), dict) else None,
                     dense_score=dense_score
                 ))
             
@@ -232,6 +281,8 @@ class RetrievalPipeline:
                         offset_start=chunk.get("offset_start"),
                         offset_end=chunk.get("offset_end"),
                         metadata=chunk.get("metadata", {}),
+                        token_count=chunk.get("token_count") or chunk.get("metadata", {}).get("token_count"),
+                        evidence_grade_score=(chunk.get("evidence_grade") or {}).get("score") if isinstance(chunk.get("evidence_grade"), dict) else None,
                         lexical_score=float(scores[idx])
                     ))
             
@@ -350,8 +401,11 @@ class RetrievalPipeline:
             for result in rerank_results:
                 idx = result["index"]
                 if idx < len(candidates):
-                    candidates[idx].rerank_score = result.get("p_hat", result.get("score", 0.0))
+                    p_hat = clamp(result.get("p_hat", result.get("score", 0.0)))
+                    candidates[idx].rerank_score = p_hat
+                    candidates[idx].calibrated_score = p_hat
                     candidates[idx].metadata["rerank_logit"] = result.get("logit")
+                    candidates[idx].metadata["calibration_version"] = result.get("calibration_version")
             
             # Sort by rerank score
             candidates.sort(key=lambda x: x.rerank_score or 0.0, reverse=True)
@@ -363,35 +417,46 @@ class RetrievalPipeline:
             return candidates
     
     def compute_fusion_scores(self, candidates: List[CandidatePassage]) -> List[CandidatePassage]:
-        """Compute fusion scores for candidates."""
+        """Compute policy-aware fusion scores for candidates.
+
+        Root Cause vs Logic: The previous implementation added heterogeneous raw scores
+        linearly, which made cosine, BM25, and reranker probabilities look equally
+        calibrated. The replacement maps every signal into a bounded feature and puts
+        reranker probability on the log-odds scale before adding clinical priors.
+        """
         for candidate in candidates:
-            fusion_score = 0.0
-            
-            # Reranker score
-            if candidate.rerank_score is not None:
-                fusion_score += settings.W_RERANK * candidate.rerank_score
-            
-            # Dense score
-            if candidate.dense_score is not None:
-                fusion_score += settings.W_DENSE * candidate.dense_score
-            
-            # Lexical score
-            if candidate.lexical_score is not None:
-                fusion_score += settings.W_LEX * candidate.lexical_score
-            
-            # Recency score (if timestamp available)
+            p_hat = clamp(candidate.calibrated_score or candidate.rerank_score or 0.50, 1e-6, 1.0 - 1e-6)
+            rerank_log_odds = self._clip_logit(math.log(p_hat / (1.0 - p_hat)))
+            dense = clamp(candidate.dense_score or 0.0)
+            lexical = clamp(candidate.lexical_score or 0.0)
             recency_score = self._compute_recency_score(candidate)
-            fusion_score += settings.W_RECENCY * recency_score
-            
-            # Section score
             section_score = self._compute_section_score(candidate)
-            fusion_score += settings.W_SECTION * section_score
-            
-            # Source score
             source_score = self._compute_source_score(candidate)
-            fusion_score += settings.W_SOURCE * source_score
-            
-            candidate.fusion_score = fusion_score
+            evidence_grade = evidence_grade_from_metadata(candidate)
+            ebm_score = clamp(evidence_grade.score)
+            safety_score = self._compute_safety_score(candidate)
+            noise_score = self._compute_noise_score(candidate)
+
+            raw = (
+                settings.W_RERANK * rerank_log_odds
+                + settings.W_DENSE * dense
+                + settings.W_LEX * lexical
+                + settings.W_RECENCY * recency_score
+                + settings.W_SECTION * section_score
+                + settings.W_SOURCE * source_score
+                + settings.W_EBM * ebm_score
+                + settings.SAFETY_REWARD_WEIGHT * safety_score
+                - settings.W_NOISE * noise_score
+            )
+
+            candidate.recency_score = recency_score
+            candidate.section_score = section_score
+            candidate.source_score = source_score
+            candidate.evidence_grade_score = ebm_score
+            candidate.safety_score = safety_score
+            candidate.noise_score = noise_score
+            candidate.contradiction_score = self._compute_contradiction_score(candidate)
+            candidate.fusion_score = clamp(1.0 / (1.0 + math.exp(-self._clip_logit(raw))))
         
         # Sort by fusion score
         candidates.sort(key=lambda x: x.fusion_score or 0.0, reverse=True)
@@ -400,102 +465,193 @@ class RetrievalPipeline:
     
     def _compute_recency_score(self, candidate: CandidatePassage) -> float:
         """Compute recency score (0-1)."""
-        # If timestamp in metadata, use it
-        timestamp = candidate.metadata.get("timestamp")
-        if timestamp:
-            # Simple recency: newer = higher score
-            # This is a placeholder - implement proper time-based scoring
-            return 0.5  # Default
-        return 0.5
+        timestamp = candidate.metadata.get("timestamp") or candidate.metadata.get("effective_date")
+        if not timestamp:
+            return 0.5
+        try:
+            if isinstance(timestamp, str):
+                parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            elif isinstance(timestamp, datetime):
+                parsed = timestamp
+            else:
+                return 0.5
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            age_days = max((datetime.now(timezone.utc) - parsed).days, 0)
+            return clamp(math.exp(-age_days / max(settings.RECENCY_DECAY_DAYS, 1.0)))
+        except Exception:
+            return 0.5
     
     def _compute_section_score(self, candidate: CandidatePassage) -> float:
         """Compute section score (recommendations > background)."""
         section = candidate.section or ""
         section_lower = section.lower()
         
-        if "recommendation" in section_lower or "guideline" in section_lower:
-            return 1.0
+        if "recommendation" in section_lower or "guideline" in section_lower or "contraindication" in section_lower:
+            return settings.SECTION_RECOMMENDATION_SCORE
         elif "background" in section_lower or "introduction" in section_lower:
-            return 0.3
+            return settings.SECTION_BACKGROUND_SCORE
         else:
-            return 0.7
+            return settings.SECTION_DEFAULT_SCORE
     
     def _compute_source_score(self, candidate: CandidatePassage) -> float:
         """Compute source score (CPG vs EMR weighting)."""
         if candidate.source_type == SourceType.CPG:
-            return 1.0
+            return settings.SOURCE_CPG_SCORE
         elif candidate.source_type == SourceType.EMR:
-            return 0.8
+            return settings.SOURCE_EMR_SCORE
         else:
-            return 0.6
+            return settings.SOURCE_LIT_SCORE
+
+    def _compute_safety_score(self, candidate: CandidatePassage) -> float:
+        text = candidate.text.lower()
+        terms = ["contraindicat", "allergy", "adverse", "interaction", "avoid", "renal", "pregnan", "dose"]
+        return clamp(sum(1 for term in terms if term in text) * 0.16)
+
+    def _compute_noise_score(self, candidate: CandidatePassage) -> float:
+        metadata = candidate.metadata or {}
+        score = 0.0
+        if metadata.get("obsolete") or metadata.get("superseded"):
+            score += 0.45
+        if metadata.get("population_mismatch"):
+            score += 0.35
+        if metadata.get("weak_provenance"):
+            score += 0.25
+        if not candidate.doc_id or not candidate.chunk_id:
+            score += 0.15
+        return clamp(score)
+
+    def _compute_contradiction_score(self, candidate: CandidatePassage) -> float:
+        text = candidate.text.lower()
+        terms = ["conflict", "not recommended", "avoid", "insufficient", "uncertain", "contraindicat"]
+        return clamp(sum(1 for term in terms if term in text) * 0.16)
+
+    def _clip_logit(self, value: float) -> float:
+        return max(-settings.FUSION_LOGIT_CLIP, min(settings.FUSION_LOGIT_CLIP, value))
     
     def select_with_mmr(
         self,
         candidates: List[CandidatePassage],
         query_embedding: np.ndarray,
         max_chunks: Optional[int] = None,
-        token_budget: Optional[int] = None
+        token_budget: Optional[int] = None,
+        facets: Optional[List[ClinicalFacet]] = None
     ) -> List[CandidatePassage]:
-        """Select diverse passages using MMR under token budget."""
+        """Select an evidence bundle using clinical utility under token budget.
+
+        Root Cause vs Logic: The old MMR branch used score distance as a diversity
+        proxy, so near-duplicate text could be selected while clinically important
+        safety passages were dropped. This greedy solver uses marginal utility,
+        redundancy, safety protection, and contradiction preservation instead.
+        """
         if not candidates:
             return []
         
         max_chunks = max_chunks or settings.MMR_MAX_EVIDENCE_CHUNKS
         token_budget = token_budget or settings.TOKEN_BUDGET_B
-        
-        selected = []
-        remaining = candidates.copy()
-        
-        # First, select highest scoring passage
-        if remaining:
-            selected.append(remaining.pop(0))
-        
-        # MMR selection
+
+        selected: List[CandidatePassage] = []
+        remaining = sorted(candidates.copy(), key=lambda item: item.fusion_score or 0.0, reverse=True)
+        used_tokens = 0
+
         while remaining and len(selected) < max_chunks:
             best_score = -float('inf')
             best_idx = -1
-            
+
             for idx, candidate in enumerate(remaining):
-                # Relevance score (fusion score)
-                relevance = candidate.fusion_score or 0.0
-                
-                # Diversity penalty (max similarity to already selected)
-                max_sim = 0.0
-                if selected:
-                    # Compute similarity to selected passages
-                    # For simplicity, use dense_score similarity
-                    # In production, compute actual embedding similarity
-                    for sel in selected:
-                        # Placeholder: use fusion score difference as diversity proxy
-                        sim = abs((candidate.fusion_score or 0.0) - (sel.fusion_score or 0.0))
-                        max_sim = max(max_sim, sim)
-                
-                # MMR score
-                mmr_score = settings.MMR_LAMBDA * relevance - (1 - settings.MMR_LAMBDA) * max_sim
-                
-                # Check token budget
-                tokens = len(self.tokenizer.encode(candidate.text))
-                total_tokens = sum(len(self.tokenizer.encode(s.text)) for s in selected)
-                
-                if total_tokens + tokens <= token_budget:
-                    if mmr_score > best_score:
-                        best_score = mmr_score
-                        best_idx = idx
-            
+                tokens = self._token_count(candidate)
+                if used_tokens + tokens > token_budget:
+                    continue
+                marginal = self._candidate_marginal_utility(candidate, selected, facets)
+                utility_per_token = marginal / max(tokens, 1)
+                if utility_per_token > best_score:
+                    best_score = utility_per_token
+                    best_idx = idx
+
             if best_idx >= 0:
-                selected.append(remaining.pop(best_idx))
+                selected_candidate = remaining.pop(best_idx)
+                selected_candidate.selected_reason = f"marginal_utility_per_token={best_score:.6f}"
+                used_tokens += self._token_count(selected_candidate)
+                selected.append(selected_candidate)
             else:
-                # No more candidates fit in budget
                 break
-        
+
         return selected
+
+    def _candidate_marginal_utility(
+        self,
+        candidate: CandidatePassage,
+        selected: List[CandidatePassage],
+        facets: Optional[List[ClinicalFacet]],
+    ) -> float:
+        relevance = candidate.fusion_score or 0.0
+        safety = candidate.safety_score or self._compute_safety_score(candidate)
+        contradiction = candidate.contradiction_score or self._compute_contradiction_score(candidate)
+        ebm = candidate.evidence_grade_score or evidence_grade_from_metadata(candidate).score
+        redundancy = self._redundancy_penalty(candidate, selected)
+        facet_gain = self._facet_gain(candidate, selected, facets)
+        return (
+            relevance
+            + settings.SAFETY_REWARD_WEIGHT * safety
+            + 0.25 * ebm
+            + facet_gain
+            + 0.12 * contradiction
+            - settings.REDUNDANCY_PENALTY_WEIGHT * redundancy
+            - settings.NOISE_PENALTY_WEIGHT * (candidate.noise_score or 0.0)
+        )
+
+    def _facet_gain(
+        self,
+        candidate: CandidatePassage,
+        selected: List[CandidatePassage],
+        facets: Optional[List[ClinicalFacet]],
+    ) -> float:
+        if not facets:
+            return 0.0
+        covered = set()
+        for passage in selected:
+            covered.update(name for name, score in passage.facet_scores.items() if score > 0.25)
+        gain = 0.0
+        for facet in facets:
+            score = candidate.facet_scores.get(facet.name, 0.0)
+            if score <= 0.0:
+                continue
+            novelty = 1.0 if facet.name not in covered else 0.35
+            gain += facet.weight * score * novelty
+        return gain
+
+    def _redundancy_penalty(self, candidate: CandidatePassage, selected: List[CandidatePassage]) -> float:
+        if not selected:
+            return 0.0
+        candidate_terms = set(candidate.text.lower().split())
+        if not candidate_terms:
+            return 0.0
+        max_overlap = 0.0
+        for passage in selected:
+            selected_terms = set(passage.text.lower().split())
+            if not selected_terms:
+                continue
+            overlap = len(candidate_terms & selected_terms) / len(candidate_terms | selected_terms)
+            same_doc = 0.15 if passage.doc_id == candidate.doc_id else 0.0
+            max_overlap = max(max_overlap, overlap + same_doc)
+        return clamp(max_overlap)
+
+    def _token_count(self, candidate: CandidatePassage) -> int:
+        if candidate.token_count:
+            return candidate.token_count
+        candidate.token_count = len(self.tokenizer.encode(candidate.text))
+        return candidate.token_count
     
     def build_evidence_bundle(
         self,
-        passages: List[CandidatePassage]
+        passages: List[CandidatePassage],
+        facet_coverage: Optional[List[FacetCoverage]] = None,
+        evidence_ledger: Optional[List[EvidenceLedgerEntry]] = None,
+        contradictions: Optional[List[ContradictionPair]] = None,
+        policy_decision: Optional[PolicyDecision] = None
     ) -> EvidenceBundle:
         """Build evidence bundle from selected passages."""
-        total_tokens = sum(len(self.tokenizer.encode(p.text)) for p in passages)
+        total_tokens = sum(self._token_count(p) for p in passages)
         
         cpg_count = sum(1 for p in passages if p.source_type == SourceType.CPG)
         emr_count = sum(1 for p in passages if p.source_type == SourceType.EMR)
@@ -513,7 +669,11 @@ class RetrievalPipeline:
             cpg_count=cpg_count,
             emr_count=emr_count,
             lit_count=lit_count,
-            coverage_ratios=coverage_ratios
+            coverage_ratios=coverage_ratios,
+            facet_coverage=facet_coverage or [],
+            evidence_ledger=evidence_ledger or [],
+            contradictions=contradictions or [],
+            policy_decision=policy_decision
         )
     
     async def _load_index(
@@ -547,4 +707,3 @@ class RetrievalPipeline:
                 settings.HNSW_INDEX_PATH,
                 settings.HNSW_MAPPING_PATH
             )
-

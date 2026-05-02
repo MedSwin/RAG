@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     SUFF_T_EMR: int = 2
     SUFF_T_INCLUSION: float = 0.55
     SUFF_T_MEAN_CONF: float = 0.60
+    SUFF_FACET_THRESHOLD: float = 0.70
+    SUFF_CRITICAL_FACET_THRESHOLD: float = 0.78
+    SUFF_LCB_MARGIN: float = 0.08
+    SUFF_MAX_ENTROPY: float = 0.88
+    SUFF_MAX_CONTRADICTIONS: int = 0
+    SUFF_MIN_MARGINAL_UTILITY: float = 0.0002
+    DEFAULT_CLINICAL_SCOPE: str = "clinician_cds"
     
     # Fusion score weights (must sum to 1.0)
     W_RERANK: float = 0.45
@@ -81,7 +88,28 @@ class Settings(BaseSettings):
     W_RECENCY: float = 0.07
     W_SECTION: float = 0.08
     W_SOURCE: float = 0.05
-    
+    W_EBM: float = 0.12
+    W_NOISE: float = 0.20
+    FUSION_LOGIT_CLIP: float = 8.0
+    RECENCY_DECAY_DAYS: float = 730.0
+    SECTION_RECOMMENDATION_SCORE: float = 1.0
+    SECTION_BACKGROUND_SCORE: float = 0.30
+    SECTION_DEFAULT_SCORE: float = 0.65
+    SOURCE_CPG_SCORE: float = 0.95
+    SOURCE_EMR_SCORE: float = 0.85
+    SOURCE_LIT_SCORE: float = 0.75
+    EBM_CPG_WEIGHT: float = 0.95
+    EBM_SR_WEIGHT: float = 0.90
+    EBM_RCT_WEIGHT: float = 0.86
+    EBM_OBS_WEIGHT: float = 0.62
+    EBM_CASE_WEIGHT: float = 0.38
+    EBM_EMR_WEIGHT: float = 0.70
+    EBM_SAFETY_WEIGHT: float = 0.88
+    SAFETY_REWARD_WEIGHT: float = 0.35
+    REDUNDANCY_PENALTY_WEIGHT: float = 0.22
+    CONTRADICTION_PENALTY_WEIGHT: float = 0.40
+    NOISE_PENALTY_WEIGHT: float = 0.30
+
     # MMR configuration
     MMR_LAMBDA: float = 0.75
     MMR_MAX_EVIDENCE_CHUNKS: int = 10
@@ -91,6 +119,8 @@ class Settings(BaseSettings):
     ENABLE_RBAC: bool = False
     ENABLE_OTEL: bool = False
     LOG_REDACT_PHI: bool = True
+    TRACE_REDACT_BY_DEFAULT: bool = True
+    TRACE_INCLUDE_POLICY_DETAILS: bool = True
     
     # Chunking settings
     TARGET_CHUNK_SIZE: int = 400
@@ -116,12 +146,29 @@ class Settings(BaseSettings):
         case_sensitive = True
     
     def validate_fusion_weights(self) -> bool:
-        """Validate that fusion weights sum to approximately 1.0."""
+        """Validate that base fusion weights are within a stable range."""
         total = (
             self.W_RERANK + self.W_DENSE + self.W_LEX +
             self.W_RECENCY + self.W_SECTION + self.W_SOURCE
         )
-        return abs(total - 1.0) < 0.01
+        return 0.10 <= total <= 2.0
+
+    def validate_enterprise_policy(self) -> bool:
+        """Validate policy thresholds that gate clinician-facing answers."""
+        thresholds = [
+            self.SUFF_T_INCLUSION,
+            self.SUFF_T_MEAN_CONF,
+            self.SUFF_FACET_THRESHOLD,
+            self.SUFF_CRITICAL_FACET_THRESHOLD,
+            self.SUFF_MAX_ENTROPY,
+        ]
+        if any(value < 0.0 or value > 1.0 for value in thresholds):
+            return False
+        if self.TOKEN_BUDGET_B <= 0 or self.MAX_RETRIEVE_LOOPS <= 0:
+            return False
+        if self.FUSION_LOGIT_CLIP <= 0:
+            return False
+        return True
 
 # Create settings instance
 settings = Settings()
@@ -130,9 +177,12 @@ settings = Settings()
 if not settings.validate_fusion_weights():
     import warnings
     warnings.warn(
-        f"Fusion weights do not sum to 1.0 (sum={settings.W_RERANK + settings.W_DENSE + settings.W_LEX + settings.W_RECENCY + settings.W_SECTION + settings.W_SOURCE}). "
+        f"Fusion base weights are outside the stable range (sum={settings.W_RERANK + settings.W_DENSE + settings.W_LEX + settings.W_RECENCY + settings.W_SECTION + settings.W_SOURCE}). "
         "This may cause unexpected scoring behavior."
     )
+
+if not settings.validate_enterprise_policy():
+    raise ValueError("Invalid MedSwin enterprise policy configuration")
 
 # Ensure required directories exist
 def ensure_directories():

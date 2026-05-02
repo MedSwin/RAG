@@ -1,9 +1,8 @@
-"""MongoDB repositories for MedSwin."""
+"""MongoDB repositories for MedSwin.
 
-from app.repositories.chunks import ChunkRepository
-from app.repositories.documents import DocumentRepository
-from app.repositories.sessions import SessionRepository
-from app.repositories.traces import TraceRepository
+Import concrete repositories from their modules to avoid requiring MongoDB
+drivers during lightweight policy/retrieval test collection.
+"""
 
 __all__ = [
     "ChunkRepository",
@@ -11,4 +10,3 @@ __all__ = [
     "SessionRepository",
     "TraceRepository",
 ]
-

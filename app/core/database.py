@@ -1,5 +1,12 @@
-from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import MongoClient
+try:
+    from motor.motor_asyncio import AsyncIOMotorClient
+except ModuleNotFoundError:
+    AsyncIOMotorClient = None
+
+try:
+    from pymongo import MongoClient
+except ModuleNotFoundError:
+    MongoClient = None
 import logging
 from typing import Optional
 from app.core.config import settings
@@ -15,6 +22,8 @@ async def init_database():
     global client, sync_client
     
     try:
+        if AsyncIOMotorClient is None or MongoClient is None:
+            raise RuntimeError("MongoDB dependencies are not installed")
         # Async client for FastAPI
         client = AsyncIOMotorClient(settings.MONGODB_URL)
         
@@ -44,10 +53,35 @@ async def create_collections_and_indexes():
     
     # Create indexes
     await chunks_collection.create_index("chunk_id", unique=True)
+    await chunks_collection.create_index([("org_id", 1), ("chunk_id", 1)])
+    await chunks_collection.create_index([("org_id", 1), ("source_type", 1)])
+    await chunks_collection.create_index([("org_id", 1), ("patient_id", 1)])
+    await chunks_collection.create_index([("org_id", 1), ("doc_id", 1)])
     await chunks_collection.create_index([("metadata.source", 1), ("metadata.task", 1)])
     await chunks_collection.create_index("metadata.parent_id")
     await chunks_collection.create_index("metadata.created_timestamp")
     await chunks_collection.create_index([("content", "text")])
+
+    # Motivation vs Logic: MedSwin traces and EMR/CPG documents must be
+    # replayable by tenant and patient scope. These indexes make policy audits
+    # and scoped retrieval first-class instead of best-effort collection scans.
+    documents_collection = db.documents
+    await documents_collection.create_index("doc_id", unique=True)
+    await documents_collection.create_index([("org_id", 1), ("doc_id", 1)])
+    await documents_collection.create_index([("org_id", 1), ("source_type", 1)])
+    await documents_collection.create_index([("org_id", 1), ("patient_id", 1)])
+    await documents_collection.create_index([("org_id", 1), ("effective_date", -1)])
+
+    sessions_collection = db.sessions
+    await sessions_collection.create_index("session_id", unique=True)
+    await sessions_collection.create_index([("org_id", 1), ("session_id", 1)])
+    await sessions_collection.create_index([("org_id", 1), ("user_id", 1)])
+
+    traces_collection = db.traces
+    await traces_collection.create_index("trace_id", unique=True)
+    await traces_collection.create_index([("org_id", 1), ("trace_id", 1)])
+    await traces_collection.create_index([("org_id", 1), ("session_id", 1)])
+    await traces_collection.create_index([("org_id", 1), ("patient_id", 1)])
     
     # Create chunk_relationships collection
     relationships_collection = db.chunk_relationships

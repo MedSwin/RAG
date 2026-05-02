@@ -1,0 +1,1106 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+% \usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{cite}
+\usepackage{stfloats} 
+\usepackage{booktabs}
+\usepackage[numbers, sort&compress]{natbib}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\makeatletter
+\def\sharedaffiliation{\thanks{These authors contributed equally to this work.}}
+\makeatother
+
+\begin{document}
+
+\title{MedSwin: Multi-specialist EMR and Evidence Retrieval Architecture for Advanced Diagnosis}
+
+\makeatletter
+\newcommand{\linebreakand}{%
+  \end{@IEEEauthorhalign}
+  \hfill\mbox{}\par
+  \mbox{}\hfill\begin{@IEEEauthorhalign}
+}
+\makeatother
+
+\author{
+    \IEEEauthorblockN{Dang Khoa Le\textsuperscript{*}\thanks{*Both two first authors contributed equally to this research.}}
+    \IEEEauthorblockA{\textit{Department of Computing Technologies} \\
+    \textit{Swinburne University of Technology} \\
+    Melbourne, Australia}
+    \and
+    \IEEEauthorblockN{Ba Viet Anh Nguyen\textsuperscript{*}}
+    \IEEEauthorblockA{\textit{Department of Computing Technologies} \\
+    \textit{Swinburne University of Technology} \\
+    Melbourne, Australia}
+    \and
+    \IEEEauthorblockN{Huu Minh Hai Truong}
+    \IEEEauthorblockA{\textit{Department of Computing Technologies} \\
+    \textit{Swinburne University of Technology} \\
+    Melbourne, Australia}
+    
+    \linebreakand 
+
+    \IEEEauthorblockN{Duy Khoa Pham}
+    \IEEEauthorblockA{\textit{Department of Computing Technologies} \\
+    \textit{Swinburne University of Technology} \\
+    Melbourne, Australia \\
+    duykhoapham@swin.edu.au}
+    \and
+    \IEEEauthorblockN{Bao Quoc Vo}
+    \IEEEauthorblockA{\textit{Department of Computing Technologies} \\
+    \textit{Swinburne University of Technology} \\
+    Melbourne, Australia \\
+    bvo@swin.edu.au}
+    \and
+
+}
+
+
+% Propose structure for this paper:
+% 1. Introduction
+% 3. Proposed Method (Merging + Reranker + Training & Implementation Details for each method)
+% 4. Datasets (Write about how we get datasets pipeline)
+% 5. Results (All evaluation results you have for now)
+% 6. OPEN-SOURCE AND REPRODUCIBILITY
+% 7. Conclusion
+% 8. Appendix
+
+% TODO: Now we split this to 2 papers, one for modelling (1) and one for overall infrastructure (2).
+% Selective parts to be relocated
+% (1) MedSwin: Lightweight-focussed LLM Specialist on BioMedical Context
+% - E. Supervised Finetuning (Data Pipeline Inclusive)
+% - F. Knowledge Distillation
+% - A. Merging Supervised Fine-tuning and Knowledge Distillation
+
+% (2) MedSwin: Multi-agent EMR and Clinical Guidelines Retrieval Architecture at Scale for Advanced Diagnosis
+% - B. Biomedical Reranker
+% - C. Techniques
+% - D. Two-Stage Architecture
+% - MAC
+
+
+\maketitle
+
+\begin{abstract}
+Healthcare systems face increasing pressure from workforce shortages, growing electronic medical records (EMR), and rapidly evolving clinical practice guidelines (CPG), creating a need for reliable clinician-facing decision support. However, existing LLM-based medical assistants rely on generic retrieval, weak grounding, and opaque workflows, limiting their safety and auditability in clinical settings.
+
+% We present \emph{MedSwin}, a multi-agent, biomedical LLM and retrieval architecture for EMR- and guideline-grounded clinical question answering. MedSwin combines: (i) an auditable team of specialised agents for policy-aware retrieval, EMR summarisation, guideline synthesis and safety critique; (ii) a two-stage retrieval pipeline with a domain-specific dense retriever and a long-context biomedical reranker that enforces evidence sufficiency under a token budget; and (iii) a distilled medical LLM derived from a more powerful teacher model, via large-scale augmentation, hard/soft-label distillation and QLoRA.%(iii) a distilled 7B medical LLM derived from larger teacher 27B, via large-scale augmentation, hard/soft-label distillation and QLoRA.
+
+% updated based on comments for expliciting target users
+We present \emph{MedSwin}, a multi-agent biomedical LLM system for clinical decision support, designed to answer patient-specific clinical questions grounded in EMR and guideline evidence. MedSwin integrates (i) specialised agents for retrieval, EMR summarisation, guideline synthesis, and safety critique; (ii) a two-stage retrieval pipeline with a domain-specific dense retriever and a long-context biomedical reranker enforcing evidence sufficiency under a fixed budget; and (iii) a distilled medical LLM trained via large-scale augmentation and hybrid hard/soft-label distillation with QLoRA.
+
+% We introduce an evaluation protocol that jointly assesses retrieval quality, guideline coverage and answer faithfulness. Within a fixed context budget, MedSwin delivers more comprehensive evidence sets and more faithful responses than a generic agentic RAG baseline, while remaining practical for institutional deployment.
+
+We introduce an evaluation protocol targeting clinical requirements, jointly measuring retrieval quality, guideline coverage, and answer faithfulness. Under fixed context constraints, MedSwin yields more complete evidence grounding and more faithful clinician-oriented responses than a generic agentic RAG baseline, while remaining practical for deployment.
+\end{abstract}
+
+\begin{IEEEkeywords}
+% • Multi-agent systems, Medical AI, Clinical decision support, Reranking, Distillation, Open-source
+Multi-agent systems, Medical AI, Clinical decision support, Information retrieval, Reranking, Knowledge distillation, Large language models, Electronic medical records
+\end{IEEEkeywords}
+
+
+% ---------------------------
+% Figure
+% ---------------------------
+\begin{figure*}[!b]
+    \centering
+    \includegraphics[height=10cm]{logo.png} 
+    \label{fig:medswin-logo}
+\end{figure*}
+
+
+\section{Introduction}
+% Bullet points:
+% • Motivation: medical staff shortage, high workload, need for reliable AI support
+% • Why multi-agent approach matters (specialized expertise + orchestration)
+% • Problems with current solutions:
+%    – (1) In the paper or article that Prof Bao sent to us (https://link.springer.com/chapter/10.1007/978-3-031-96235-6_12),  the system is benchmarked on the RAGAS framework which is a domain-agnostic, not in medical. This evaluation shows good but it is not really persuasive
+%    – (2)  Current solotution in paper above: they pass the top-ranked few (after filtering for recency, severity, and confidence) are passed into the LLM prompt. Then after evaluation, their average 'context relevance' is 83.3%, high but still have some room to improve cuz for medical, context is really important in all domains, especially medical. ==> we can add reranker to solution
+%    – (3) no continuosly learning or feedbackloop
+%    – (4) No audit. The generated answer will throw out directly without checking this is correct or not. Need audit to make sure it is ethical, factual correct,,.....
+%  (5) No privacy because use crawled dataset
+\label{sec:intro}
+
+Health systems are under sustained pressure from ageing populations, multimorbidity, and growing documentation burden, while clinician time and workforce growth remain constrained. As a result, frontline decision-making increasingly occurs under information overload: clinicians must synthesize longitudinal electronic medical records (EMR), reconcile evolving clinical practice guidelines (CPG), and answer time-sensitive questions with high safety stakes. This motivates decision-support systems that can surface \emph{relevant, authoritative evidence} and assist reasoning without degrading clinical governance or accountability \cite{sulis2023agents,meng2024llmsmedicine}.
+
+Large language models (LLMs) have rapidly expanded the frontier of medical question answering and clinical text generation, but systematic reviews emphasize that reliability, hallucinations, and opaque reasoning continue to limit clinical trust and adoption \cite{meng2024llmsmedicine,ji2023hallucination,maynez-etal-2020-faithfulness}. In safety-critical settings, the failure mode of greatest concern is not merely an incorrect answer, but an \emph{unverifiable} answer: when the system cannot clearly expose which guideline clause, laboratory trend, or EMR event supports a recommendation, post-hoc review becomes difficult and errors can propagate. Consequently, clinical-grade systems must treat \emph{provenance, sufficiency, and auditability} as first-class design constraints rather than optional add-ons.
+
+Retrieval-augmented generation (RAG) partially addresses hallucinations by conditioning generation on retrieved passages from external corpora \cite{lewis2020rag}. However, most RAG pipelines remain governed by generic ranking heuristics (top-$K$ retrieval, lightweight recency/confidence filters) and evaluated with largely domain-agnostic metrics. Frameworks such as RAGAS quantify notions like context relevance and faithfulness, but they do not encode clinical requirements such as guideline \emph{coverage}, contraindication sensitivity, or explicit \emph{evidence sufficiency} thresholds that must be met before generating a recommendation \cite{es2024ragas}. Recent agentic RAG assistants for eHealth environments illustrate this gap: while agentic orchestration can improve information access and report strong RAGAS-style scores, these systems often (i) rely on domain-agnostic evaluation, (ii) pass only a small set of top-ranked contexts into the prompt without calibrated inclusion policies, (iii) lack structured audit trails tied to guideline versions and EMR provenance, and (iv) depend on cloud models and crawled data that complicate privacy and governance \cite{kalathas2025agenticrag}.
+
+In parallel, multi-agent medical architectures have been proposed to mirror multidisciplinary clinical workflows by recruiting specialized agents (e.g., triage, differential reasoning, guideline lookup) and coordinating them through an orchestrator \cite{sulis2023agents,kim2024mdagents}. While this decomposition improves modularity and can reduce single-model brittleness, most existing designs still treat retrieval as a best-effort prelude rather than a controlled, auditable decision stage. In clinical RAG, small ranking errors can omit critical contraindications or include irrelevant background, and uncalibrated relevance scores make threshold-based policies difficult to justify. Moreover, continual updates via sequential fine-tuning can overwrite previously acquired behaviors, producing instability and catastrophic forgetting—an undesirable property for systems intended to operate under fixed institutional policies \cite{luo2023catastrophic}.
+
+\textbf{This work.} We present \emph{MedSwin}, an auditable multi-agent biomedical LLM system for EMR- and CPG-grounded clinical question answering. MedSwin is designed around a central thesis: \emph{clinical reliability emerges when evidence selection is treated as a calibrated, policy-constrained stage with explicit sufficiency targets, and when downstream generation is performed by a compact specialist model whose behaviors can be composed without destructive fine-tuning interference}. Concretely, we make the following contributions:
+
+\begin{enumerate}
+    \item \textbf{Policy-constrained, auditable evidence selection with calibrated reranking.}
+    We introduce a two-stage retrieval architecture that couples dense and lexical retrieval with a long-context biomedical reranker adapted from an open LLM-based reranker \cite{baai_bge_reranker_v2_gemma}. Crucially, reranker scores are calibrated for threshold-based inclusion \cite{platt1999probabilistic,guo2017calibration} and used to enforce explicit \emph{evidence sufficiency} constraints over EMR and CPG coverage before answer generation.
+
+    \item \textbf{Deployable 7B medical specialist via hybrid SFT+KD under QLoRA.}
+    We train a compact specialist (MedAlpaca-7B) using augmented biomedical supervision \cite{han2023medalpaca,li2023chatdoctor,pubmedqa} and further distill domain-specific reasoning from a substantially stronger medical instructor (MedGemma-27B-it) \cite{google2025medgemma}. The distillation uses a hybrid hard/soft objective that transfers both targets and token-level uncertainty structure \cite{hinton2015distilling}, implemented efficiently via QLoRA for constrained training and inference footprints \cite{dettmers2023qlora}.
+
+    \item \textbf{Training-free composition of complementary behaviors via interference-aware merging.}
+    Instead of sequentially fine-tuning SFT and KD objectives—which can overwrite behaviors through gradient interference \cite{luo2023catastrophic}—we study training-free checkpoint composition to combine instruction discipline (SFT) with teacher-aligned semantics and calibration (KD). We evaluate interference-aware merge operators (DARE, TIES, and compositions) \cite{yu2023supermario,yadav2023ties} implemented through standardized tooling \cite{goddard2024mergekit}, demonstrating that careful weight-space composition can improve semantic alignment without additional training.
+
+    \item \textbf{Multi-agent orchestration with retrieval-level provenance and safety critique.}
+    We design specialized agents that exchange typed artifacts (retrieval sets, EMR summaries, guideline extracts, safety critiques) with explicit provenance metadata and deterministic acceptance criteria, yielding an audit trail grounded in retrieved evidence rather than ungrounded narrative rationales \cite{sulis2023agents}.
+\end{enumerate}
+
+We evaluate MedSwin on MedQuAD to quantify improvements in semantic fidelity and over-generation behavior under controlled prompting \cite{benabacha2019medquad}. Overall, MedSwin advances beyond generic agentic RAG prototypes by making \emph{calibrated evidence sufficiency, training-free behavior composition, and retrieval-level auditability} central system primitives for clinically governed decision support.
+
+
+\section{Related Work}
+% • Prior agent-based systems in medical decision support (focus auditable)
+% • Strengths and gaps
+\label{sec:related_work}
+
+MedSwin connects three lines of research that are often studied in isolation: (i) medical LLM alignment and compression, (ii) evidence-grounded medical RAG with calibrated ranking, and (iii) agentic orchestration under auditable safety constraints. We summarize the closest prior work and clarify the remaining gaps.
+
+\paragraph{Medical LLMs and clinical alignment}
+LLMs have rapidly advanced biomedical and clinical QA, but most progress emphasizes scaling and instruction alignment rather than deployability under governance constraints. Scoping reviews document broad medical use cases while repeatedly highlighting hallucination, bias, and reproducibility risks \cite{meng2024llmsmedicine}. Benchmark-driven systems such as Med-PaLM~2 demonstrate strong medical QA performance but are not designed to satisfy open reproducibility and institutional deployment requirements \cite{singhal2023medpalm2}. In the open-weight ecosystem, medical capability is improved via continued pretraining (e.g., MEDITRON) and domain-specialized backbones (e.g., BioMistral) \cite{chen2023meditron,labrak2024biomistral}, as well as instruction-tuned assistants trained on medical dialogues and QA corpora (e.g., MedAlpaca, ChatDoctor) \cite{han2023medalpaca,li2023chatdoctor}. MedGemma further provides a strong openly available medical instructor suitable for downstream compression and controlled adaptation \cite{google2025medgemma}. MedSwin builds on these directions but targets a compact specialist model intended for constrained inference footprints.
+
+\paragraph{Instruction tuning, distillation, and parameter-efficient adaptation}
+Instruction tuning is a dominant mechanism for aligning assistants to instruction-following behavior and response discipline \cite{han2023medalpaca,li2023chatdoctor}. Beyond medicine, instruction-tuning and self-instruction lineages show that instruction diversity and format choices strongly shape generalization \cite{wei2022finetuned,wang2022selfinstruct}. Distillation transfers capability from larger teachers to smaller students via hard targets and/or distribution matching \cite{hinton2015distilling}, and modern LLM compression typically relies on PEFT to control compute and memory (LoRA, QLoRA) \cite{hu2021lora,dettmers2023qlora}. In open medical pipelines, however, distillation is commonly treated as teacher-generated hard labels without preserving teacher uncertainty, limiting calibration analysis and reproducibility. MedSwin operationalizes hybrid hard/soft distillation from a domain-specialized instructor (MedGemma-27B-it) into a 7B student under QLoRA, explicitly emphasizing uncertainty transfer as a safety-relevant behavior \cite{google2025medgemma,hinton2015distilling,dettmers2023qlora}.
+
+\paragraph{Medical RAG, evaluation, and evidence policies}
+RAG grounds generation in external corpora and improves access to knowledge-intensive information \cite{lewis2020rag}. In medicine, the key challenge is not only average correctness but reliable surfacing of contraindications, guideline constraints, and patient-specific context with transparent provenance. Automated RAG evaluation frameworks (e.g., RAGAS) help quantify retrieval/answer faithfulness, but results remain sensitive to prompts, corpora, and reference availability \cite{es2024ragas}. MedSwin aligns with this perspective by treating evidence selection as a constrained decision stage: retrieved bundles must satisfy explicit coverage criteria before answer generation.
+
+\paragraph{Biomedical retrieval, reranking, long context, and calibration}
+Domain-specific retrieval models demonstrate that biomedical structure materially improves retrieval quality compared with general encoders (e.g., MedCPT) \cite{jin2023medcpt}. Two-stage pipelines (dense/lexical retrieval followed by neural reranking) are standard for high-precision QA; cross-encoders have long been effective for passage reranking \cite{nogueira2019passage_bert}. Recent open LLM-based rerankers (e.g., BGE reranker variants) improve accessibility and long-context handling, but clinical deployment additionally requires stable scalar scoring and calibrated probabilities to support deterministic inclusion policies \cite{baai_bge_reranker_v2_gemma,platt1999probabilistic,guo2017calibration}. MedSwin addresses this by adapting an open long-context reranker to biomedical supervision and calibrating its outputs so retrieval thresholds are auditable and policy-compatible.
+
+\paragraph{Training-free model merging and interference control}
+Training-free checkpoint composition provides a lightweight alternative to multi-objective retraining. Model soups show that averaging fine-tuned checkpoints can improve robustness without increasing inference cost \cite{wortsman2022soups}, and task arithmetic formalizes fine-tuning as task vectors that can be composed via addition and scaling \cite{ilharco2022taskarithmetic}. Because naive merging can degrade under parameter interference, TIES resolves sign conflicts and trims low-signal updates, while DARE reduces dense overlap via drop-and-rescale sparsification \cite{yadav2023ties,yu2023supermario}. MergeKit operationalizes these operators into a reproducible workflow \cite{goddard2024mergekit}. MedSwin extends this line into medical specialization by composing SFT and KD checkpoints via interference-aware merges and contrasting against sequential fine-tuning under catastrophic forgetting dynamics \cite{luo2023catastrophic}.
+
+% ---------------------------
+% Figure
+% ---------------------------
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=1\linewidth]{intro.png}
+    \caption{MedSwin LLMs in clinical decision loop}
+    \label{fig:intro-diagram}
+\end{figure}
+
+\paragraph{Multi-agent clinical decision support and safety evaluation}
+Multi-agent systems in healthcare predate LLMs and have been explored for distributed monitoring, triage, and decision support, with surveys emphasizing modularity and coordination alongside validation and governance challenges \cite{sulis2023agents}. LLM-era medical agent systems revisit these ideas via collaborative reasoning and tool-augmented pipelines (e.g., multi-agent decision-making and pharmacovigilance) \cite{kim2024mdagents,choi2024malade}. However, many agentic systems treat retrieval provenance and evidence policies as secondary to orchestration logic. MedSwin instead makes retrieval-level auditability (provenance metadata, calibrated scores, sufficiency constraints) the controlling layer that governs agent actions and acceptance decisions.
+
+\paragraph{Hallucination and over-generation in medical generation}
+Hallucination measurement is metric-dependent and requires multiple complementary signals \cite{ji2023hallucination}. Overlap metrics can be misleading proxies for faithfulness \cite{maynez-etal-2020-faithfulness}, and QA-oriented lexical metrics under-represent semantically correct paraphrases \cite{bulian-etal-2022-tomayto}. Accordingly, MedSwin reports both semantic and precision-oriented signals, interpreting them as indicators rather than definitive safety guarantees.
+
+
+\section{MedSwin as Medical Specialist}
+
+\subsection{Supervised Finetuning}
+\label{sec:medswin-sft}
+
+Large biomedical LLMs deliver strong reasoning but incur substantial compute and memory costs. In MedSwin, a compact 7B-parameter model (MedAlpaca-7B) is first trained with supervised finetuning (SFT) on a rigorously augmented supervision set, and then further refined via knowledge distillation from a 27B-parameter instructor (MedGemma-27B-it) \cite{google2025medgemma}. Together, these stages yield an efficient system suitable for clinical QA at significantly lower footprint. This subsection summarizes the data pipeline and SFT configuration; the following subsection details the knowledge distillation objective and parameter-efficient adaptation.
+
+\paragraph{Dataset selection rationale}
+% We construct training dataset from complementary public sources to cover the dominant linguistic regimes encountered by clinical assistants: (i) patient-facing symptom narratives , (ii) clinician-style explanations and differential reasoning, and (iii) evidence-oriented biomedical QA grounded in the scientific literature. This mixture reduces distributional bias that arises when training on only one genre (e.g., forum-only data tends to overfit to conversational style and may under-represent evidence-based phrasing).
+
+% add in examples as comment from Prof.Bao
+We construct training dataset from complementary public sources to cover the dominant linguistic regimes encountered by clinical assistants: (i) patient-facing symptom narratives  , (ii) clinician-style explanations and differential reasoning, and (iii) evidence-oriented biomedical QA grounded in the scientific literature. This mixture reduces distributional bias that arises when training on only one genre (e.g., forum-only data tends to overfit to conversational style and may under-represent evidence-based phrasing).
+% ---------------------------
+% Figure
+% ---------------------------
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=1\linewidth]{aug.png}
+    \caption{Biomedical QA data augmentation pipeline for SFT}
+    \label{fig:augmentation-pipeline}
+\end{figure}
+
+\paragraph{Data augmentation}
+% Supervision is assembled from HealthCareMagic ($\sim$100k) and iCliniq ($\sim$10k) \cite{li2023chatdoctor} to capture \emph{patient-facing complaint narratives} and pragmatic advice-seeking behaviour, and from PubMedQA \cite{pubmedqa} (expert-labeled 1k; unlabeled 61.2k; synthesis 211.3k)) to inject \emph{evidence-oriented biomedical reasoning} grounded in scientific abstracts. The unlabeled split is particularly suitable for teacher-generated hard labels (scaling supervision without manual annotation), while the synthesized split supports controlled multi-variant instruction formats aligned with downstream clinical QA prompts. To enhance coverage and robustness:
+
+% cite from github and huggingface of ChatDoctor
+Supervision is assembled from HealthCareMagic ($\sim$100k) and iCliniq ($\sim$10k)\footnote{HealthCareMagic and iCliniq datasets are publicly available via the ChatDoctor project: \url{https://github.com/Kent0n-Li/ChatDoctor}}\cite{li2023chatdoctor} to capture \emph{patient-facing complaint narratives} and pragmatic advice-seeking behaviour, and from PubMedQA \cite{pubmedqa} (expert-labeled 1k; unlabeled 61.2k; synthesis 211.3k)) to inject \emph{evidence-oriented biomedical reasoning} grounded in scientific abstracts. The unlabeled split is particularly suitable for teacher-generated hard labels (scaling supervision without manual annotation), while the synthesized split supports controlled multi-variant instruction formats aligned with downstream clinical QA prompts. To enhance coverage and robustness:
+
+\begin{itemize}
+  \item \textit{LLM paraphrasing} with complementary models (LLaMA-8B and Gemini 2.5), depending on data complexity; medical terminology is preserved via rules and LLM-auditing.
+  \item \textit{Back-translation} through multiple pivot languages with length and semantic checks to reject drifted variants.
+  \item \textit{Style standardization} to enforce neutral, clinical tone and probabilistic hedging; forum sign-offs are removed.
+  \item \textit{Multi-variant generation} (question and answer) spanning concise/detailed/clinical/patient-friendly registers to promote reasoning flexibility.
+  \item \textit{Scenario conditioning} (ER triage, routine visit, chronic care, caregiver perspective) to anchor answers in context.
+  \item \textit{Quality assurance} covering PHI scrubbing, MD5-based deduplication, invalid-generation filtering, and LLM-based medical consistency checks.
+\end{itemize}
+
+
+Augmentation is used not to invent new medical facts, but to broaden linguistic coverage (paraphrase, register, and context framing) while preserving clinical semantics. We explicitly filter for medically invariant transformations (e.g., rejecting edits that alter dosage, contraindications, temporal qualifiers, or certainty statements) to avoid introducing unsafe artefacts into the supervision stream.
+
+
+\paragraph{Training objective and data mixing}
+Let $(x_i, y_i)$ denote each instruction-formatted example, where $x_i$ includes the system instruction and optional input, and $y_i$ is the target completion. SFT minimises token-level cross-entropy over $y_i$ conditioned on $x_i$. To reduce overfitting to any single source style (forums vs.\ research QA), we apply stratified mixing across corpora and augmentation types, and enforce de-duplication at the question and answer levels. We additionally filter augmented samples using medical-consistency checks to reject semantic drift (e.g., altered drug dosages or contraindications).
+
+% ---------------------------
+% Tables
+% ---------------------------
+\begin{table}[h!]
+\centering
+\caption{Training corpora and augmentation coverage}
+\label{tab:data}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Source} & \textbf{Raw Size} & \textbf{Aug.\ Ratio} & \textbf{Notes} \\
+\midrule
+HealthCareMagic & $\sim$100k & 30--60\% & forum QA \\
+HealthCareMagic & $\sim$100k & KD\% & teacher soft/hard labels \\
+iCliniq & $\sim$10k & 30--60\% & forum QA \\
+PubMedQA (lab.) & 1k & 20--40\% & research QA \\
+PubMedQA (unlab.) & 61.2k & KD & teacher hard labels \\
+Synthesized & 211.3k & N/A & multi-variant \\
+\bottomrule
+\end{tabular}
+\vspace{-0.5em}
+\end{table}
+
+All samples are serialized in an SFT-ready \emph{Instruction–Input–Output} format with augmentation metadata \cite{han2023medalpaca}. For SFT, the student is optimised with standard token-level cross-entropy on these triples, encouraging accurate, style-consistent completions while establishing a strong base for subsequent distillation.
+
+
+
+\subsection{Knowledge Distillation}
+% • Distillation methods in general models
+% • Absence of work applying to medgemma-27b-it or medical LLM distillation. Most of work focus on finetune (need to do literature to prove)
+% • Highlight missing work → leads to Contribution (2)
+\label{sec:medswin-kd}
+
+While SFT on augmented biomedical supervision equips the student with broad task competence, we further compress domain-specific reasoning from MedGemma-27B-it into MedAlpaca-7B via knowledge distillation. This stage combines hard-label expansion of the training set with soft-label guidance from the teacher’s token-level distributions.
+
+\paragraph{Why distillation targets these data}
+We prioritise unlabeled and synthesized prompts for teacher completion because they provide high diversity of medical intents and question forms without requiring additional human annotation. Teacher hard labels convert these prompts into instruction-following targets, while soft labels preserve calibration and uncertainty structure from the instructor, which is important in medical settings where safe responses often require hedging and evidence qualification.
+
+% ---------------------------
+% Figure
+% ---------------------------
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=1\linewidth]{distillation.jpg}
+    \caption{Distillation and adaptation architecture for MedSwin-KD}
+    \label{fig:distillation-pipeline}
+\end{figure}
+
+\paragraph{Distillation objective and practicals}
+Both hard-label and soft-label distillation are employed~\cite{hinton2015distilling}. For \textbf{hard labels}, the teacher generates completions for unlabeled and synthesised prompts; these completions are then treated as standard instruction targets and mixed with the original SFT data. For \textbf{soft labels}, we record the teacher’s token-level distribution on the target sequence to guide student calibration. Let $y_t$ be the next token at step $t$, $p_T(\cdot\mid\tau)$ the teacher distribution at temperature $\tau$, and $p_S(\cdot)$ the student distribution. The per-step objective is
+\begin{equation}
+\mathcal{L}_t \;=\; \alpha\,\big(-\log p_S(y_t)\big) \;+\; (1-\alpha)\,\tau^2\,D_{\mathrm{KL}}\!\big(p_T(\cdot\mid\tau)\,\|\,p_S(\cdot)\big),
+\end{equation}
+with $\alpha\!\in\![0,1]$ and $\tau\!\in\![1,4]$. To make storage tractable, we store top-$k$ teacher log-probabilities per step (with renormalisation), which preserves informative gradients while reducing I/O and memory. During training, the student minimises the combined objective using teacher forcing on the target sequence, and we tune $\alpha$ to balance imitation (KL) against task supervision (CE).
+
+% ---------------------------
+% Table
+% ---------------------------
+\begin{table}[h!]
+\centering
+\caption{Distillation and adaptation settings}
+\label{tab:settings}
+\begin{tabular}{lc}
+\toprule
+\textbf{Component} & \textbf{Setting} \\
+\midrule
+Teacher & MedGemma-27B-it \cite{google2025medgemma} \\
+Student & MedAlpaca-7B \cite{han2023medalpaca} \\
+KD & top-$k$ per-step soft labels; hard labels on unlabeled/synth. \\
+Loss & $\alpha$ CE $+$ $(1\!-\!\alpha)\tau^2$ KL, $\tau\!\in\![1,4]$ \\
+QLoRA & 4-bit NF4, LoRA rank $r\!\in\!\{8,16\}$, chkpt.\ enabled \\
+Regularization & early stopping; cosine/linear warmup \\
+\bottomrule
+\end{tabular}
+\vspace{-0.5em}
+\end{table}
+
+\paragraph{Parameter-efficient adaptation}
+Student training uses QLoRA \cite{dettmers2023qlora}: the frozen backbone is loaded in 4-bit NF4 quantization with low-rank adapters (e.g., $r\!\in\!\{8,16\}$, modest dropout), gradient checkpointing, and AdamW. Early stopping on held-out clinical QA controls overfitting to synthetic or teacher-specific idiosyncrasies; cosine or linear warmup schedules stabilize joint SFT+KD optimization. This combination yields strong task competence at substantially reduced memory and runtime cost, aligning with reports of competitive performance from quantized PEFT regimes \cite{dettmers2023qlora} and recent medical LLM adaptations \cite{google2025medgemma,han2023medalpaca}.
+
+\paragraph{Positioning and gap}
+Prior open medical instruction-tuned LLMs largely emphasize supervised instruction finetuning on curated or mined medical dialogues and QA corpora \cite{han2023medalpaca,li2023chatdoctor}. In contrast, training-free or lightly-parameterized strategies that explicitly \emph{transfer} calibrated behaviors from a substantially stronger domain-specialized instructor via \emph{token-distribution matching} are less commonly systematized in open medical pipelines. Our design therefore focuses on (i) scalable hard-label expansion on unlabeled biomedical prompts, (ii) soft-label distillation to preserve uncertainty structure, and (iii) QLoRA-based adaptation to keep the resulting student deployable at 7B scale.
+
+
+\subsection{Model Merging for Composing SFT and KD Behaviors}
+\label{sec:merge}
+%This is hypothesis to prove and defense in this part. Will remove this later when finish writing.
+% \textbf{Hypothesis}: If apply \textcolor{red}{\emph{joint SFT--KD training}} into 
+% \textcolor{red}{\emph{instruction-following question answering}}, 
+% then \textcolor{red}{\emph{QA accuracy}} will improve under 
+% \textcolor{red}{\emph{diverse instruction styles}}, 
+% because \textcolor{red}{\emph{SFT provides explicit instruction alignment while KD transfers generalized behavior through soft targets}}. (This hypothesis need to be remove after finishing writing this part)
+
+Supervised fine-tuning (SFT) and knowledge distillation (KD) encode partially complementary inductive biases into the same base model, yet their parameter updates can interfere. SFT optimizes next-token likelihood on instruction--response pairs, sharpening format adherence, response discipline, and stylistic alignment. KD, by matching the teacher distribution, can transfer calibrated uncertainty and semantic behaviors that are not fully expressed by hard labels alone \cite{hinton2015distilling}. In safety-critical biomedical QA, this tension is practical: SFT often improves conservatism and output structure, whereas KD can preserve teacher-like semantic fidelity and hedging patterns that reduce overconfident error modes.
+
+\paragraph{Goal and contribution}
+Our objective is a compact medical assistant that simultaneously (i) preserves teacher-like semantic fidelity and uncertainty behaviors transferred by KD, and (ii) retains the conservative formatting and response discipline induced by SFT. We contribute a \emph{training-free} composition study for biomedical QA that: (a) formalizes SFT and KD adaptations as task vectors from a shared initialization; (b) evaluates merge operators with explicit interference-control mechanisms (DARE, TIES, and their composition) \cite{yu2023supermario,yadav2023ties}; and (c) empirically contrasts weight-space merging against sequential SFT-on-KD, which is known to trigger catastrophic forgetting under continual fine-tuning/instruction tuning \cite{luo2023catastrophic}. Our perspective is consistent with the emerging view that fine-tuned solutions from a common base can remain within broad, low-error basins where weight-space composition (when carefully controlled) can be beneficial \cite{wortsman2022soups,yang2024modelmergingSurvey}. We implement merging using an established toolkit to ensure reproducibility and alignment with common open-source workflows \cite{goddard2024mergekit}.
+
+\paragraph{Notation (task vectors)}
+Let $\theta_0$ denote the shared initialization (MedAlpaca-7B), $\theta_{\text{SFT}}$ the SFT-adapted checkpoint, and $\theta_{\text{KD}}$ the KD-adapted checkpoint. We define task vectors (parameter deltas)
+\begin{equation}
+\Delta_{\text{SFT}} = \theta_{\text{SFT}} - \theta_0, \qquad
+\Delta_{\text{KD}} = \theta_{\text{KD}} - \theta_0.
+\end{equation}
+Training-free merging constructs $\theta_{\text{merge}}$ directly in weight space (no additional SGD), which avoids gradient overwriting and the associated forgetting risk \cite{luo2023catastrophic}. Conceptually, merging aims to preserve behaviors that are represented by non-conflicting (or weakly conflicting) update directions while suppressing destructive parameter interference \cite{yadav2023ties,yu2023supermario}.
+
+\subsubsection*{Combination strategies}
+
+\paragraph{Sequential SFT-on-KD}
+A naive strategy is to continue instruction fine-tuning from $\theta_{\text{KD}}$ using the SFT objective, producing $\theta_{\text{KD}\rightarrow\text{SFT}}$ (1). While this can improve stylistic alignment, empirical evidence shows that continual fine-tuning often overwrites previously acquired capabilities due to gradient interference and representational drift, especially for 1B--7B LLMs \cite{luo2023catastrophic}. In our setting, this risk is amplified because SFT pushes toward narrower stylistic/format manifolds that may not preserve distributional behaviors transferred via KD.
+
+\paragraph{Weight-space merging (training-free)}
+We instead merge independently trained SFT and KD checkpoints without additional optimization (2). This is motivated by: (i) observations that averaging/interpolating fine-tuned checkpoints from a shared base can improve robustness without extra inference cost \cite{wortsman2022soups}; and (ii) task-vector arithmetic enabling explicit control over how much of each behavioral update is injected into the merged model \cite{ilharco2022taskarithmetic}. We focus on interference-aware merges because medical SFT and KD deltas are often broad and partially misaligned, making naive averaging prone to destructive cancellation.
+
+\subsubsection*{Merge operators and technical rationale}
+We summarize the operators used in MedSwin merges and the mechanism by which they mitigate interference. Unless stated otherwise, a global scaling coefficient (e.g., $\lambda=0.7$) is applied to control update magnitude and avoid over-steering the base.
+
+\paragraph{Task arithmetic (TA)}
+TA composes deltas additively:
+\begin{equation}
+\theta_{\text{TA}} = \theta_0 + \lambda_{\text{SFT}}\Delta_{\text{SFT}} + \lambda_{\text{KD}}\Delta_{\text{KD}}.
+\end{equation}
+TA can succeed when deltas are approximately additive and encode complementary behaviors \cite{ilharco2022taskarithmetic}. However, if $\Delta_{\text{SFT}}$ and $\Delta_{\text{KD}}$ disagree strongly in sign or support, naive addition can amplify interference. For this reason, TA serves as a baseline and is paired with magnitude control (via $\lambda$) and/or downstream interference-aware operators.
+
+\paragraph{SLERP / normalized SLERP (NuSL)}
+Linear interpolation may bias toward whichever delta has larger norm. Spherical linear interpolation (SLERP) addresses this by interpolating between normalized directions (originally proposed for quaternion interpolation) \cite{shoemake1985quaternion}. Applied to deltas, SLERP preserves a constant-norm path between update directions:
+\begin{equation}
+\begin{split}
+\Delta(\beta) = & \frac{\sin((1-\beta)\Omega)}{\sin(\Omega)}\widehat{\Delta}_{\text{SFT}}+\frac{\sin(\beta\Omega)} {\sin(\Omega)}\widehat{\Delta}_{\text{KD}}, \\
+& \Omega=\arccos(\widehat{\Delta}_{\text{SFT}}\cdot\widehat{\Delta}_{\text{KD}})
+\end{split}
+\end{equation}
+and $\theta_{\text{SLERP}}=\theta_0+\gamma\Delta(\beta)$ with magnitude $\gamma$. We report NuSLERP by normalizing deltas at a finer granularity (e.g., per-layer) before interpolation to reduce layer-wise scale imbalance and prevent a small number of layers from dominating the interpolation trajectory. Mechanistically, SLERP/NuSL are most helpful when the primary issue is \emph{norm dominance} rather than coordinate-level sign conflicts.
+
+\paragraph{DARE (Drop And REscale)}
+DARE sparsifies delta parameters by dropping a fraction $p$ of entries and rescaling the survivors by $1/(1-p)$:
+\begin{equation}
+\widetilde{\Delta}=\mathrm{DARE}(\Delta;p)=\frac{\mathbf{m}\odot \Delta}{1-p}, \quad m_i\sim\mathrm{Bernoulli}(1-p).
+\end{equation}
+The Super Mario analysis shows SFT-style deltas exhibit substantial redundancy, enabling aggressive sparsification while retaining functional behavior \cite{yu2023supermario}. In merging, DARE acts as an interference reducer: by sparsifying each delta, it reduces the probability that conflicting coordinates from different deltas are simultaneously active, while preserving the expected update $\mathbb{E}[\widetilde{\Delta}]=\Delta$. This is particularly valuable when both SFT and KD produce broad, overlapping supports that would otherwise cancel destructively under dense addition.
+
+\paragraph{TIES-Merging}
+TIES explicitly targets two dominant interference sources: (i) low-signal updates (redundancy), and (ii) sign disagreement across deltas \cite{yadav2023ties}. In brief, TIES (a) trims low-magnitude entries by retaining only the top-$q$ fraction by $|\Delta|$ (globally or per-layer), (b) elects a consensus sign per coordinate, and (c) merges only entries whose signs agree with the consensus. This converts the merge from ``average everything'' into ``merge only aligned, high-signal coordinates,'' which empirically improves multi-checkpoint composition \cite{yadav2023ties}.
+
+\paragraph{DARE--TIES (composition)}
+DARE--TIES combines stochastic sparsification (DARE) with sign-aware selective merging (TIES). Intuitively, DARE reduces dense overlap (lowering collision probability), while TIES prevents the remaining overlap from canceling by enforcing sign consistency on high-signal coordinates. This composition is well-matched to SFT--KD merging, where conflict is not merely a matter of scale but often manifests as coordinate-level disagreements induced by different supervision regimes.
+
+\paragraph{DARE-Linear (DARE + averaging)}
+DARE-Linear applies DARE sparsification followed by simple linear fusion (e.g., weighted averaging or TA). This isolates the effect of DARE as a preconditioner without invoking TIES sign resolution, helping attribute improvements to sparsification vs.\ explicit sign-consensus mechanisms.
+
+\section{MedSwin Architecture}
+
+\subsection{Biomedical Reranker}
+\label{subsec:biomedical-reranker}
+
+\textbf{Motivation.}
+While domain-specific bi-encoders for biomedical retrieval are increasingly available, there is a notable lack of \emph{open, long-context} \textbf{medical reranker} models with clear licensing, reproducible training recipes, and calibration hooks suitable for EMR/CPG passages. Safety-critical clinical RAG requires a cross-encoder that (i) handles multi-paragraph inputs, (ii) exposes a scalar relevance score per pair $(q,d)$ for auditability, and (iii) can be adapted with lightweight PEFT to institution constraints. To close this gap, we adapt the LLM-based cross-encoder \emph{BAAI/bge-reranker-v2-gemma} into a \emph{biomedical reranker} via LoRA finetuning on \emph{open, English} supervision.
+
+\paragraph{Base model and adaptation}
+We employ a decoder-only \emph{pointwise} LLM reranker where each query–passage pair $[q;d]$ is scored independently. The model outputs a logit $\ell_\theta(q,d)\in\mathbb{R}$ and an uncalibrated probability $p_\theta(q,d)=\sigma(\ell_\theta(q,d))$, with $\sigma(x)=1/(1+e^{-x})$. We attach LoRA adapters to attention and MLP projections to enable parameter-efficient finetuning under limited VRAM, supporting \textit{query\_max\_len=256} and \textit{passage\_max\_len=1024} tokens (mixed precision; gradient checkpointing).
+
+\paragraph{Open supervision and curation}
+We select \emph{open, English} supervision to ensure licensing clarity, reproducibility, and compatibility with local deployment constraints. Our reranker must generalise across (i) scientific writing (literature-style passages), (ii) biomedical question answering (clinical information needs), and (iii) long, heterogeneous passages resembling guideline sections. We therefore combine three complementary sources:
+
+\begin{enumerate}
+    \item \textbf{SciDocs (BEIR/scidocs)} — provides high-quality relevance supervision derived from citation and qrels-style annotations. Although not strictly clinical, it acts as a strong \emph{scientific ranking prior} that reduces overfitting to purely synthetic medical queries and improves robustness to literature-grounded retrieval (e.g., PubMed-style abstracts and clinical evidence summaries).
+    \item \textbf{BioASQ-generated-queries} — provides biomedical query distributions (abbreviations, entity-heavy phrasing, symptom/disease terms) at scale. We use these pairs to align the model with \emph{biomedical information needs} and to expose it to hard negatives that share vocabulary but differ in clinical meaning (e.g., similar drug classes, related conditions).
+    \item \textbf{MIRIAD 4.4M} — contributes broad medical domain coverage and longer passages, which is critical for long-context reranking in guideline and EMR-adjacent text. This source increases exposure to multi-paragraph evidence and reduces brittleness when relevance depends on cross-sentence linkage (recommendations, contraindications, and conditional statements).
+\end{enumerate}
+
+Each training record provides $(q,P,N)$ with one or more positives $P$ and negatives $N$. To mitigate shortcut learning and dataset-specific artefacts, we (i) de-duplicate near-duplicates, (ii) enforce section-preserving truncation to retain headings and recommendation structure, (iii) interleave sources with a fixed mixture schedule to reduce domain drift, and (iv) mine hard negatives from stage-1 retrieval to match deployment-time candidate distributions.
+
+
+\paragraph{Finetuning objective}
+We optimise a pointwise binary cross-entropy (BCE) over pairs:
+\begin{equation}
+\label{eq:bce-reranker}
+    \mathcal{L}_{\mathrm{BCE}}
+    \;=\;
+    -\!\!\sum_{d\in P}\!\log \sigma(\ell_\theta(q,d))
+    \;-\!\!\sum_{d\in N}\!\log\big(1-\sigma(\ell_\theta(q,d))\big).
+\end{equation}
+Triplet-style hardness is induced implicitly by the rolling negative buffer and optional mined negatives from the stage-1 retriever.
+
+\paragraph{Calibration for policy use}
+To enable threshold-based EMR auto-inclusion and guideline sufficiency checks, we calibrate logits on a held-out validation set using Platt/temperature scaling:
+\begin{equation}
+\label{eq:calib}
+    \widehat{p}_\theta(q,d)\;=\;\sigma\!\Big(\tfrac{\ell_\theta(q,d)-b}{T}\Big),
+\end{equation}
+estimating bias $b$ and temperature $T$ by minimising validation NLL. Calibrated probabilities $\widehat{p}_\theta$ are consumed directly by the evidence inclusion thresholds and sufficiency constraints in Section~\ref{subsec:retrieval-reranking-architecture}, enabling deterministic, auditable retrieval policies.
+
+
+\paragraph{LLM reranking design choice}
+LLM cross-encoders provide (i) longer effective context windows than BERT-style rerankers, (ii) stronger cross-sentence evidence linkage for clinical passages (tables, recommendations, practice points), and (iii) PEFT friendliness (LoRA) for site-specific updates without full retraining. This addresses the operational need for \emph{auditable, calibrated, long-context} ranking in medical RAG.
+
+\vspace{0.25em}
+\noindent\textbf{Notation.} $q$ is the (possibly patient-shaped) query; $d$ is a candidate passage; $\ell_\theta$ denotes the reranker logit; $\widehat{p}_\theta$ is the calibrated probability from \eqref{eq:calib}.
+
+\subsection{Techniques}
+\label{subsec:techniques}
+
+MedSwin operationalises clinical question answering as an evidence-constrained, auditable pipeline rather than a single monolithic LLM response. Given a query $q$ (optionally conditioned on patient context), the system outputs (i) an answer $a$, (ii) an evidence bundle $\mathcal{M}$ drawn from EMR and CPG sources under a token budget $B$, and (iii) a structured trace of intermediate actions enabling review of provenance and safety constraints.
+
+\paragraph{Agentic decomposition and exchanged artifacts}
+We decompose the workflow into specialised agents that exchange typed artifacts with explicit provenance metadata. A \emph{Query Normaliser} canonicalises terminology and expands abbreviations; an \emph{Evidence Retriever} proposes candidate EMR/CPG passages; an \emph{EMR Summariser} compresses longitudinal records into structured clinical state; a \emph{Guideline Synthesiser} extracts actionable recommendations and contraindications; and a \emph{Safety Critic} checks for missing evidence, conflicts, or unsafe recommendations. Each artifact includes source identifiers (document IDs, guideline version/timestamps, section tags, and chunk offsets), enabling replay and audit.
+
+\paragraph{Evidence sufficiency as a design primitive}
+Clinical safety depends on whether retrieved context contains sufficient guideline and EMR support. MedSwin therefore enforces evidence sufficiency via explicit constraints over $\mathcal{M}$ (e.g., minimum CPG/EMR coverage above a calibrated inclusion threshold) before answer generation. If constraints are not satisfied, the orchestrator deterministically triggers \textit{retrieve-more} actions (expand candidate pool, relax metadata filters, or broaden synonym sets) rather than producing unsupported recommendations.
+
+\vspace{0.25em}
+\noindent\textbf{Transition.}
+The above techniques establish an auditable, evidence-first workflow; however, they depend critically on selecting and ordering the \emph{right} passages under a strict token budget. In clinical RAG, small ranking errors can omit key contraindications or promote irrelevant background text. We therefore introduce a long-context biomedical reranker that outputs calibrated relevance scores used by downstream evidence sufficiency policies.
+
+
+% ---------------------------
+% Figure
+% ---------------------------
+\begin{figure*}[t!]
+    \centering
+    \includegraphics[width=\textwidth]{2sr2.png}
+    \caption{Two-stage IR Architecture.}
+    \label{fig:ir-pipeline}
+\end{figure*}
+
+
+\subsection{Two-Stage Retrieval-to-Reranker Architecture}
+% • Current medical QA models
+% • Note: rerankers used in general domain, but NOT finetuned for medical domain
+% • Highlight missing work → leads to Contribution (1)
+\label{subsec:retrieval-reranking-architecture}
+
+\textbf{Objective.}
+Given a clinical query $q$ and a heterogeneous document universe $\mathcal{D}$ spanning clinical practice guidelines (CPG), electronic medical records (EMR), drug-safety resources, and biomedical literature, the objective is to select a compact evidence bundle $\mathcal{M}\subset\mathcal{D}$ that is simultaneously relevant, non-redundant, clinically sufficient, and auditable under a token budget $B$.
+
+Rather than treating sufficiency as a raw count of retrieved CPG or EMR passages, we define a query-specific set of clinical evidence facets
+\[
+\mathcal{F}(q)=\{f_1,\ldots,f_m\},
+\]
+where facets may include indication, population match, intervention, comparator, outcome, contraindications, comorbidities, drug - drug interactions, adverse-event risks, guideline concordance, and patient-specific EMR constraints. The selected evidence bundle must provide adequate support for each high-priority facet, not merely high average relevance. Formally, the system seeks
+\[
+\mathcal{M}^{\star}
+=
+\arg\max_{\mathcal{M}\subseteq\mathcal{D}}
+U(q,\mathcal{M})
+\quad
+\text{s.t.}
+\quad
+\sum_{d\in\mathcal{M}}\tau(d)\le B,
+\]
+where $U(q,\mathcal{M})$ is a clinically weighted utility function that rewards evidence coverage, source quality, contradiction resolution, and patient-specific applicability while penalising redundancy, unsupported claims, and unresolved safety conflicts. This formulation makes the transition from retrieval to final synthesis a utility- and uncertainty-controlled decision rather than a fixed top-$K$ truncation.
+
+
+\subsubsection*{Stage 1: Dense retrieval with vector embedding}~\\
+\textbf{Embeddings and similarity.} 
+Let $\phi_q,\phi_d:\cdot\rightarrow\mathbb{R}^d$ be the query/document encoders. With L2 normalisation,
+\begin{equation}
+    \mathbf{q}=\frac{\phi_q(q)}{\|\phi_q(q)\|_2},\quad
+    \mathbf{d}=\frac{\phi_d(d)}{\|\phi_d(d)\|_2},\quad
+    s_{\mathrm{emb}}(q,d)=\mathbf{q}^{\top}\mathbf{d}.
+\end{equation}
+
+\textbf{ANN and lexical union.}
+We index $\{\mathbf{d}\}$ with a hybrid ANN (HNSW + IVF-PQ) and retrieve top-$K$ dense candidates $\mathcal{C}_{\mathrm{dense}}(q)$. To handle rare terms/abbreviations, we union with BM25 results $\mathcal{C}_{\mathrm{lex}}(q)$:
+\begin{equation}
+\label{eq:cand-union}
+    \mathcal{C}(q)=\mathrm{TopK}_{K'}\!\big(\mathcal{C}_{\mathrm{dense}}(q)\cup\mathcal{C}_{\mathrm{lex}}(q)\big),\qquad K'\ge K,
+\end{equation}
+carrying both $s_{\mathrm{emb}}(q,d)$ and $s_{\mathrm{lex}}(q,d)$ for fusion. Time and section filters may be applied using metadata $(t_d,\mathrm{section}_d,\mathrm{source}_d)$.
+
+
+\subsubsection*{Stage 2: Pointwise LLM reranking}
+For each $(q,d)\in\mathcal{C}(q)$, the biomedical reranker from Section~\ref{subsec:biomedical-reranker} produces $\ell_\theta(q,d)$ and the calibrated probability $\widehat{p}_\theta(q,d)$ via \eqref{eq:calib}.
+
+
+\subsubsection*{Fusion and policy-aware selection}
+\textbf{Signal calibration and clinical features.}
+For each candidate $(q,d)$, raw dense and lexical similarities are transformed into bounded, query-local calibration features
+\[
+g_{\mathrm{emb}}(q,d),g_{\mathrm{lex}}(q,d)\in[0,1],
+\]
+for example using percentile ranks, isotonic calibration, or validation-fitted monotone mappings. This avoids treating embedding cosine scores, BM25 scores, and calibrated reranker probabilities as commensurate quantities.
+
+We augment these retrieval signals with bounded clinical priors:
+\begin{equation}
+\small
+\begin{aligned}
+    g_{\mathrm{rec}}(d) &= \exp(-\lambda_r\,\Delta t(d)), \\
+    g_{\mathrm{sec}}(d) &\in [0,1] \quad \text{(e.g., CPG recommendation $>$ background)},\\
+    g_{\mathrm{src}}(d) &\in [0,1] \quad \text{(source reliability and provenance)}.
+\end{aligned}
+\end{equation}
+
+\textbf{Fusion score.}
+Because dense similarity, lexical similarity, calibrated reranker probability, and clinical priors do not share a common measurement scale, we avoid interpreting their raw weighted sum as a calibrated probability. Instead, each retrieval signal is first mapped to a bounded or calibrated feature. Let
+\[
+g_{\mathrm{emb}},g_{\mathrm{lex}},g_{\mathrm{rec}},g_{\mathrm{sec}},g_{\mathrm{src}}\in[0,1]
+\]
+denote percentile- or calibration-transformed versions of the embedding, lexical, recency, section, and source-quality signals. We further define an evidence-quality score
+\[
+g_{\mathrm{EBM}}(d)\in[0,1],
+\]
+which encodes the evidence hierarchy of the passage, giving higher weight to current guideline recommendations, systematic reviews, and high-quality randomised trials for generalisable treatment efficacy, while using EMR-derived evidence primarily to assess patient-specific applicability, contraindications, and comorbidity constraints.
+
+The fused score is then computed on the log-odds scale:
+\begin{equation}
+\label{eq:fusion}
+\small
+\begin{aligned}
+S(q,d)
+=
+\sigma\big(&
+w_0
++\alpha\,\mathrm{logit}(\widehat{p}_\theta(q,d))
++\beta\,g_{\mathrm{emb}}(q,d)
++\gamma\,g_{\mathrm{lex}}(q,d)
+\\
+&+\rho\,g_{\mathrm{rec}}(d)
++\eta\,g_{\mathrm{sec}}(d)
++\zeta\,g_{\mathrm{src}}(d)
++\xi\,g_{\mathrm{EBM}}(d) 
+\\
+&-\chi\,g_{\mathrm{noise}}(q,d)
+\big),
+\end{aligned}
+\end{equation}
+where $\sigma(\cdot)$ is the logistic function and $g_{\mathrm{noise}}(q,d)$ penalises population mismatch, obsolete recommendations, weak provenance, and semantic drift. This formulation preserves interpretability while preventing unbounded z-scores from being misrepresented as calibrated clinical confidence.
+
+\textbf{Evidence hierarchy and source validity.}
+For biomedical treatment recommendation, source identity alone is insufficient. Each passage is assigned an evidence-grade vector
+\[
+\mathbf{e}(d)=
+[
+e_{\mathrm{CPG}},
+e_{\mathrm{SR}},
+e_{\mathrm{RCT}},
+e_{\mathrm{OBS}},
+e_{\mathrm{CASE}},
+e_{\mathrm{EMR}},
+e_{\mathrm{SAFETY}}
+],
+\]
+where the components represent guideline evidence, systematic reviews, randomised controlled trials, observational studies, case-level evidence, patient-specific EMR evidence, and safety-specific evidence. The EBM score is computed as
+\begin{equation}
+\begin{aligned}
+g_{\mathrm{EBM}}(d) &= \sum_{r} \pi_r e_r(d), \\
+\pi_{\mathrm{CPG}}, \pi_{\mathrm{SR}}, \pi_{\mathrm{RCT}} &> \pi_{\mathrm{OBS}} > \pi_{\mathrm{CASE}}
+\end{aligned}
+\end{equation}
+with additional penalties for outdated recommendations, population mismatch, lack of outcome relevance, or absence of provenance. EMR evidence is not treated as higher-level therapeutic evidence; rather, it is used to modulate patient applicability, contraindication detection, and comorbidity alignment. This distinction prevents the model from confusing patient-specific context with generalisable treatment efficacy.
+
+\textbf{Budgeted, diverse selection.}
+Let $\tau(d)$ denote the token cost of passage $d$. Rather than enforcing raw source-count constraints, we select an evidence bundle by maximising clinical utility under a hard token budget:
+\begin{equation}
+\label{eq:budgeted-utility-selection}
+\small
+\mathcal{M}^{\star}
+=
+\arg\max_{\mathcal{M}\subseteq\mathcal{C}(q)}
+U(q,\mathcal{M})
+\quad
+\text{s.t.}
+\quad
+\sum_{d\in\mathcal{M}}\tau(d)\le B.
+\end{equation}
+Diversity is incorporated through the redundancy penalty $R_{\mathrm{red}}(\mathcal{M})$ inside $U(q,\mathcal{M})$, rather than through a separate MMR objective. This avoids maintaining two competing optimisation criteria and allows redundancy, contradiction, evidence quality, and safety coverage to be adjudicated within a single clinically interpretable utility function.
+
+\textbf{Greedy solver, facet sufficiency, and stopping.}
+We approximate the constrained optimisation with a greedy marginal-utility scheme. For each candidate passage $d$ and clinical facet $f_j\in\mathcal{F}(q)$, let
+\[
+a_{dj}=P(f_j \text{ is adequately addressed by } d\mid q)
+\]
+be a calibrated facet-alignment score produced by the reranker or a lightweight verifier. The probability that the current bundle $\mathcal{M}$ covers facet $f_j$ is modelled as
+\begin{equation}
+\label{eq:facet-coverage}
+\small
+\pi_j(\mathcal{M})
+=
+1-\prod_{d\in\mathcal{M}}
+\left(
+1-a_{dj}\widehat{p}_\theta(q,d)g_{\mathrm{EBM}}(d)
+\right).
+\end{equation}
+Because retrieved passages are not necessarily independent, near-duplicate passages or passages derived from the same parent source are down-weighted through $R_{\mathrm{red}}(\mathcal{M})$ and grouped by provenance before computing effective coverage. Thus, corroboration is credited primarily when it arises from independent sources or distinct evidence strata.
+This noisy-OR form rewards independent corroboration while saturating once additional passages become redundant.
+
+The clinical utility of a bundle is
+\begin{equation}
+\label{eq:clinical-utility}
+\begin{aligned}
+U(q,\mathcal{M}) &= \sum_{j=1}^{m} v_j \pi_j(\mathcal{M}) + \lambda_{\mathrm{safety}} R_{\mathrm{safety}}(\mathcal{M}) - \lambda_{\mathrm{red}} R_{\mathrm{red}}(\mathcal{M}) \\
+&\quad - \lambda_{\mathrm{conf}} R_{\mathrm{conf}}(\mathcal{M}),
+\end{aligned}
+\end{equation}
+where $v_j$ is the clinical importance of facet $f_j$, $R_{\mathrm{safety}}$ rewards coverage of contraindications and high-severity risks, $R_{\mathrm{red}}$ penalises near-duplicate evidence, and $R_{\mathrm{conf}}$ penalises unresolved contradictions among high-quality sources.
+
+At each step, the system selects the feasible passage with the highest positive marginal gain
+\begin{equation}
+\label{eq:marginal-utility}
+\small
+\Delta U(d\mid\mathcal{M})
+=
+U(q,\mathcal{M}\cup\{d\})-U(q,\mathcal{M}),
+\]
+subject to the remaining token budget. The system does not stop merely because top-level CPG and EMR counts are satisfied. Instead, the orchestrator accepts the evidence bundle only when all of the following conditions hold:
+\begin{equation}
+\label{eq:stopping}
+\small
+\begin{aligned}
+&\min_{j\in\mathcal{F}_{\mathrm{critical}}}
+\mathrm{LCB}_{1-\delta}\!\left[\pi_j(\mathcal{M})\right]
+\ge \theta_j,
+\\
+&\max_{j\in\mathcal{F}_{\mathrm{critical}}}
+H\!\left(\pi_j(\mathcal{M})\right)
+\le h_{\max},
+\\
+&R_{\mathrm{conf}}(\mathcal{M})\le c_{\max},
+\\
+&\max_{d\in\mathcal{C}(q)\setminus\mathcal{M}}
+\frac{\Delta U(d\mid\mathcal{M})}{\tau(d)}
+\le \epsilon_U.
+\end{aligned}
+\end{equation}
+Here $\mathrm{LCB}_{1-\delta}$ is a lower confidence bound on facet coverage, $H(\cdot)$ is binary entropy, $\theta_j$ is the required clinical sufficiency threshold for facet $j$, and $\epsilon_U$ is the minimum marginal utility per token required to justify further retrieval. If any critical facet remains uncertain, if high-quality sources conflict, or if the expected marginal utility of additional retrieval exceeds $\epsilon_U$, the orchestrator issues a targeted \textit{retrieve-more} action. This action may increase $K'$, expand synonyms, relax metadata filters, or dispatch a specialist agent to search for missing facets such as contraindications, population exclusions, or rare adverse events.
+In implementation, $\mathrm{LCB}_{1-\delta}[\pi_j(\mathcal{M})]$ is estimated by propagating calibration uncertainty from $\widehat{p}_\theta$, facet-alignment uncertainty from $a_{dj}$, and evidence-grade uncertainty from $g_{\mathrm{EBM}}$. A lightweight implementation may use bootstrap resampling over passages and calibration bins, whereas a fully Bayesian implementation may place beta distributions over $a_{dj}$ and $\widehat{p}_\theta$ and compute the posterior lower quantile of $\pi_j(\mathcal{M})$.
+
+\textbf{Context pruning and signal-to-noise control.}
+To prevent semantic drift and context dilution, the selected evidence bundle is further compressed through facet-aware evidence packing. A passage is retained only if it contributes new clinical information, resolves uncertainty, documents a safety issue, or explains a contradiction. Specifically, a candidate passage $d$ is protected from pruning if
+\begin{equation}
+\label{eq:protected-pruning}
+\small
+\Delta U(d\mid\mathcal{M})>\epsilon_{\mathrm{pack}}
+\quad
+\lor
+\quad
+R_{\mathrm{safety}}(d)\ge r_{\mathrm{crit}}
+\quad
+\lor
+\quad
+C(d,\mathcal{M})\ge c_{\mathrm{crit}},
+\end{equation}
+where $R_{\mathrm{safety}}(d)$ measures high-severity safety relevance and $C(d,\mathcal{M})$ measures whether $d$ introduces a clinically meaningful contradiction with the current bundle.
+
+This rule distinguishes distracting outliers from necessary clinical nuance. Low-relevance, low-quality, or population-mismatched passages are removed when their marginal utility is negligible. However, high-severity contraindications, subgroup exclusions, and high-grade contradictory recommendations are not discarded as noise; they are routed to a contradiction ledger for explicit adjudication. Thus, the pruning mechanism suppresses redundant context without erasing clinically important minority evidence.
+
+
+\subsubsection*{Implementation notes}
+\textbf{Chunking and metadata.} Documents are segmented into coherent, section-aware chunks with overlap chosen to minimise topic drift (embedding variance). Each chunk carries $(\mathrm{doc\_id},\mathrm{section},t_{\mathrm{start/end}},\mathrm{source})$ used throughout retrieval, fusion, and policy checks.
+
+\textbf{Index knobs and complexity.} Typical settings: HNSW $M\!\in\![16,48]$, $\mathrm{efSearch}\!\in\![64,256]$; IVF-PQ $n_{\mathrm{list}}\!\approx\!\sqrt{|\mathcal{D}|}$, $n_{\mathrm{probe}}\!\in\![8,64]$; candidate sizes $(K,K')$ tuned to latency and sufficiency. Stage~1 is sublinear per query with ANN; Stage~2 is $O(|\mathcal{C}|)$ pair scorings; selection is $O(|\mathcal{C}|\cdot|\mathcal{M}|)$ due to redundancy penalties.
+
+\vspace{0.25em}
+\noindent\textbf{Notation.} $q$ query; $d$ passage; $\phi_q,\phi_d$ encoders; $s_{\mathrm{emb}},s_{\mathrm{lex}}$ similarities; $\ell_\theta$ logit; $\widehat{p}_\theta$ calibrated probability; $S$ fusion score; $\tau(\cdot)$ token cost; $B$ budget; $T_{\mathrm{CPG}},T_{\mathrm{EMR}}$ sufficiency targets; thresholds $t,t'$.
+
+
+\subsection{Multi-Agent Coordination Architecture}
+\label{subsec:multi-agent-coordination}
+
+The Multi-Agent Coordination (MAC) architecture sits above the two-stage retrieval-to-reranking pipeline and coordinates multiple evidence-seeking agents before final treatment synthesis. Its purpose is not merely to increase the number of retrieved passages, but to diversify the search strategy across clinically meaningful hypotheses: guideline concordance, patient applicability, safety constraints, rare contraindications, and contradictory evidence. MAC therefore functions as a controlled evidence-exploration layer that expands recall while preserving auditability, source provenance, and facet-level sufficiency.
+
+\textbf{Agent-specific evidence exploration.}
+Let $\{A_i\}_{i=1}^{N}$ denote a set of role-specialised agents. Each agent receives the same clinical query $q$ and the current facet set $\mathcal{F}(q)$, but applies a different retrieval policy $\pi_i$ and scoring function $S_i(q,d)$. Agent $A_i$ returns a candidate set
+\[
+\mathcal{C}_i(q)
+=
+\{d_{i1},\ldots,d_{iK_i}\},
+\]
+together with structured metadata describing why each passage was retrieved. The coordination layer forms a pooled candidate set
+\begin{equation}
+\label{eq:mac-pool}
+\mathcal{C}_{\mathrm{MAC}}(q)
+=
+\bigcup_{i=1}^{N}
+\left\{
+(d,S_i(q,d),A_i)
+\mid
+d\in\mathcal{C}_i(q)
+\right\}.
+\end{equation}
+This pooling step is deliberately separated from final selection. MAC does not simply take a weighted top-$K$ union; doing so would collapse heterogeneous clinical hypotheses into a single relevance ranking and could suppress rare but safety-critical evidence.
+
+\textbf{Structured evidence ledger.}
+Each agent emits a claim-level evidence ledger rather than an unstructured summary. For agent $A_i$, the ledger is
+\[
+\mathcal{L}_i
+=
+\{
+(d,f_j,S_i(q,d),a^{(i)}_{dj},g_{\mathrm{EBM}}(d),
+\mathrm{polarity},\mathrm{provenance})
+\},
+\]
+where $f_j\in\mathcal{F}(q)$ is the clinical facet addressed by passage $d$, $a^{(i)}_{dj}$ is the agent's facet-alignment estimate, $g_{\mathrm{EBM}}(d)$ is the evidence-quality score, and $\mathrm{polarity}$ indicates whether the passage supports, contradicts, qualifies, or is irrelevant to a candidate treatment claim. This representation forces agents to expose the evidentiary role of each passage rather than merely assigning it a relevance score.
+
+\textbf{Reliability-weighted agent aggregation.}
+Each agent is assigned a reliability weight based on validation-time performance. Let $r_i$ denote the probability that agent $A_i$ contributes clinically valid, non-redundant, and policy-compliant evidence for the current query class. We model
+\[
+r_i\sim\mathrm{Beta}(a_i,b_i),
+\]
+where $(a_i,b_i)$ are updated using validation metrics such as retrieval precision, safety recall, calibration error, contradiction-resolution accuracy, and policy-compliance rate. To avoid over-weighting agents with uncertain performance estimates, MAC uses a conservative posterior lower bound
+\[
+\widetilde{r}_i
+=
+\mathrm{LCB}_{1-\delta}(r_i),
+\qquad
+\omega_i
+=
+\frac{\widetilde{r}_i}
+{\sum_{k=1}^{N}\widetilde{r}_k}.
+\]
+Thus, agent influence is determined by demonstrated reliability rather than by an unsupported hypothesis test over coverage counts.
+
+\textbf{Reliability-weighted bundle selection.}
+The final MAC evidence bundle is selected from the pooled candidate set by maximising a reliability-weighted clinical utility:
+\begin{equation}
+\label{eq:mac-selection}
+\small
+\mathcal{M}_{\mathrm{MAC}}^{\star}
+=
+\arg\max_{\mathcal{M}\subseteq\mathcal{C}_{\mathrm{MAC}}(q)}
+U_{\mathrm{MAC}}(q,\mathcal{M})
+\quad
+\text{s.t.}
+\quad
+\sum_{d\in\mathcal{M}}\tau(d)\le B.
+\end{equation}
+The MAC utility is defined as
+\begin{equation}
+\label{eq:mac-utility}
+\small
+\begin{aligned}
+U_{\mathrm{MAC}}(q,\mathcal{M})
+={}&
+\sum_{d\in\mathcal{M}}
+\left[
+\sum_{i=1}^{N}\omega_i S_i(q,d)
++
+\lambda_{\mathrm{agree}}A(d)
+\\
+&+
+\lambda_{\mathrm{EBM}}g_{\mathrm{EBM}}(d)
++
+\lambda_{\mathrm{safety}}R_{\mathrm{safety}}(d)\right]
+\\
+&-
+\lambda_{\mathrm{red}}R_{\mathrm{red}}(\mathcal{M})
+-
+\lambda_{\mathrm{conf}}R_{\mathrm{conf}}(\mathcal{M})
+\\
+&-
+\lambda_{\mathrm{noise}}R_{\mathrm{noise}}(\mathcal{M}),
+\end{aligned}
+\end{equation}
+where $A(d)$ rewards independent corroboration by reliable agents, $R_{\mathrm{safety}}(d)$ rewards coverage of contraindications and high-severity risks, $R_{\mathrm{red}}$ penalises redundant passages, $R_{\mathrm{conf}}$ penalises unresolved contradiction among high-quality sources, and $R_{\mathrm{noise}}$ penalises population mismatch, obsolete recommendations, weak provenance, and semantic drift. Final acceptance remains governed by the facet-sufficiency, entropy, contradiction, and marginal-utility stopping criteria in Eq.~\ref{eq:stopping}.
+
+\textbf{Collaborative verification protocol.}
+MAC uses role-specialised agents with explicit responsibilities:
+\begin{enumerate}
+    \item \textbf{Exploration agent:} maximises recall through dense retrieval, lexical retrieval, synonym expansion, abbreviation expansion, and specialty-specific query reformulation.
+    \item \textbf{Guideline agent:} prioritises CPG and consensus recommendations, extracting recommendation strength, eligible population, contraindicated populations, and update date.
+    \item \textbf{Evidence-quality agent:} assigns EBM grade, study design, provenance, sample relevance, outcome relevance, and recency.
+    \item \textbf{Patient-context agent:} aligns retrieved evidence with EMR-derived comorbidities, demographics, medications, allergies, laboratory constraints, and prior treatment history.
+    \item \textbf{Safety agent:} searches specifically for contraindications, adverse events, drug--drug interactions, dose restrictions, and exclusion criteria.
+    \item \textbf{Contradiction critic:} identifies conflicts among sources, distinguishes genuine clinical disagreement from population mismatch, and routes unresolved high-severity conflicts to final adjudication.
+\end{enumerate}
+
+Each agent emits structured claims rather than free-text summaries. A claim is represented as
+\[
+c
+=
+(f_j,\mathrm{claim},\mathrm{polarity},d,g_{\mathrm{EBM}},
+\widehat{p}_{\theta},\mathrm{provenance}),
+\]
+allowing the final synthesiser to trace every treatment-relevant statement to a clinical facet, source passage, evidence grade, calibrated relevance score, and provenance record. This claim-level interface prevents the final synthesiser from treating retrieved context as an undifferentiated text block.
+
+\textbf{Contradiction adjudication.}
+Contradictions are not averaged away during aggregation. If two high-quality passages make incompatible claims about the same clinical facet, MAC records a contradiction pair
+\[
+(d_a,d_b,f_j,\mathrm{severity},g_{\mathrm{EBM}}(d_a),g_{\mathrm{EBM}}(d_b)).
+\]
+Low-severity contradictions may be resolved by evidence hierarchy, recency, or population fit. High-severity contradictions, especially those involving contraindications, adverse events, or guideline-discordant recommendations, are preserved in a contradiction ledger and passed to the critic and safety agents. If the contradiction remains unresolved, final synthesis must explicitly state the uncertainty rather than presenting a single unsupported recommendation.
+
+\textbf{Retrieve-more actions and deliberation control.}
+When the stopping criteria in Eq.~\ref{eq:stopping} are not satisfied, MAC issues targeted \textit{retrieve-more} actions rather than uniformly increasing $K'$. The missing facet determines the next action: unresolved safety facets trigger the safety agent; weak guideline coverage triggers the guideline agent; uncertain population applicability triggers the patient-context agent; and unresolved contradiction triggers the contradiction critic. This targeted expansion prevents deliberative paralysis by ensuring that additional retrieval is justified by expected marginal clinical utility rather than by a generic desire for more context.
+
+\textbf{Demonstration and explainability outputs.}
+For interpretability, MAC exposes four audit artefacts for every query:
+(i) a retrieval trace showing dense, lexical, and agent-specific candidate sources;
+(ii) a facet-coverage matrix showing which passages support, contradict, or qualify each clinical facet;
+(iii) an uncertainty and saturation curve showing $\pi_j(\mathcal{M})$, entropy $H(\pi_j)$, and marginal utility $\Delta U/\tau$ over retrieval iterations; and
+(iv) a contradiction ledger listing high-grade conflicting claims, their evidence levels, and their adjudication status. These artefacts make the stopping decision inspectable: users can determine whether retrieval stopped because clinical sufficiency was achieved, because additional passages had negligible marginal utility, or because the token budget was exhausted despite residual uncertainty.
+
+
+\section{Evaluation Protocol}
+\label{sec:eval_medquad}
+
+\paragraph{Dataset and justification}
+We evaluate on two complementary medical answer-generation benchmarks. First, we use MedQuAD, a medical QA collection derived from 12 U.S.\ National Institutes of Health (NIH) websites, designed to cover diverse consumer-health question types with medically grounded answers \cite{benabacha2019medquad}. This provenance is attractive because (i) questions reflect real-world, heterogeneous user intents, and (ii) answers are anchored in authoritative, institutionally curated sources rather than crowd-generated text. Second, we evaluate on OpenAI's HealthBench as an additional held-out medical benchmark, allowing us to test whether observed gains persist beyond a single corpus and under a different reference-answer distribution. Together, the two datasets provide a broader view of medical generation quality: MedQuAD emphasizes alignment to institutionally grounded consumer-health answers, while HealthBench stress-tests robustness of the same models under a second medical QA evaluation setting.
+\paragraph{Task setup}
+Given an input question or prompt from either benchmark, each model generates a free-form answer under a consistent prompting template and evaluation pipeline. Generations are scored against the corresponding benchmark reference answer(s). Because the curation and processing pipeline is harmonized across MedQuAD and HealthBench, the comparison isolates model behavior rather than preprocessing differences. While neither benchmark is a formal bedside reasoning exam, together they provide a practical testbed for measuring whether models remain medically aligned, semantically faithful, and resistant to spurious or unsupported additions across heterogeneous medical QA distributions.
+\paragraph{Metrics}
+We report complementary metrics capturing overlap, semantics, and over-generation:
+\begin{itemize}
+  \item \textbf{ROUGE-L F1} as a sequence-level overlap proxy (LCS-based), capturing surface agreement.
+  \item \textbf{BERTScore-F1} to quantify semantic similarity under contextual embeddings, which is more tolerant to paraphrase than n-gram overlap \cite{bertscore}.
+  \item \textbf{Token-level F1} as a strict lexical correctness proxy commonly used in QA evaluation, while noting known limitations of token-equivalence metrics \cite{bulian-etal-2022-tomayto}.
+  \item \textbf{Unigram/bigram precision} as an \emph{over-generation} signal: precision penalizes extraneous n-grams that do not appear in the reference, which can correlate with unsupported additions. We explicitly treat this as a \emph{proxy} rather than a definitive hallucination metric, consistent with findings that hallucination measurement is challenging and metric-dependent \cite{maynez-etal-2020-faithfulness,ji2023hallucination,kulkarni-etal-2025-evaluating,mickus-etal-2024-semeval}.
+\end{itemize}
+
+\paragraph{Models comparison}
+We include controlled MedSwin ablations together with broader biomedical baselines to isolate where gains come from. The controlled tiers comprise: 
+(i) the \textbf{base} MedAlpaca-7B; 
+(ii) the \textbf{teacher} MedGemma-27B(-Text-IT) used as the distillation target; 
+(iii) \textbf{single-objective} student adaptations derived from the same base---\emph{KD-only} (teacher imitation) and \emph{SFT-only} (instruction tuning); 
+(iv) a \textbf{sequential} baseline (SFT-on-KD) representing continued fine-tuning; and 
+(v) \textbf{training-free merges} that directly compose the KD and SFT weight updates using TA, TIES, NuSL, DARE-Linear, and DARE--TIES.
+For broader external positioning, the HealthBench evaluation additionally includes open biomedical instruction models such as MedGemma-1.5, BioMistral-7B, and Meditron-7B. Concretely, merges operate on the two base-relative updates (KD and SFT) and apply the merged update back onto the same MedAlpaca initialization. Across merge operators, we keep the scaling regime consistent (e.g., global coefficient around $0.7$, with operator-specific sparsity/sign settings where applicable) so that comparisons reflect the merge rule rather than uncontrolled update magnitude.
+
+\begin{table}[h!]
+\centering
+\caption{MedQuAD benchmarking resultss.}
+\label{tab:medquad_bench}
+\scriptsize
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Model} & \textbf{rougeL\_f} & \textbf{bert\_f} & \textbf{tok\_f1} & \textbf{uni\_prec} & \textbf{bi\_prec} \\
+\midrule
+DaRE-TIES-KD-0.7      & 0.17 & 0.8501 & 0.22 & 0.47 & 0.14 \\
+NuSL-KD-0.7           & 0.17 & 0.8500 & 0.21 & 0.47 & 0.11 \\
+DaRE-Linear-KD-0.7    & 0.17 & 0.8494 & 0.22 & 0.45 & 0.14 \\
+TA-SFT-0.7            & 0.16 & 0.8491 & 0.18 & 0.51 & 0.20 \\
+7B-KD                 & 0.18 & 0.8441 & 0.26 & 0.46 & 0.12 \\
+7B-SFT                & 0.15 & 0.8396 & 0.18 & 0.52 & 0.21 \\
+KD-SFT-PubMed-l       & 0.17 & 0.8341 & 0.24 & 0.44 & 0.11 \\
+KD-SFT-PubMed-map     & 0.17 & 0.8297 & 0.22 & 0.47 & 0.12 \\
+MedGemma-27b-it       & 0.19 & 0.8465 & 0.27 & 0.40 & 0.09 \\
+MedGemma-1.5-4b       & 0.18 & 0.8449 & 0.26 & 0.40 & 0.08 \\
+Gemini 3.1            & 0.15 & 0.8490 & 0.26 & 0.36 & 0.08 \\
+Gemini 2.5 Flash      & 0.09 & 0.8390 & 0.11 & 0.55 & 0.28 \\
+GPT 5.4               & 0.13 & 0.8450 & 0.21 & 0.31 & 0.05 \\
+Grok 4.2 (NR)         & 0.13 & 0.8333 & 0.22 & 0.29 & 0.05 \\
+Grok 4.1 (NR)         & 0.12 & 0.8340 & 0.18 & 0.28 & 0.05 \\
+Sonet 4.6             & 0.12 & 0.8470 & 0.19 & 0.28 & 0.05 \\
+Mistral Small         & 0.14 & 0.8450 & 0.23 & 0.34 & 0.07 \\
+Mistral Large         & 0.13 & 0.8430 & 0.21 & 0.29 & 0.06 \\
+MedAlpaca-7B          & 0.16 & 0.8196 & 0.18 & 0.50 & 0.20 \\
+BioMistral-7B         & 0.18 & 0.8460 & 0.25 & 0.45 & 0.11 \\
+MediPhi               & 0.18 & 0.8479 & 0.27 & 0.40 & 0.09 \\
+Meditron-7B           & 0.16 & 0.8240 & 0.22 & 0.47 & 0.13 \\
+\bottomrule
+\end{tabular}
+\vspace{-0.5em}
+\end{table}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=1\linewidth]{quadbar.png}
+    \label{fig:placeholder}
+\end{figure}
+
+\paragraph{Results and technical interpretation}
+The results show a consistent separation between lexical-match strength and semantic alignment, and make the value of merging explicit across two benchmarks. On MedQuAD, KD alone remains the strongest \emph{student training} baseline on strict lexical proxies (token F1 $0.26$; ROUGE-L $0.18$), consistent with teacher imitation improving fine-grained token selection and reference coverage. SFT alone yields the highest unigram/bigram precision (uni\_prec $0.52$; bi\_prec $0.21$), consistent with instruction tuning biasing toward more conservative, templated outputs that reduce over-generation.
+
+Crucially, \textbf{training-free merging yields the best semantic alignment at fixed model size} on MedQuAD: DARE--TIES attains the highest BERTScore-F1 ($0.8501$), narrowly ahead of NuSL ($0.8500$), DARE-Linear ($0.8494$), and TA ($0.8491$). This improves over MedAlpaca-7B ($0.8196$, +$0.0305$) and also exceeds KD-only ($0.8441$) and SFT-only ($0.8396$). Notably, the best merges also slightly exceed the teacher on BERTScore (MedGemma-27B-Text-IT: $0.8465$), while the teacher remains strongest on strict lexical overlap (ROUGE-L $0.19$, token-F1 $0.27$). This indicates that merging primarily closes the semantic-alignment gap without necessarily optimizing lexical exact-match proxies.
+
+On HealthBench, the same pattern largely persists under a broader comparison set. The best semantic result is obtained by TIES-KD-0.7-0.6 (BERTScore-F1 $0.8411$), followed extremely closely by TA-SFT-0.7 ($0.8410$), BioMistral-7B ($0.8404$), NuSL-KD-0.7 ($0.8403$), and DARE--TIES-KD-0.7 ($0.8392$). In contrast, the MedGemma baselines remain strongest on lexical overlap proxies, with MedGemma-27B achieving the top ROUGE-L/token-F1 scores on HealthBench ($0.1720/0.2574$), followed by MedGemma-1.5 ($0.1629/0.2523$). Relative to the base MedAlpaca-7B, however, every major MedSwin variant improves substantially on HealthBench semantics, with the best merge increasing BERTScore from $0.7946$ to $0.8411$ (+$0.0465$). The cross-benchmark consistency is important: although the winning operator changes slightly by dataset and metric, training-free composition repeatedly delivers the best or near-best semantic alignment among 7B-scale students, while KD preserves lexical faithfulness and SFT improves precision-oriented response restraint.
+
+\begin{table}[h!]
+\centering
+\caption{OpenAI HealthBench benchmarking results.}
+\label{tab:medquad_bench_full}
+\scriptsize 
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Model} & \textbf{rougeL\_f} & \textbf{bert\_f} & \textbf{tok\_f1} & \textbf{uni\_prec} & \textbf{bi\_prec} \\
+\midrule
+TIES-KD-0.7-0.6            & 0.16 & 0.8411 & 0.22 & 0.35 & 0.08 \\
+TA-SFT-0.7                 & 0.16 & 0.8410 & 0.23 & 0.35 & 0.08 \\
+NuSL-KD-0.7                & 0.16 & 0.8403 & 0.24 & 0.34 & 0.07 \\
+DaRE-TIES-KD-0.7           & 0.16 & 0.8392 & 0.24 & 0.34 & 0.07 \\
+DaRE-Linear-KD-0.7         & 0.16 & 0.8388 & 0.24 & 0.34 & 0.07 \\
+7B-KD                      & 0.15 & 0.8314 & 0.23 & 0.32 & 0.06 \\
+7B-SFT                     & 0.13 & 0.8299 & 0.17 & 0.31 & 0.07 \\
+KD-SFT-PubMed-l            & 0.13 & 0.8186 & 0.20 & 0.32 & 0.06 \\
+KD-SFT-PubMed-map          & 0.12 & 0.8088 & 0.16 & 0.31 & 0.06 \\
+MedGemma-27b-it            & 0.17 & 0.8342 & 0.26 & 0.32 & 0.07 \\
+MedGemma-1.5-4b            & 0.16 & 0.8326 & 0.25 & 0.32 & 0.06 \\
+Gemini 3.1                 & 0.14 & 0.8480 & 0.26 & 0.33 & 0.06 \\
+Gemini 2.5 Flash           & 0.08 & 0.8230 & 0.13 & 0.47 & 0.18 \\
+GPT 5.4                    & 0.12 & 0.8460 & 0.22 & 0.27 & 0.04 \\
+Grok 4.2 (NR)              & 0.12 & 0.8390 & 0.23 & 0.27 & 0.04 \\
+Grok 4.1 (NR)              & 0.11 & 0.8310 & 0.18 & 0.26 & 0.04 \\
+Sonet 4.6                  & 0.11 & 0.8440 & 0.20 & 0.24 & 0.04 \\
+Mistral Small              & 0.13 & 0.8470 & 0.23 & 0.30 & 0.06 \\
+Mistral Large              & 0.12 & 0.8400 & 0.21 & 0.26 & 0.04 \\
+BioMistral-7B              & 0.16 & 0.8404 & 0.23 & 0.35 & 0.08 \\
+Meditron-7B                & 0.12 & 0.8068 & 0.15 & 0.31 & 0.06 \\
+MedAlpaca-7B               & 0.11 & 0.7946 & 0.21 & 0.34 & 0.07 \\
+\bottomrule
+\end{tabular}
+\vspace{-0.5em}
+\end{table}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=1\linewidth]{healthbar.png}
+    \label{fig:placeholder}
+\end{figure}
+
+This pattern is consistent with interference-aware composition: DARE reduces dense overlap among potentially conflicting coordinates, while TIES-style sign resolution prevents remaining overlap from canceling on high-signal parameters \cite{yu2023supermario,yadav2023ties}. The small but consistent advantage of DARE--TIES over DARE-Linear on MedQuAD, together with the strong HealthBench result of the TIES-based merge, suggests that explicit conflict handling contributes materially when composing SFT and KD updates.
+
+Crucially, \textbf{training-free merging yields the best semantic alignment at fixed model size}, surpassing the base model and both constituent updates: DARE--TIES attains the highest BERTScore-F1 ($0.8501$), improving over MedAlpaca-7B ($0.8196$, +$0.0305$) and exceeding KD-only ($0.8441$) and SFT-only ($0.8396$). Notably, the best merges also \emph{match or slightly exceed the teacher} on BERTScore (MedGemma-27B-Text-IT: $0.8465$), while the teacher remains strongest on strict lexical overlap (ROUGE-L/token-F1), indicating that merging primarily closes the semantic gap without necessarily optimizing lexical exact-match proxies.
+This pattern is consistent with interference-aware composition: DARE reduces dense overlap among potentially conflicting coordinates, and TIES prevents remaining overlap from canceling by enforcing sign-consistent merging on high-signal parameters \cite{yu2023supermario,yadav2023ties}. The small but consistent gap between DARE--TIES and DARE-Linear suggests that explicit sign-conflict resolution (not sparsification alone) contributes materially when composing SFT and KD updates.
+
+\paragraph{Why sequential SFT-on-KD degrades semantic alignment}
+Sequential SFT-on-KD degrades semantic alignment on both benchmarks. On MedQuAD, BERTScore drops from $0.8441$ for KD-only to $0.8341/0.8297$ for the two KD$\rightarrow$SFT variants; on HealthBench, it similarly falls from $0.8314$ to $0.8186/0.8088$. The lexical metrics decrease less dramatically than the semantic ones, suggesting that continued instruction tuning can preserve parts of answer form while still overwriting teacher-like distributional behavior learned during KD. This is compatible with continual fine-tuning dynamics, where later updates induce catastrophic forgetting of previously acquired semantics and calibration \cite{luo2023catastrophic}. In contrast, merging avoids additional gradients and therefore avoids the primary mechanism of forgetting, while still permitting controlled incorporation of SFT-like response discipline.
+
+\paragraph{Evaluation caveats and impact}
+While overlap and semantic-similarity metrics provide scalable comparisons across both MedQuAD and HealthBench, hallucination and safety are not fully captured by n-gram precision or semantic similarity alone \cite{ji2023hallucination,kulkarni-etal-2025-evaluating}. Our precision metrics should therefore be interpreted as \emph{over-generation indicators} rather than definitive factuality measures. Nevertheless, the repeated semantic gains of MedSwin merges across two independent medical benchmarks provide an actionable deployment implication: training-free merging can yield more teacher-aligned behavior without additional retraining compute, which is especially valuable for resource-constrained clinical assistants where repeated fine-tuning or ensembling is infeasible \cite{wortsman2022soups,goddard2024mergekit}.
+
+\paragraph{Reranker benchmarking on MedQuAD (retrieval-style)}
+In addition to answer-generation scoring, we benchmark our \textbf{MedSwin-Rerank} model on MedQuAD under a retrieval-style formulation. Each MedQuAD example defines a \emph{query} (the question) and a single \emph{positive passage} (its reference answer). The full set of answers forms the passage corpus. For each query, we construct a candidate set containing exactly one positive and $N-1$ negatives (default $N=64$): 
+\emph{(A) Random-negative mode} samples negatives uniformly from other answers while ensuring the positive is present; 
+\emph{(B) Retriever$\rightarrow$reranker mode} optionally builds candidates via a sentence-embedding retriever with FAISS top-$K$ and then reranks those candidates (forcing inclusion of the positive if it is missing).
+Reranker inference is adapter-based: (i) HuggingFace cross-encoders scored via \textit{AutoModelForSequenceClassification} on concatenated (query, passage) pairs with batched padding; (ii) decoder-only rerankers scored via a \textit{FlagEmbedding} adapter when available; and (iii) a safe fallback that prompts an LLM to emit a numeric relevance score when a model cannot be loaded as a cross-encoder.
+
+\begin{table}[h!]
+\centering
+\caption{MedQuAD reranker benchmarking results.}
+\label{tab:medquad_rerank_bench}
+\scriptsize
+\begin{tabular}{lccccc}
+\toprule
+\text{Model} & \text{MRR@10} & \text{nDCG@10} & \text{Recall@10} & \text{MAP@10} & \text{p95 ms} \\
+\midrule
+MedSwin-Rerank   & 0.9771 & 0.9826 & 1.0000 & 0.9771 & 3895.1 \\
+BGE-v2-Gemma     & 0.9733 & 0.9799 & 0.9990 & 0.9733 & 3670.5 \\
+BGE-v2-M3        & 0.9684 & 0.9755 & 0.9972 & 0.9684 & 209.4 \\
+Jina-v3-Rerank   & 0.0349 & 0.0527 & 0.1130 & 0.0349 & 497.7 \\
+Qwen-8B-Rerank   & \textit{TBD} & \textit{TBD} & \textit{TBD} & \textit{TBD} & \textit{TBD} \\
+\bottomrule
+\end{tabular}
+\vspace{-0.5em}
+\end{table}
+
+\paragraph{Reranker metrics and efficiency}
+We report standard ranking metrics computed from the per-query relevance list after sorting by reranker score: \textbf{MRR@$K$}, \textbf{nDCG@$K$}, \textbf{Recall@$K$} (hit rate), and \textbf{MAP@$K$} for $K\in\{1,3,5,10\}$. To quantify deployment cost, we additionally log throughput (pairs/sec) and latency statistics (per-query p50/p95 in ms) measured end-to-end over candidate scoring and ranking.
+
+\paragraph{Rerankers compared}
+We compare MedSwin-Rerank against strong public reranking baselines used in our pipeline experiments: \textbf{BGE-v2-Gemma}, \textbf{BGE-v2-M3}, \textbf{Jina-v3-Rerank}, and a \textbf{Qwen-8B-Rerank} prompt-style scorer. Table~\ref{tab:medquad_rerank_bench} provides a placeholder for the final benchmark numbers to be filled after the next evaluation run.
+
+
+\section{Open-Source and Reproducibility}
+% • Current lack of open medical multi-agent frameworks
+% • Community demand for transparent, reproducible systems
+% • Highlight missing work → leads to Contribution (3)
+\label{subsec:opensource-reproducibility}
+
+Reproducibility is a prerequisite for biomedical translation: without verifiable pipelines, improvements in medical QA can reflect unreported degrees of freedom (data mixture, augmentation filters, teacher decoding, retrieval policies, or evaluation prompts) rather than genuine methodological progress. This concern is emphasized repeatedly in medical AI and clinical ML guidance, which calls for transparent reporting, traceable artifacts, and reproducible experimentation before deployment claims are credible \cite{vollmer2020mlhealth,beam2018mlhealth}. MedSwin is therefore designed as a \emph{reference implementation} with end-to-end scripting, provenance tracking, and release artifacts aligned with open science principles.
+
+\subsection{Release scope and artifacts}
+We will release a complete reproducibility package containing:
+\begin{itemize}
+    \item \textbf{Data engineering and safety filters:} license-aware dataset fetchers; preprocessing; PHI/identifier scrubbing; MD5-based deduplication; medically-invariant augmentation filters; and dataset manifests capturing transformation provenance per sample.
+    \item \textbf{SFT and KD training code:} QLoRA/LoRA configurations, optimizer and schedule settings, gradient checkpointing knobs, and training scripts that reconstruct MedSwin-SFT and MedSwin-KD checkpoints from raw inputs \cite{hu2021lora,dettmers2023qlora}.
+    \item \textbf{Teacher-label generation utilities:} fully logged prompts and decoding parameters for hard-label completion, plus serialization utilities for top-$k$ soft-label distillation traces sourced from MedGemma-27B-it \cite{google2025medgemma,hinton2015distilling}.
+    \item \textbf{Model merging specifications:} MergeKit YAML configurations and reproducible scripts for TA/SLERP/DARE/TIES compositions, including merge coefficients used for reported results \cite{goddard2024mergekit,yadav2023ties,yu2023supermario,shoemake1985quaternion}.
+    \item \textbf{Retrieval + reranking pipeline:} scripts to reproduce the two-stage IR pipeline (dense + lexical union, long-context biomedical reranker inference, calibrated scoring hooks), implemented using open reranker tooling and documented index parameters \cite{lewis2020rag,bgev2gemma,flagembedding}.
+    \item \textbf{Evaluation and reporting:} deterministic prompting templates, decoding parameters, and metric computation for MedQuAD; plus optional RAG evaluation hooks (e.g., RAGAS) to assess retrieval quality and answer groundedness under a standardized interface \cite{benabacha2019medquad,es2024ragas}.
+\end{itemize}
+
+\subsection{FAIR-aligned provenance and governance}
+We operationalize open-science principles by capturing dataset provenance and experimental metadata in machine-readable form, consistent with the FAIR emphasis on findability, accessibility, interoperability, and reusability \cite{wilkinson2016fair}. Each training/evaluation artifact is accompanied by:
+\begin{itemize}
+    \item dataset hashes, filtering logs, and augmentation lineage;
+    \item checkpoint lineage (base model, delta source, merge operator, coefficients);
+    \item evaluation manifests (prompt template version, decoding params, metrics, and run identifiers).
+\end{itemize}
+This structure supports institutional auditing and third-party replication, which is particularly critical in medical settings where pipeline changes can materially alter safety behavior \cite{vollmer2020mlhealth}.
+
+\subsection{Deterministic distillation and traceable supervision}
+Distillation pipelines often hide major degrees of freedom in teacher decoding and soft-label generation. MedSwin reduces ambiguity by:
+\begin{itemize}
+    \item logging the teacher identifier, prompt templates, decoding parameters, and random seeds for hard-label generation \cite{google2025medgemma};
+    \item storing top-$k$ token log-probabilities per step for soft KD (renormalized), enabling exact reproduction without re-querying the teacher \cite{hinton2015distilling};
+    \item releasing the exact data mixing ratios and ablation configs (SFT-only, KD-only, sequential fine-tuning, training-free merges).
+\end{itemize}
+This makes MedSwin suitable for controlled comparisons, where differences are attributable to \emph{methods} rather than implicit teacher regeneration.
+
+\subsection{Environment capture and run manifests}
+To prevent environment drift, we provide pinned environments (Docker/conda) with exact library versions and hardware notes. Each experiment includes a run manifest documenting: git commit, dataset hashes, GPU model/count, effective batch size, gradient accumulation, training steps, and wall-clock timing. For IR components, manifests include ANN parameters and reranker inference settings, allowing evaluation reproducibility across machines and labs.
+
+\subsection{Reproduction recipe and minimum-cost replication}
+A single-command reproduction workflow will rebuild: (i) the SFT checkpoint, (ii) the KD checkpoint (hard + soft), (iii) merged checkpoints using MergeKit YAMLs, and (iv) the MedQuAD evaluation table under fixed prompts and decoding. This design targets \emph{minimum-cost replication}: independent groups can validate claims without proprietary infrastructure, while preserving enough metadata to support rigorous auditing and extensions.
+
+% MedSwin yields multiple student checkpoints that encode complementary behaviours: the SFT-trained model improves instruction-following and style control, while the KD-trained model better matches the teacher’s calibrated reasoning and clinical response patterns. Rather than performing an additional full fine-tuning pass (which increases compute and can amplify catastrophic forgetting), we investigate weight-space merging as a lightweight mechanism to combine compatible checkpoints into a single deployable student.
+
+
+% \subsection{Merge formulation}
+% Let $W_0$ denote the shared base initialisation, and $W_{\mathrm{SFT}}$ and $W_{\mathrm{KD}}$ denote the student weights after SFT and KD, respectively. We define task vectors
+% \begin{equation}
+% \Delta_{\mathrm{SFT}} = W_{\mathrm{SFT}} - W_0, \qquad
+% \Delta_{\mathrm{KD}}  = W_{\mathrm{KD}}  - W_0.
+% \end{equation}
+% A simple merged model is constructed as
+% \begin{equation}
+% W_{\mathrm{merge}} = W_0 + \lambda_m\,\Delta_{\mathrm{SFT}} + (1-\lambda_m)\,\Delta_{\mathrm{KD}},
+% \label{eq:merge-linear}
+% \end{equation}
+% where $\lambda_m\in[0,1]$ trades off instruction robustness (SFT) and teacher-aligned reasoning (KD). In practice, we apply an alignment-aware merge that suppresses parameter dimensions with strong sign disagreement between $\Delta_{\mathrm{SFT}}$ and $\Delta_{\mathrm{KD}}$, reducing destructive interference while preserving the dominant shared updates.
+
+
+% \subsection{Rationale and alternatives}
+% \textbf{Why merging:} (i) \emph{Compute efficiency}---merging reuses existing checkpoints with negligible additional training cost; (ii) \emph{reduced forgetting}---additional fine-tuning to absorb behaviours can degrade previously acquired capabilities, while merging preserves both update directions; and (iii) \emph{controllability}---$\lambda_m$ provides a tunable knob to match institutional preferences. \\
+% \textbf{Alternatives considered:} continued fine-tuning with mixed data (higher cost; greater forgetting risk) and multi-task training from scratch (largest cost; complex scheduling). We adopt merging as the most practical strategy for rapid iteration and deployment.
+
+
+% \subsection{Benchmarking of merged checkpoints}
+% We benchmark merged checkpoints under identical retrieval budgets, prompting, and safety policies. Evaluation includes (i) end-to-end grounded QA metrics and evidence sufficiency rates, (ii) safety error rates (unsupported recommendations, contraindication misses), and (iii) efficiency (latency and memory footprint). Empirically, the merged model yields modest but consistent gains on key metrics (e.g., BERTScore-F$_1$ from 84.41 to 85.01) while maintaining comparable runtime characteristics.
+
+
+\section{Research Gaps}
+% • Summarize gaps explicitly:
+%   – No medical reranker model exists
+%   – No distillation with medgemma-27b-it explored
+%   – Lack of open-source, reproducible medical multi-agent frameworks
+% • Directly connect gaps → contributions
+\label{sec:research_gap}
+
+Across medical LLMs, medical RAG, and agentic decision-support systems, recent progress has not fully resolved the requirements for \emph{deployable, auditable, and reproducible} clinical assistants. We identify four concrete gaps that motivate MedSwin.
+
+\paragraph{G1: Compact medical specialists with uncertainty transfer from strong instructors}
+Medical alignment research frequently prioritizes large-capacity models (or closed evaluation stacks) rather than compact specialists that can be deployed under strict latency and memory constraints \cite{meng2024llmsmedicine,singhal2023medpalm2}. Open medical assistants typically rely on SFT-centric alignment \cite{han2023medalpaca,li2023chatdoctor,tran2024bioinstruct}, yet SFT alone does not reliably preserve distributional uncertainty patterns that matter for safe medical responses. With the emergence of open medical instructors (e.g., MedGemma-27B-it) \cite{google2025medgemma}, there is a clear opportunity—still under-systematized in open pipelines—to distill \emph{token-level distributions} into 7B-scale models using tractable PEFT, explicitly targeting calibrated hedging and evidence qualification behaviors \cite{hinton2015distilling,dettmers2023qlora}. MedSwin fills this gap with an end-to-end hard/soft KD pipeline under QLoRA.
+
+\paragraph{G2: Training-free composition of SFT and KD behaviors under interference control for medical QA}
+SFT and KD encode complementary inductive biases: SFT improves instruction-following and response discipline; KD transfers teacher-like semantics and calibration. However, sequential fine-tuning can overwrite previously acquired behaviors through continual fine-tuning interference, consistent with catastrophic forgetting dynamics documented in LLM adaptation \cite{luo2023catastrophic}. Training-free merging has matured in the general domain (model soups, task vectors, interference-aware merging) \cite{wortsman2022soups,ilharco2022taskarithmetic,yadav2023ties,yu2023supermario,yang2024modelmergingSurvey}, but remains comparatively under-explored as a systematic capability composition mechanism for \emph{medical} SFT/KD checkpoints. MedSwin addresses this with an interference-aware merging study (DARE, TIES, and compositions) implemented via reproducible tooling \cite{goddard2024mergekit} and evaluated under medical QA metrics.
+
+\paragraph{G3: Open, long-context biomedical reranking with calibrated, policy-usable scores}
+Medical RAG requires not only retrieval accuracy but reliable inclusion of contraindications, guideline constraints, and patient-specific context. While open embeddings and retrieval models exist for biomedical search \cite{medcpt,embeddinggemma}, and open reranker families enable strong pointwise LLM reranking \cite{bgev2gemma,flagembedding}, clinical deployments still lack widely adopted open rerankers that (i) handle long multi-paragraph passages, (ii) provide stable scalar scores for audit, and (iii) integrate naturally into threshold-based evidence policies. MedSwin closes this gap by adapting an open LLM-based reranker to biomedical supervision sources and placing calibrated reranker outputs at the core of evidence sufficiency constraints, rather than using reranking only as a heuristic prelude to generation \cite{beirscidocs,bioasqgen}.
+
+\paragraph{G4: Agentic medical RAG systems with explicit evidence sufficiency constraints and auditability beyond narratives}
+Healthcare MAS research emphasizes modularity and coordination, but systematic reviews note persistent challenges in evaluation, governance, and clinically meaningful validation \cite{sulis2023agents,borkowski2025multiagent}. Modern LLM agent systems for medicine (e.g., MDAgents) and agentic RAG pipelines (e.g., pharmacovigilance and eHealth assistants) show promise, but often leave retrieval provenance, evidence completeness, and policy thresholds under-specified relative to orchestration logic \cite{kim2024mdagents,choi2024malade,kalathas2025agenticrag,wang2025llmagents,liu2025agentarch}. MedSwin directly addresses this by elevating evidence sufficiency to a first-class acceptance criterion: agents are evaluated and routed based on whether their retrieved bundles satisfy calibrated coverage targets before answer generation.
+
+\paragraph{G5: Reproducibility as a first-class design requirement in medical LLM/RAG pipelines}
+Medical AI guidance repeatedly stresses that translation requires transparency, reproducibility, and artifact traceability \cite{vollmer2020mlhealth,beam2018mlhealth}. Yet many medical LLM and agentic RAG works do not release end-to-end pipelines with deterministic teacher generation, merge specifications, and retrieval policies that can be independently reconstructed. MedSwin narrows this reproducibility gap with a fully scripted pipeline and FAIR-aligned provenance logging, enabling third-party validation and extension \cite{wilkinson2016fair,es2024ragas}.
+
+\paragraph{How MedSwin closes the gaps}
+MedSwin contributes an end-to-end open blueprint that: (i) distills a strong medical instructor into a deployable 7B specialist with uncertainty transfer; (ii) composes SFT and KD behaviors via interference-aware training-free merges; (iii) integrates a long-context biomedical reranker with calibrated scoring into policy-aware retrieval; and (iv) operationalizes multi-agent coordination under explicit evidence sufficiency constraints with reproducible, auditable artifacts.
+
+
+% \section{Research Questions}
+% This is just shape the research purpose. After doing the research can we answer it. The question above just initial one I think, you should modify it:
+% Bullet points:
+% • RQ1: How effective is a medical-domain reranker in improving factual accuracy?
+% • RQ2: Can distillation from medgemma-27b-it enhance student foundation model performance in medical tasks?
+% • RQ3: What is the impact of open-sourcing agents + datasets on reproducibility and adoption?
+
+
+
+\section{Acknowledgement}
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}

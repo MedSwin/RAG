@@ -1,12 +1,9 @@
-"""Services package."""
+"""Services package.
 
-# Export main services
-from app.services.preprocessing import PreprocessingService
-from app.services.storage import StorageService
-from app.services.dataset import HuggingFaceDatasetService
-from app.services.strategy import IndexStrategyManager, IndexStrategy, IndexType
-from app.services.ingestion import IngestionPipelineService
-from app.services.reranker import DocumentReranker
+Runtime services are imported from their concrete modules. This package avoids
+eager imports so lightweight MedSwin policy/model tests do not require optional
+database, vector-index, or model-serving dependencies at collection time.
+"""
 
 __all__ = [
     "PreprocessingService",

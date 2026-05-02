@@ -12,6 +12,7 @@ from app.services.adapters.embedding import EmbeddingClient
 from app.services.adapters.reranker import RerankerClient
 from app.core.config import settings
 from app.models.medswin import ChatResponse, AuditTrace
+from app.services.medswin.governance import redacted_trace_summary
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -26,7 +27,7 @@ class ChatRequest(BaseModel):
     patient_id: Optional[str] = Field(None, description="Optional patient ID")
     constraints: Optional[Dict[str, Any]] = Field(
         None,
-        description="Optional constraints (guideline_only, timeframe, specialties)"
+        description="Optional constraints (clinical_scope, required_facets, source_policy, min_evidence_grade, timeframe, specialties)"
     )
 
 
@@ -51,6 +52,9 @@ class TraceResponse(BaseModel):
     tool_calls_count: int
     sufficiency_checks_count: int
     evidence_passages_count: int
+    policy_decisions: Optional[List[Dict[str, Any]]] = None
+    facet_coverage: Optional[List[Dict[str, Any]]] = None
+    contradictions: Optional[List[Dict[str, Any]]] = None
 
 
 # Global orchestrator instance (can be dependency-injected in production)
@@ -124,7 +128,12 @@ async def get_session(session_id: str, org_id: str, orchestrator: MedSwinOrchest
 
 
 @router.get("/traces/{trace_id}", response_model=TraceResponse)
-async def get_trace(trace_id: str, org_id: str, orchestrator: MedSwinOrchestrator = Depends(get_orchestrator)):
+async def get_trace(
+    trace_id: str,
+    org_id: str,
+    include_details: bool = False,
+    orchestrator: MedSwinOrchestrator = Depends(get_orchestrator)
+):
     """Get structured trace (admin/authorized only, optionally redacted)."""
     try:
         from app.repositories.traces import TraceRepository
@@ -136,21 +145,21 @@ async def get_trace(trace_id: str, org_id: str, orchestrator: MedSwinOrchestrato
         if not trace:
             raise HTTPException(status_code=404, detail="Trace not found")
         
-        # Redact PHI if enabled
-        if settings.LOG_REDACT_PHI:
-            # In production, implement proper PHI redaction
-            pass
-        
+        include_policy_details = include_details and settings.TRACE_INCLUDE_POLICY_DETAILS
+        summary = redacted_trace_summary(trace, include_policy_details=include_policy_details)
         return TraceResponse(
-            trace_id=trace["trace_id"],
-            session_id=trace["session_id"],
-            query=trace["query"],
-            created_at=trace["created_at"].isoformat() if isinstance(trace["created_at"], datetime) else str(trace["created_at"]),
-            completed_at=trace.get("completed_at").isoformat() if trace.get("completed_at") and isinstance(trace["completed_at"], datetime) else (str(trace["completed_at"]) if trace.get("completed_at") else None),
-            messages_count=len(trace.get("messages", [])),
-            tool_calls_count=len(trace.get("tool_calls", [])),
-            sufficiency_checks_count=len(trace.get("sufficiency_checks", [])),
-            evidence_passages_count=len(trace.get("evidence_bundle", {}).get("passages", [])) if trace.get("evidence_bundle") else 0
+            trace_id=summary["trace_id"],
+            session_id=summary["session_id"],
+            query=summary["query"],
+            created_at=summary["created_at"].isoformat() if isinstance(summary["created_at"], datetime) else str(summary["created_at"]),
+            completed_at=summary.get("completed_at").isoformat() if summary.get("completed_at") and isinstance(summary["completed_at"], datetime) else (str(summary["completed_at"]) if summary.get("completed_at") else None),
+            messages_count=summary["messages_count"],
+            tool_calls_count=summary["tool_calls_count"],
+            sufficiency_checks_count=summary["sufficiency_checks_count"],
+            evidence_passages_count=summary["evidence_passages_count"],
+            policy_decisions=summary.get("policy_decisions"),
+            facet_coverage=summary.get("facet_coverage"),
+            contradictions=summary.get("contradictions"),
         )
     except HTTPException:
         raise
@@ -175,7 +184,7 @@ async def ingest_documents(
     Ensures chunk metadata includes source_type, version, patient_id, timestamp.
     """
     try:
-        from app.models.medswin import SourceType, Document, Chunk
+        from app.models.medswin import SourceType, Document, Chunk, EvidenceGrade
         from app.repositories.documents import DocumentRepository
         from app.repositories.chunks import ChunkRepository
         from app.services.preprocessing import PreprocessingService
@@ -202,6 +211,7 @@ async def ingest_documents(
         for doc_data in documents:
             # Create document
             doc_id = doc_data.get("doc_id") or str(uuid.uuid4())
+            evidence_grade = _coerce_evidence_grade(doc_data.get("evidence_grade"), source_type_enum)
             document = Document(
                 doc_id=doc_id,
                 source_type=source_type_enum,
@@ -211,27 +221,22 @@ async def ingest_documents(
                 patient_id=doc_data.get("patient_id"),
                 org_id=org_id,
                 tags=doc_data.get("tags", []),
-                metadata=doc_data.get("metadata", {})
+                source_reliability=float(doc_data.get("source_reliability", evidence_grade.source_reliability)),
+                evidence_grade=evidence_grade,
+                metadata={
+                    **doc_data.get("metadata", {}),
+                    "version": doc_data.get("version"),
+                    "effective_date": doc_data.get("effective_date"),
+                    "source_reliability": float(doc_data.get("source_reliability", evidence_grade.source_reliability)),
+                    "evidence_grade": evidence_grade.model_dump(),
+                }
             )
             
             await doc_repo.create(document, org_id)
             
-            # Chunk document (simple chunking - split by sentences/paragraphs)
+            # Chunk document while preserving existing section/offset metadata when provided.
             text = doc_data.get("text", doc_data.get("content", ""))
-            # Simple chunking: split by paragraphs
-            paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-            chunks_data = []
-            for idx, para in enumerate(paragraphs):
-                if para:
-                    chunks_data.append({
-                        "chunk_id": f"{doc_id}_chunk_{idx}",
-                        "text": para,
-                        "content": para,
-                        "section": doc_data.get("section"),
-                        "offset_start": None,
-                        "offset_end": None,
-                        "metadata": {}
-                    })
+            chunks_data = doc_data.get("chunks") or _section_aware_chunks(doc_id, text, doc_data.get("section"))
             
             # Create chunks
             chunks = []
@@ -247,8 +252,22 @@ async def ingest_documents(
                     offset_end=chunk_data.get("offset_end"),
                     patient_id=doc_data.get("patient_id"),
                     guideline_version=doc_data.get("version"),
+                    timestamp=chunk_data.get("timestamp") or doc_data.get("timestamp"),
                     org_id=org_id,
-                    metadata=chunk_data.get("metadata", {})
+                    evidence_grade=_coerce_evidence_grade(chunk_data.get("evidence_grade") or doc_data.get("evidence_grade"), source_type_enum),
+                    source_reliability=float(chunk_data.get("source_reliability", doc_data.get("source_reliability", evidence_grade.source_reliability))),
+                    metadata={
+                        **doc_data.get("metadata", {}),
+                        **chunk_data.get("metadata", {}),
+                        "title": doc_data.get("title", "Untitled"),
+                        "version": doc_data.get("version"),
+                        "guideline_version": doc_data.get("version"),
+                        "effective_date": doc_data.get("effective_date"),
+                        "timestamp": chunk_data.get("timestamp") or doc_data.get("timestamp"),
+                        "source_reliability": float(chunk_data.get("source_reliability", doc_data.get("source_reliability", evidence_grade.source_reliability))),
+                        "evidence_grade": _coerce_evidence_grade(chunk_data.get("evidence_grade") or doc_data.get("evidence_grade"), source_type_enum).model_dump(),
+                    },
+                    tokenized_text=chunk_data.get("tokenized_text") or chunk_data.get("text", chunk_data.get("content", "")).lower().split()
                 )
                 chunks.append(chunk)
             
@@ -271,3 +290,77 @@ async def ingest_documents(
         logger.error(f"Ingest failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to ingest documents: {str(e)}")
 
+
+def _coerce_evidence_grade(raw: Any, source_type) -> Any:
+    """Coerce request evidence metadata into an EvidenceGrade."""
+    from app.models.medswin import EvidenceGrade, SourceType
+
+    if isinstance(raw, EvidenceGrade):
+        return raw
+    if isinstance(raw, dict):
+        return EvidenceGrade(**raw)
+    defaults = {
+        SourceType.CPG: ("guideline", settings.EBM_CPG_WEIGHT, settings.SOURCE_CPG_SCORE),
+        SourceType.EMR: ("emr", settings.EBM_EMR_WEIGHT, settings.SOURCE_EMR_SCORE),
+        SourceType.LIT: ("literature", settings.SOURCE_LIT_SCORE, settings.SOURCE_LIT_SCORE),
+    }
+    label, score, reliability = defaults.get(source_type, ("ungraded", 0.5, 0.5))
+    return EvidenceGrade(label=str(raw or label), score=score, source_reliability=reliability)
+
+
+def _section_aware_chunks(doc_id: str, text: str, default_section: Optional[str]) -> List[Dict[str, Any]]:
+    """Split text into chunks while keeping section headings and offsets.
+
+    Motivation vs Logic: Clinical chunks need section provenance for guideline
+    recommendations and contraindications. This fallback preserves headings and
+    offsets instead of flattening every document into anonymous paragraphs.
+    """
+    chunks: List[Dict[str, Any]] = []
+    if not text:
+        return chunks
+    offset = 0
+    section = default_section
+    buffer: List[str] = []
+    buffer_start = 0
+    chunk_idx = 0
+
+    for paragraph in [part for part in text.split("\n\n") if part.strip()]:
+        stripped = paragraph.strip()
+        start = text.find(paragraph, offset)
+        if start < 0:
+            start = offset
+        offset = start + len(paragraph)
+        is_heading = len(stripped) <= 120 and not stripped.endswith(".") and len(stripped.split()) <= 12
+        if is_heading and buffer:
+            body = "\n\n".join(buffer).strip()
+            chunks.append({
+                "chunk_id": f"{doc_id}_chunk_{chunk_idx}",
+                "text": body,
+                "content": body,
+                "section": section,
+                "offset_start": buffer_start,
+                "offset_end": start,
+                "metadata": {},
+            })
+            chunk_idx += 1
+            buffer = []
+        if is_heading:
+            section = stripped
+            buffer_start = offset
+            continue
+        if not buffer:
+            buffer_start = start
+        buffer.append(stripped)
+
+    if buffer:
+        body = "\n\n".join(buffer).strip()
+        chunks.append({
+            "chunk_id": f"{doc_id}_chunk_{chunk_idx}",
+            "text": body,
+            "content": body,
+            "section": section,
+            "offset_start": buffer_start,
+            "offset_end": len(text),
+            "metadata": {},
+        })
+    return chunks

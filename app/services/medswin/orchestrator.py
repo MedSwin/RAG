@@ -28,8 +28,11 @@ from app.models.medswin import (
     AgentMessage,
     ToolCall,
     SufficiencyCheck,
-    SourceType
+    SourceType,
+    PolicyAction,
+    ClinicalScope
 )
+from app.services.medswin.governance import build_citation, ensure_cds_language, redact_phi_text
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +131,27 @@ class MedSwinOrchestrator:
                 constraints,
                 trace
             )
+
+            if evidence_bundle.policy_decision and not evidence_bundle.policy_decision.passed:
+                answer = self._insufficient_evidence_answer(query, evidence_bundle.policy_decision)
+                citations = self._build_citations(evidence_bundle)
+                trace.completed_at = datetime.utcnow()
+                trace.final_answer = answer
+                trace.citations = citations
+                await self.trace_repo.create(trace, org_id)
+                return ChatResponse(
+                    answer=answer,
+                    evidence_bundle=evidence_bundle,
+                    safety_notes=evidence_bundle.policy_decision.reason,
+                    trace_id=trace_id,
+                    degraded_mode=degraded_mode,
+                    uncertainty_level="high",
+                    citations=citations,
+                    policy_decision=evidence_bundle.policy_decision,
+                    facet_coverage=evidence_bundle.facet_coverage,
+                    contradictions=evidence_bundle.contradictions,
+                    evidence_ledger=evidence_bundle.evidence_ledger,
+                )
             
             # Step 3: EMR Summary (Agent 2)
             emr_summary = await self._summarize_emr(
@@ -163,15 +187,7 @@ class MedSwinOrchestrator:
             )
             
             # Build citations
-            citations = [
-                {
-                    "chunk_id": p.chunk_id,
-                    "doc_id": p.doc_id,
-                    "source_type": p.source_type.value,
-                    "section": p.section
-                }
-                for p in evidence_bundle.passages
-            ]
+            citations = self._build_citations(evidence_bundle)
             
             trace.completed_at = datetime.utcnow()
             trace.final_answer = answer
@@ -187,7 +203,11 @@ class MedSwinOrchestrator:
                 trace_id=trace_id,
                 degraded_mode=degraded_mode,
                 uncertainty_level="high" if safety_report.insufficient_evidence else "medium",
-                citations=citations
+                citations=citations,
+                policy_decision=evidence_bundle.policy_decision,
+                facet_coverage=evidence_bundle.facet_coverage,
+                contradictions=evidence_bundle.contradictions,
+                evidence_ledger=evidence_bundle.evidence_ledger,
             )
             
         except Exception as e:
@@ -206,7 +226,8 @@ class MedSwinOrchestrator:
                 ),
                 trace_id=trace_id,
                 degraded_mode={"error": True},
-                citations=[]
+                citations=[],
+                uncertainty_level="high"
             )
     
     async def _normalize_query(self, query: str, trace: AuditTrace) -> QuerySpec:
@@ -233,7 +254,9 @@ class MedSwinOrchestrator:
                         "retrieval_hints": {"type": "object"},
                         "specialty": {"type": "string"},
                         "medications": {"type": "array", "items": {"type": "string"}},
-                        "labs": {"type": "array", "items": {"type": "string"}}
+                        "labs": {"type": "array", "items": {"type": "string"}},
+                        "clinical_scope": {"type": "string"},
+                        "facets": {"type": "array", "items": {"type": "object"}}
                     }
                 }
             )
@@ -246,6 +269,7 @@ class MedSwinOrchestrator:
                 content = content.split("```")[1].split("```")[0].strip()
             
             spec_data = json.loads(content)
+            spec_data.setdefault("clinical_scope", ClinicalScope.CLINICIAN_CDS.value)
             query_spec = QuerySpec(**spec_data)
             
             trace.messages.append(AgentMessage(
@@ -286,8 +310,18 @@ class MedSwinOrchestrator:
         if constraints and constraints.get("guideline_only"):
             source_type_filter = SourceType.CPG
         
+        facets = self.sufficiency_policy.build_facets(query, query_spec, constraints, patient_id)
+        query_spec.facets = facets
+        if constraints and constraints.get("clinical_scope"):
+            try:
+                query_spec.clinical_scope = ClinicalScope(constraints["clinical_scope"])
+            except ValueError:
+                query_spec.clinical_scope = ClinicalScope.CLINICIAN_CDS
+
         iteration = 0
         all_candidates = []
+        hints = None
+        selected: List[CandidatePassage] = []
         
         while iteration < settings.MAX_RETRIEVE_LOOPS:
             # Retrieve candidates
@@ -297,7 +331,7 @@ class MedSwinOrchestrator:
                 org_id=org_id,
                 source_type_filter=source_type_filter,
                 patient_id=patient_id,
-                hints=None if iteration == 0 else {"increase_k": True}
+                hints=hints
             )
             
             # Rerank
@@ -312,10 +346,30 @@ class MedSwinOrchestrator:
                 if c.chunk_id not in candidate_dict:
                     candidate_dict[c.chunk_id] = c
             all_candidates = list(candidate_dict.values())
-            
-            # Check sufficiency
-            check = self.sufficiency_policy.check_sufficiency(all_candidates, iteration)
+
+            for candidate in all_candidates:
+                self.sufficiency_policy.score_passage_facets(candidate, facets)
+
+            selected = self.retrieval_pipeline.select_with_mmr(
+                all_candidates,
+                query_embedding,
+                facets=facets
+            )
+
+            # Check sufficiency over the selected bundle, while preserving candidate recall.
+            check = self.sufficiency_policy.check_sufficiency(
+                all_candidates,
+                iteration,
+                query_spec=query_spec,
+                constraints=constraints,
+                patient_id=patient_id,
+                selected_passages=selected
+            )
             trace.sufficiency_checks.append(check)
+            if check.policy_decision:
+                trace.policy_decisions.append(check.policy_decision)
+                trace.facet_coverage = check.policy_decision.facet_coverage
+                trace.contradictions = check.policy_decision.contradictions
             
             if check.passed:
                 break
@@ -323,16 +377,40 @@ class MedSwinOrchestrator:
             if not self.sufficiency_policy.should_retrieve_more(check):
                 break
             
+            hints = self.sufficiency_policy.get_retrieval_hints(check)
             iteration += 1
         
-        # Select with MMR
-        selected = self.retrieval_pipeline.select_with_mmr(
+        if not selected:
+            selected = self.retrieval_pipeline.select_with_mmr(
+                all_candidates,
+                query_embedding,
+                facets=facets
+            )
+
+        final_check = self.sufficiency_policy.check_sufficiency(
             all_candidates,
-            query_embedding
+            iteration,
+            query_spec=query_spec,
+            constraints=constraints,
+            patient_id=patient_id,
+            selected_passages=selected
         )
+        if final_check.policy_decision and (
+            not trace.policy_decisions or trace.policy_decisions[-1] != final_check.policy_decision
+        ):
+            trace.policy_decisions.append(final_check.policy_decision)
+        trace.evidence_ledger = self.sufficiency_policy.last_evidence_ledger
+        trace.facet_coverage = self.sufficiency_policy.last_facet_coverage
+        trace.contradictions = self.sufficiency_policy.last_contradictions
         
         # Build evidence bundle
-        evidence_bundle = self.retrieval_pipeline.build_evidence_bundle(selected)
+        evidence_bundle = self.retrieval_pipeline.build_evidence_bundle(
+            selected,
+            facet_coverage=self.sufficiency_policy.last_facet_coverage,
+            evidence_ledger=self.sufficiency_policy.last_evidence_ledger,
+            contradictions=self.sufficiency_policy.last_contradictions,
+            policy_decision=self.sufficiency_policy.last_policy_decision
+        )
         trace.evidence_bundle = evidence_bundle
         
         return evidence_bundle
@@ -479,7 +557,7 @@ class MedSwinOrchestrator:
         messages = [
             {
                 "role": "system",
-                "content": "You are a medical safety critique system. Check for missing evidence, conflicts, and unsafe suggestions."
+                "content": "You are a medical safety critique system. Check missing evidence, conflicts, unsafe suggestions, and clinician-CDS boundary violations. Do not make a final diagnosis."
             },
             {
                 "role": "user",
@@ -544,7 +622,7 @@ class MedSwinOrchestrator:
         messages = [
             {
                 "role": "system",
-                "content": "You are a medical assistant. Provide evidence-based answers with citations. Include uncertainty language when evidence is insufficient."
+                "content": "You are a clinician decision-support assistant. Provide evidence-based support with citations, uncertainty, and safety caveats. Never claim to make or finalize a diagnosis."
             },
             {
                 "role": "user",
@@ -562,18 +640,19 @@ Evidence:
 Safety Notes:
 {safety_report.model_dump_json()}
 
-Provide a comprehensive answer with:
+Provide a clinician decision-support answer with:
 1. Answer to the query
 2. Evidence used section (reference chunk_ids)
 3. Explicit uncertainty language if evidence is insufficient
 4. Contraindications/risks if present
-5. Recommended next steps"""
+5. Recommended next steps for clinician review
+Do not present autonomous diagnosis or treatment orders."""
             }
         ]
         
         try:
             response = await self.supervisor_client.call_llm(messages)
-            answer = response["content"]
+            answer = ensure_cds_language(response["content"])
             
             trace.messages.append(AgentMessage(
                 role="assistant",
@@ -589,3 +668,19 @@ Provide a comprehensive answer with:
             logger.error(f"Final answer generation failed: {e}")
             return "I encountered an error generating the answer. Please try again."
 
+    def _build_citations(self, evidence_bundle: EvidenceBundle) -> List[Dict[str, Any]]:
+        """Build rich citations from selected evidence and ledger facets."""
+        facets_by_chunk = {
+            entry.chunk_id: entry.facets for entry in evidence_bundle.evidence_ledger
+        }
+        return [build_citation(passage, facets_by_chunk.get(passage.chunk_id, [])) for passage in evidence_bundle.passages]
+
+    def _insufficient_evidence_answer(self, query: str, decision) -> str:
+        """Return bounded CDS response when enterprise policy gates fail."""
+        missing = ", ".join(decision.missing_facets) if decision.missing_facets else "required clinical facets"
+        conflicts = " Unresolved high-severity contradictions were detected." if decision.unresolved_critical_conflicts else ""
+        return ensure_cds_language(
+            "The available evidence is insufficient to provide a grounded clinician decision-support answer for "
+            f"the query: {redact_phi_text(query)}. Missing or uncertain evidence: {missing}.{conflicts} "
+            "The next step is targeted evidence retrieval or clinician review of the relevant EMR/guideline source."
+        )

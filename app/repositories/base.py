@@ -1,8 +1,11 @@
 """Base repository class with org-aware partitioning."""
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Any as AnyType
 from app.core.database import get_database
-from motor.motor_asyncio import AsyncIOMotorDatabase
+try:
+    from motor.motor_asyncio import AsyncIOMotorDatabase
+except ModuleNotFoundError:
+    AsyncIOMotorDatabase = AnyType
 import logging
 
 logger = logging.getLogger(__name__)
@@ -37,4 +40,3 @@ class BaseRepository:
     async def create_indexes(self):
         """Create indexes for the collection. Override in subclasses."""
         pass
-

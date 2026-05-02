@@ -13,6 +13,115 @@ class SourceType(str, Enum):
     LIT = "LIT"  # Literature
 
 
+class ClinicalScope(str, Enum):
+    """Clinical output boundary enforced by the runtime."""
+    CLINICIAN_CDS = "clinician_cds"
+    DIFFERENTIAL_DX = "differential_dx"
+    PATIENT_ADVICE = "patient_advice"
+
+
+class EvidencePolarity(str, Enum):
+    """How a passage or claim relates to a clinical facet."""
+    SUPPORTS = "supports"
+    CONTRADICTS = "contradicts"
+    QUALIFIES = "qualifies"
+    SAFETY = "safety"
+    IRRELEVANT = "irrelevant"
+
+
+class PolicyAction(str, Enum):
+    """Deterministic policy action chosen after evidence review."""
+    ACCEPT = "accept"
+    RETRIEVE_MORE = "retrieve_more"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    REQUIRE_CLARIFICATION = "require_clarification"
+
+
+class ClinicalFacet(BaseModel):
+    """Clinical evidence facet required for safe CDS synthesis."""
+    name: str
+    required: bool = True
+    threshold: float = 0.70
+    weight: float = 1.0
+    source_policy: Optional[str] = None
+    keywords: List[str] = Field(default_factory=list)
+
+
+class EvidenceGrade(BaseModel):
+    """Evidence hierarchy metadata used by policy-aware selection."""
+    label: str = "ungraded"
+    score: float = 0.50
+    source_reliability: float = 0.50
+    rationale: Optional[str] = None
+
+
+class EvidenceClaim(BaseModel):
+    """Claim-level evidence emitted by retrieval or specialist agents."""
+    facet: str
+    claim: str
+    polarity: EvidencePolarity = EvidencePolarity.SUPPORTS
+    chunk_id: str
+    confidence: float = 0.0
+    evidence_grade: EvidenceGrade = Field(default_factory=EvidenceGrade)
+    provenance: Dict[str, Any] = Field(default_factory=dict)
+
+
+class EvidenceLedgerEntry(BaseModel):
+    """Auditable passage-level evidence ledger entry."""
+    chunk_id: str
+    doc_id: str
+    source_type: SourceType
+    agent_id: str = "retrieval"
+    facets: List[str] = Field(default_factory=list)
+    claims: List[EvidenceClaim] = Field(default_factory=list)
+    calibrated_relevance: float = 0.0
+    fusion_score: float = 0.0
+    evidence_grade: EvidenceGrade = Field(default_factory=EvidenceGrade)
+    safety_relevance: float = 0.0
+    contradiction_risk: float = 0.0
+    provenance: Dict[str, Any] = Field(default_factory=dict)
+
+
+class FacetCoverage(BaseModel):
+    """Noisy-OR facet coverage and uncertainty estimate."""
+    facet: str
+    required: bool = True
+    threshold: float = 0.70
+    coverage_probability: float = 0.0
+    lower_confidence_bound: float = 0.0
+    entropy: float = 0.0
+    status: str = "missing"
+    supporting_chunk_ids: List[str] = Field(default_factory=list)
+    contradicting_chunk_ids: List[str] = Field(default_factory=list)
+
+
+class ContradictionPair(BaseModel):
+    """High-grade incompatible evidence that must not be averaged away."""
+    facet: str
+    chunk_id_a: str
+    chunk_id_b: str
+    severity: str = "medium"
+    reason: str
+    resolved: bool = False
+    adjudication: Optional[str] = None
+
+
+class PolicyDecision(BaseModel):
+    """Enterprise evidence policy decision for a retrieval iteration."""
+    passed: bool
+    action: PolicyAction
+    reason: str
+    iteration: int = 0
+    clinical_scope: ClinicalScope = ClinicalScope.CLINICIAN_CDS
+    facet_coverage: List[FacetCoverage] = Field(default_factory=list)
+    contradictions: List[ContradictionPair] = Field(default_factory=list)
+    marginal_utility_per_token: float = 0.0
+    unresolved_critical_conflicts: bool = False
+    missing_facets: List[str] = Field(default_factory=list)
+    retrieval_hints: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class QuerySpec(BaseModel):
     """Normalized query specification."""
     canonical_terms: List[str] = Field(default_factory=list)
@@ -21,6 +130,8 @@ class QuerySpec(BaseModel):
     specialty: Optional[str] = None
     medications: List[str] = Field(default_factory=list)
     labs: List[str] = Field(default_factory=list)
+    facets: List[ClinicalFacet] = Field(default_factory=list)
+    clinical_scope: ClinicalScope = ClinicalScope.CLINICIAN_CDS
 
 
 class CandidatePassage(BaseModel):
@@ -37,6 +148,17 @@ class CandidatePassage(BaseModel):
     lexical_score: Optional[float] = None
     rerank_score: Optional[float] = None
     fusion_score: Optional[float] = None
+    token_count: Optional[int] = None
+    calibrated_score: Optional[float] = None
+    recency_score: Optional[float] = None
+    section_score: Optional[float] = None
+    source_score: Optional[float] = None
+    evidence_grade_score: Optional[float] = None
+    noise_score: Optional[float] = None
+    safety_score: Optional[float] = None
+    contradiction_score: Optional[float] = None
+    facet_scores: Dict[str, float] = Field(default_factory=dict)
+    selected_reason: Optional[str] = None
 
 
 class RerankScore(BaseModel):
@@ -55,6 +177,10 @@ class EvidenceBundle(BaseModel):
     emr_count: int
     lit_count: int
     coverage_ratios: Dict[str, float] = Field(default_factory=dict)
+    facet_coverage: List[FacetCoverage] = Field(default_factory=list)
+    evidence_ledger: List[EvidenceLedgerEntry] = Field(default_factory=list)
+    contradictions: List[ContradictionPair] = Field(default_factory=list)
+    policy_decision: Optional[PolicyDecision] = None
 
 
 class EMRSummary(BaseModel):
@@ -96,7 +222,11 @@ class ChatResponse(BaseModel):
     trace_id: str
     degraded_mode: Dict[str, bool] = Field(default_factory=dict)
     uncertainty_level: Optional[str] = None
-    citations: List[Dict[str, str]] = Field(default_factory=list)
+    citations: List[Dict[str, Any]] = Field(default_factory=list)
+    policy_decision: Optional[PolicyDecision] = None
+    facet_coverage: List[FacetCoverage] = Field(default_factory=list)
+    contradictions: List[ContradictionPair] = Field(default_factory=list)
+    evidence_ledger: List[EvidenceLedgerEntry] = Field(default_factory=list)
 
 
 class AgentMessage(BaseModel):
@@ -125,6 +255,11 @@ class SufficiencyCheck(BaseModel):
     mean_confidence: float
     passed: bool
     action_taken: Optional[str] = None
+    facet_coverage: List[FacetCoverage] = Field(default_factory=list)
+    contradiction_count: int = 0
+    missing_facets: List[str] = Field(default_factory=list)
+    marginal_utility_per_token: float = 0.0
+    policy_decision: Optional[PolicyDecision] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -142,8 +277,12 @@ class AuditTrace(BaseModel):
     tool_calls: List[ToolCall] = Field(default_factory=list)
     evidence_bundle: Optional[EvidenceBundle] = None
     sufficiency_checks: List[SufficiencyCheck] = Field(default_factory=list)
+    policy_decisions: List[PolicyDecision] = Field(default_factory=list)
+    evidence_ledger: List[EvidenceLedgerEntry] = Field(default_factory=list)
+    facet_coverage: List[FacetCoverage] = Field(default_factory=list)
+    contradictions: List[ContradictionPair] = Field(default_factory=list)
     final_answer: Optional[str] = None
-    citations: List[Dict[str, str]] = Field(default_factory=list)
+    citations: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class Session(BaseModel):
@@ -166,6 +305,8 @@ class Document(BaseModel):
     patient_id: Optional[str] = None
     org_id: str
     tags: List[str] = Field(default_factory=list)
+    source_reliability: float = 0.50
+    evidence_grade: Optional[EvidenceGrade] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -183,8 +324,9 @@ class Chunk(BaseModel):
     guideline_version: Optional[str] = None
     timestamp: Optional[datetime] = None
     org_id: str
+    evidence_grade: Optional[EvidenceGrade] = None
+    source_reliability: float = 0.50
     metadata: Dict[str, Any] = Field(default_factory=dict)
     # For BM25
     tokenized_text: Optional[List[str]] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
-

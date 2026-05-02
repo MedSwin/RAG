@@ -1,4 +1,8 @@
-"""Models package - includes Pydantic models and model management."""
+"""Models package - includes Pydantic MedSwin artifacts.
+
+Model manager utilities should be imported from their concrete modules to avoid
+pulling optional ML/runtime dependencies into lightweight app tests.
+"""
 
 from app.models.medswin import (
     QuerySpec,
@@ -14,8 +18,6 @@ from app.models.medswin import (
     Document,
     Chunk,
 )
-from app.models.manager import ModelManager
-from app.models.download import ModelDownloadService
 
 __all__ = [
     "QuerySpec",
@@ -30,7 +32,4 @@ __all__ = [
     "Session",
     "Document",
     "Chunk",
-    "ModelManager",
-    "ModelDownloadService",
 ]
-
