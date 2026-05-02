@@ -1,6 +1,9 @@
 try:
     from motor.motor_asyncio import AsyncIOMotorClient
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
+    # Root Cause vs Logic: Motor imports a private PyMongo cursor symbol that
+    # changed across driver releases, so a mismatched local install can crash
+    # application import before startup reaches the graceful DB fallback path.
     AsyncIOMotorClient = None
 
 try:

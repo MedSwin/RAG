@@ -6,8 +6,11 @@ pydantic==2.11.9
 pydantic-settings==2.0.3
 
 # Database dependencies
-motor==3.3.2
-pymongo==4.14.1
+# Root Cause vs Logic: Motor 3.3.x only tracks older PyMongo internals, and
+# the local environment pulled in a newer PyMongo that breaks the async import
+# path. These pins restore a compatible driver pair for Python 3.13.
+motor==3.7.1
+pymongo==4.10.1
 
 # Machine learning dependencies
 torch==2.8.0
