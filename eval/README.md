@@ -2,6 +2,8 @@
 
 This harness evaluates the full MedSwin system rather than the standalone LLM or reranker. It calls an existing MedSwin FastAPI runtime, runs benchmark cases through `/api/v1/medswin/chat`, retrieves trace summaries, and emits an audit JSON file containing evidence, provenance, sufficiency, safety, and trace-completeness metrics.
 
+The benchmark now keeps the clinical question text separate from the patient note. Case context is ingested as EMR-like evidence, while the query sent to MedSwin stays pure so retrieval quality is measured against the runtime contract rather than prompt augmentation.
+
 ## Recommended benchmark dataset
 
 Use **TREC Clinical Decision Support 2016** as the primary publication benchmark.
@@ -23,11 +25,12 @@ TREC CDS case JSONL
         v
 Benchmark FastAPI service :8200
         |
-        | optional ingest case note -> POST /api/v1/medswin/ingest?source_type=EMR
-        | chat call                -> POST /api/v1/medswin/chat
-        | trace call               -> GET  /api/v1/medswin/traces/{trace_id}
+        | preflight health check    -> GET  /health
+        | ingest case note          -> POST /api/v1/medswin/ingest?source_type=EMR
+        | chat call                 -> POST /api/v1/medswin/chat
+        | trace call                -> GET  /api/v1/medswin/traces/{trace_id}
         v
-MedSwin runtime :8100
+MedSwin runtime :8100 (per-run org namespace)
         |
         v
 Audit JSON: MSAS, facet recall, critical-facet recall, citation precision,
@@ -129,6 +132,8 @@ curl -X POST http://localhost:8200/api/run \
 ```
 
 The output is saved to `audits/{run_id}.json`.
+
+Each run uses a unique benchmark org derived from the configured `BENCHMARK_ORG_ID`, which prevents repeated evaluations from colliding on document IDs or patient-scoped retrieval state.
 
 ## Main metric: MedSwin System Audit Score
 

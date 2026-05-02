@@ -23,6 +23,12 @@ def _norm_id(value: Any) -> str | None:
     return text or None
 
 
+def _trace_count(trace_summary: dict[str, Any] | None, *keys: str) -> bool:
+    if not trace_summary:
+        return False
+    return any(bool(trace_summary.get(key)) for key in keys)
+
+
 def extract_doc_ids(response: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
     selected_doc_ids: list[str] = []
     cited_doc_ids: list[str] = []
@@ -86,16 +92,27 @@ def facet_recall(gold_facets: list[GoldFacet], evidence_doc_ids: set[str], *, cr
 def trace_completeness(response: dict[str, Any], trace_summary: dict[str, Any] | None = None) -> float:
     checks = {
         "answer": bool(response.get("answer")),
-        "evidence_bundle": bool(response.get("evidence_bundle")),
-        "policy_decision": bool(response.get("policy_decision")),
-        "facet_coverage": bool(response.get("facet_coverage")),
+        "evidence_bundle": response.get("evidence_bundle") is not None,
+        "policy_decision": response.get("policy_decision") is not None,
+        "facet_coverage": response.get("facet_coverage") is not None,
         "citations": isinstance(response.get("citations"), list),
-        "evidence_ledger": isinstance(response.get("evidence_ledger") or (response.get("evidence_bundle") or {}).get("evidence_ledger"), list),
+        "evidence_ledger": (
+            response.get("evidence_ledger") is not None
+            or (response.get("evidence_bundle") or {}).get("evidence_ledger") is not None
+        ),
         "trace_id": bool(response.get("trace_id") or response.get("trace", {}).get("trace_id")),
     }
     if trace_summary is not None:
         checks["trace_fetch"] = bool(trace_summary)
-        checks["trace_counts"] = any(k in trace_summary for k in ("message_count", "tool_count", "sufficiency_check_count", "evidence_count"))
+        # Root Cause vs Logic: the runtime emits plural count fields (for example
+        # messages_count) while older benchmark code expected singular aliases. The
+        # logic now accepts both so trace completeness reflects the actual audit payload.
+        checks["trace_counts"] = (
+            _trace_count(trace_summary, "messages_count", "message_count")
+            or _trace_count(trace_summary, "tool_calls_count", "tool_count")
+            or _trace_count(trace_summary, "sufficiency_checks_count", "sufficiency_check_count")
+            or _trace_count(trace_summary, "evidence_passages_count", "evidence_count")
+        )
     return sum(checks.values()) / len(checks)
 
 
@@ -122,7 +139,7 @@ def groundedness_proxy(response: dict[str, Any], cited_doc_ids: set[str]) -> tup
                 total += 1
                 doc_id = _norm_id(item.get("doc_id") or item.get("document_id") or item.get("source_id"))
                 polarity = str(item.get("polarity", "support")).lower()
-                if doc_id in cited_doc_ids or polarity in {"support", "supports", "qualifies", "contradicts"}:
+                if doc_id in cited_doc_ids and polarity in {"support", "supports", "qualifies"}:
                     supported += 1
         if total:
             score = supported / total

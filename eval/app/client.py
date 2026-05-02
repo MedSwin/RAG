@@ -1,23 +1,47 @@
 from __future__ import annotations
 
 from typing import Any
+
 import httpx
 
 from .schemas import BenchmarkCase
 
 
 class MedSwinClient:
-    def __init__(self, base_url: str, org_id: str, user_id: str, timeout_s: float = 120.0):
+    def __init__(
+        self,
+        base_url: str,
+        org_id: str,
+        user_id: str,
+        timeout_s: float = 120.0,
+        include_patient_context_in_query: bool = False,
+    ):
         self.base_url = base_url.rstrip("/")
         self.org_id = org_id
         self.user_id = user_id
         self.timeout_s = timeout_s
+        self.include_patient_context_in_query = include_patient_context_in_query
+        self._client: httpx.AsyncClient | None = None
+
+    async def __aenter__(self) -> "MedSwinClient":
+        self._client = httpx.AsyncClient(timeout=self.timeout_s)
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            raise RuntimeError("MedSwinClient must be used as an async context manager")
+        return self._client
 
     async def health(self) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            resp = await client.get(f"{self.base_url}/health")
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self.client.get(f"{self.base_url}/health")
+        resp.raise_for_status()
+        return resp.json()
 
     async def ingest_case_context(self, case: BenchmarkCase) -> dict[str, Any] | None:
         """Ingest the TREC topic note as EMR-like context scoped to the case patient_id.
@@ -50,14 +74,13 @@ class MedSwinClient:
                 "text": case.patient_context,
             }
         ]
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            resp = await client.post(
-                f"{self.base_url}/api/v1/medswin/ingest",
-                params={"source_type": "EMR", "org_id": self.org_id},
-                json=payload,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self.client.post(
+            f"{self.base_url}/api/v1/medswin/ingest",
+            params={"source_type": "EMR", "org_id": self.org_id},
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     async def chat(self, case: BenchmarkCase, *, source_policy: str, guideline_only: bool, min_evidence_grade: float, clinical_scope: str) -> dict[str, Any]:
         patient_id = case.patient_id or f"patient-{case.case_id}"
@@ -69,10 +92,12 @@ class MedSwinClient:
             "min_evidence_grade": min_evidence_grade,
             **case.constraints,
         }
-        # Include case context in the query. If you prefer strict EMR-only context,
-        # remove this prefix after confirming patient-scoped retrieval is reliable.
         full_query = case.query
-        if case.patient_context:
+        if self.include_patient_context_in_query and case.patient_context:
+            # Root Cause vs Logic: the previous harness concatenated patient_context
+            # into the benchmark query, which measured retrieval plus prompt augmentation.
+            # The logic now keeps the query pure and relies on explicit EMR ingestion so
+            # the benchmark reflects the runtime contract.
             full_query = f"Patient context:\n{case.patient_context}\n\nClinical question:\n{case.query}"
         payload = {
             "query": full_query,
@@ -81,16 +106,14 @@ class MedSwinClient:
             "patient_id": patient_id,
             "constraints": constraints,
         }
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            resp = await client.post(f"{self.base_url}/api/v1/medswin/chat", json=payload)
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self.client.post(f"{self.base_url}/api/v1/medswin/chat", json=payload)
+        resp.raise_for_status()
+        return resp.json()
 
     async def trace(self, trace_id: str, include_details: bool = True) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            resp = await client.get(
-                f"{self.base_url}/api/v1/medswin/traces/{trace_id}",
-                params={"org_id": self.org_id, "include_details": str(include_details).lower()},
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self.client.get(
+            f"{self.base_url}/api/v1/medswin/traces/{trace_id}",
+            params={"org_id": self.org_id, "include_details": str(include_details).lower()},
+        )
+        resp.raise_for_status()
+        return resp.json()
