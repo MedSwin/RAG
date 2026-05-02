@@ -1,0 +1,16 @@
+services:
+  medswin-benchmark:
+    build: .
+    ports:
+      - "8200:8200"
+    environment:
+      MEDSWIN_BASE_URL: "http://host.docker.internal:8100"
+      BENCHMARK_ORG_ID: "bench-org"
+      BENCHMARK_USER_ID: "bench-user"
+      RUN_STORE_DIR: "/app/audits"
+      MAX_CASES_DEFAULT: "25"
+    volumes:
+      - ./audits:/app/audits
+      - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

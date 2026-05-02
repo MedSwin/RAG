@@ -1,0 +1,49 @@
+{
+  "run_id": "uuid",
+  "created_at": "ISO-8601 timestamp",
+  "dataset": "trec-cds-2016",
+  "num_cases": 30,
+  "aggregate": {
+    "mean_msas": 0.0,
+    "mean_critical_facet_recall": 0.0,
+    "mean_facet_recall": 0.0,
+    "mean_evidence_doc_recall": 0.0,
+    "mean_citation_precision": 0.0,
+    "mean_trace_completeness": 0.0,
+    "mean_sufficiency_decision_score": 0.0,
+    "mean_groundedness_proxy": 0.0,
+    "mean_unsupported_penalty": 0.0,
+    "mean_unsafe_omission_penalty": 0.0,
+    "policy_pass_rate": 0.0,
+    "degraded_rate": 0.0,
+    "error_rate": 0.0
+  },
+  "cases": [
+    {
+      "case_id": "topic id",
+      "dataset": "trec-cds-2016",
+      "trace_id": "trace id returned by MedSwin",
+      "session_id": "session id returned by MedSwin",
+      "policy_passed": true,
+      "degraded_mode": false,
+      "answer_chars": 1000,
+      "selected_doc_ids": ["PMC doc id"],
+      "cited_doc_ids": ["PMC doc id"],
+      "selected_chunk_ids": ["chunk id"],
+      "gold_doc_ids": ["qrel doc id"],
+      "facet_recall": 1.0,
+      "critical_facet_recall": 1.0,
+      "evidence_doc_recall": 1.0,
+      "citation_precision": 1.0,
+      "trace_completeness": 1.0,
+      "sufficiency_decision_score": 1.0,
+      "groundedness_proxy": 1.0,
+      "unsupported_penalty": 0.0,
+      "unsafe_omission_penalty": 0.0,
+      "msas": 1.0,
+      "errors": [],
+      "raw_response": {}
+    }
+  ],
+  "config": {}
+}
