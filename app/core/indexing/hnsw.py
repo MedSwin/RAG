@@ -82,10 +82,23 @@ class HNSWIndexBuilder(BaseIndexBuilder):
                 dim=self.embedding_dim
             )
             
+            dataset_size = len(valid_embeddings)
+            adaptive_m = self.config.get("M") or (16 if dataset_size < 50000 else 32)
+            adaptive_m = min(max(int(adaptive_m), 8), max(dataset_size - 1, 8))
+            adaptive_ef_construction = max(
+                int(self.config.get("ef_construction", 200)),
+                adaptive_m * 12,
+            )
+            self.config.update({
+                "M": adaptive_m,
+                "ef_construction": adaptive_ef_construction,
+                "max_elements": max(int(self.config.get("max_elements", 0)), dataset_size),
+            })
+
             self.index.init_index(
-                max_elements=self.config.get("max_elements", len(valid_embeddings)),
-                ef_construction=self.config.get("ef_construction", 200),
-                M=self.config.get("M", 16)
+                max_elements=self.config["max_elements"],
+                ef_construction=self.config["ef_construction"],
+                M=self.config["M"]
             )
             
             self.index.add_items(embeddings_array)
@@ -173,14 +186,30 @@ class HNSWIndexBuilder(BaseIndexBuilder):
         if query_embedding.ndim == 1:
             query_embedding = query_embedding.reshape(1, -1)
         
-        # Set ef_search based on top_k
-        ef_search = max(top_k * 2, 50)
-        self.index.set_ef(ef_search)
-        
-        # Query
-        labels, distances = self.index.knn_query(query_embedding, k=top_k)
-        
-        return labels[0], distances[0]
+        available = int(getattr(self.index, "element_count", 0))
+        if available <= 0:
+            return np.array([], dtype=np.int64), np.array([], dtype=np.float32)
+        requested_k = max(1, min(int(top_k), available))
+
+        # Root Cause vs Logic: hnswlib raises a contiguous-array error when k is
+        # too large for the graph's effective search breadth. We clamp k to the
+        # loaded element count and grow ef_search until the existing index can
+        # satisfy the request, bounded to avoid infinite retry loops.
+        ef_search = max(requested_k * 2, 50)
+        max_ef = max(settings.HNSW_MAX_EF_SEARCH, ef_search, available)
+        last_error = None
+        while ef_search <= max_ef:
+            try:
+                self.index.set_ef(min(ef_search, max_ef))
+                labels, distances = self.index.knn_query(query_embedding, k=requested_k)
+                return labels[0], distances[0]
+            except RuntimeError as exc:
+                last_error = exc
+                message = str(exc).lower()
+                if "contiguous 2d array" not in message and "ef or m is too small" not in message:
+                    raise
+                ef_search *= 2
+        raise last_error or RuntimeError("HNSW query failed")
     
     def get_index_info(self) -> Dict[str, Any]:
         """
@@ -225,4 +254,3 @@ def load_hnsw_index(embedding_dim: int, index_path: str, mapping_path: str) -> H
         raise RuntimeError(f"Failed to load HNSW index from {index_path}")
     
     return builder
-

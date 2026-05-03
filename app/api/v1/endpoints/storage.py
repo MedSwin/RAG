@@ -43,6 +43,16 @@ class BuildIndexResponse(BaseModel):
     total_vectors: int
     message: str
 
+class RefreshEmbeddingsRequest(BaseModel):
+    """Request model for active cloud embedding refresh."""
+    batch_size: Optional[int] = None
+    org_id: Optional[str] = None
+
+class BenchmarkResetRequest(BaseModel):
+    """Request model for resetting benchmark-org data."""
+    org_id: str
+    remove_indexes: bool = True
+
 class StorageStats(BaseModel):
     """Model for storage statistics."""
     total_chunks: int
@@ -130,6 +140,34 @@ async def build_index(
     except Exception as e:
         logger.error(f"Error building index: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to build index: {str(e)}")
+
+@router.post("/embeddings/refresh")
+async def refresh_cloud_embeddings(
+    request: RefreshEmbeddingsRequest,
+    storage_service = Depends(get_storage_service)
+):
+    """Refresh stale active-cloud embeddings and rebuild the active index."""
+    try:
+        return await storage_service.refresh_cloud_embeddings(batch_size=request.batch_size, org_id=request.org_id)
+    except Exception as e:
+        logger.error(f"Error refreshing cloud embeddings: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to refresh cloud embeddings: {str(e)}")
+
+@router.post("/benchmark/reset")
+async def reset_benchmark_org(
+    request: BenchmarkResetRequest,
+    storage_service = Depends(get_storage_service)
+):
+    """Clear benchmark-org data and stale index artifacts for a fresh eval run."""
+    try:
+        result = await storage_service.clear_benchmark_org(
+            org_id=request.org_id,
+            remove_indexes=request.remove_indexes,
+        )
+        return {"success": True, **result}
+    except Exception as e:
+        logger.error(f"Error resetting benchmark org: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reset benchmark org: {str(e)}")
 
 @router.get("/stats", response_model=StorageStats)
 async def get_storage_stats(storage_service = Depends(get_storage_service)):

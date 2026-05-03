@@ -43,10 +43,10 @@ async def lifespan(app: FastAPI):
     
     if settings.CLOUD_MODE:
         logger.info("Cloud mode enabled; skipping local HF model download/load")
-        try:
-            asyncio.create_task(StorageService().refresh_cloud_embeddings())
-        except Exception as e:
-            logger.warning(f"Could not start cloud embedding refresh: {e}")
+        # Root Cause vs Logic: startup previously launched an all-tenant cloud
+        # embedding refresh, which can consume quota and trigger 429s before a
+        # benchmark-specific reset/refresh begins. Cloud refresh is now explicit
+        # through /api/v1/storage/embeddings/refresh with optional org scoping.
     else:
         # Download models if not present
         try:

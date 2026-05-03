@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+from datetime import timezone
 import logging
 import uuid
 
@@ -187,8 +188,6 @@ async def ingest_documents(
         from app.models.medswin import SourceType, Document, Chunk, EvidenceGrade
         from app.repositories.documents import DocumentRepository
         from app.repositories.chunks import ChunkRepository
-        from app.services.preprocessing import PreprocessingService
-        from app.core.state import get_model_manager
         
         # Validate source type
         try:
@@ -199,13 +198,12 @@ async def ingest_documents(
         doc_repo = DocumentRepository()
         chunk_repo = ChunkRepository()
         
-        # Get tokenizer for preprocessing
-        try:
-            tokenizer, _, _, _ = get_model_manager().get_embedding_model()
-            preprocessing_service = PreprocessingService(tokenizer)
-        except Exception as e:
-            raise HTTPException(status_code=503, detail=f"Preprocessing service not available: {str(e)}")
-        
+        # Root Cause vs Logic: PMC literature ingest does not require the embedding
+        # model to be loaded up front. The previous implementation fetched the
+        # tokenizer unconditionally, which turned an optional preprocessing path
+        # into a hard 503 for otherwise valid document ingests. We keep the route
+        # resilient and rely on section-aware chunking plus persisted metadata.
+
         # Process each document
         results = []
         for doc_data in documents:
@@ -271,8 +269,15 @@ async def ingest_documents(
                 )
                 chunks.append(chunk)
             
-            await chunk_repo.create_many(chunks, org_id)
-            
+            # Root Cause vs Logic: Some PMC records are metadata-only or have
+            # no recoverable text/section content, which makes the chunk list
+            # empty. Mongo rejects insert_many([]), so we only persist chunks
+            # when there is at least one materialized passage.
+            if chunks:
+                if settings.CLOUD_MODE:
+                    await _attach_active_embeddings(chunks)
+                await chunk_repo.create_many(chunks, org_id)
+
             results.append({
                 "doc_id": doc_id,
                 "chunks_created": len(chunks),
@@ -306,6 +311,30 @@ def _coerce_evidence_grade(raw: Any, source_type) -> Any:
     }
     label, score, reliability = defaults.get(source_type, ("ungraded", 0.5, 0.5))
     return EvidenceGrade(label=str(raw or label), score=score, source_reliability=reliability)
+
+
+async def _attach_active_embeddings(chunks: List[Any]) -> None:
+    """Attach active cloud embeddings to chunks before persistence.
+
+    Motivation vs Logic: In cloud mode, retrieval depends on the active Azure
+    embedding vector space. Persisting chunks without embeddings leaves them
+    invisible until an external refresh, so ingest attaches embeddings eagerly
+    and the refresh job remains a repair path for stale data.
+    """
+    texts = [chunk.text for chunk in chunks]
+    client = EmbeddingClient(settings.active_embedding_url())
+    try:
+        embeddings = await client.embed(texts)
+    finally:
+        await client.close()
+    if len(embeddings) != len(chunks):
+        raise RuntimeError(f"Embedding service returned {len(embeddings)} vectors for {len(chunks)} chunks")
+    for chunk, embedding in zip(chunks, embeddings):
+        chunk.embedding = embedding.tolist()
+        chunk.embedding_model = settings.CLOUD_EMBEDDING
+        chunk.embedding_dim = int(len(embedding))
+        chunk.embedding_space = settings.active_embedding_space()
+        chunk.embedding_updated_at = datetime.now(timezone.utc)
 
 
 def _section_aware_chunks(doc_id: str, text: str, default_section: Optional[str]) -> List[Dict[str, Any]]:

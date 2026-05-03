@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from app.models.medswin import AuditTrace, CandidatePassage, EvidenceBundle, QuerySpec, SourceType
+from app.models.medswin import ClinicalScope
 from app.services.medswin.orchestrator import MedSwinOrchestrator
 
 
@@ -66,3 +67,27 @@ async def test_retrieve_with_sufficiency_returns_policy_artifacts_for_insufficie
     assert bundle.policy_decision.passed is False
     assert bundle.facet_coverage
     assert trace.policy_decisions
+
+
+def test_query_spec_coercion_recovers_malformed_llm_fields():
+    orchestrator = MedSwinOrchestrator(embedding_client=FakeEmbeddingClient(), reranker_client=None)
+
+    data = orchestrator._coerce_query_spec_data({
+        "canonical_terms": ["heart failure"],
+        "clinical_scope": "treatment evidence retrieval",
+        "facets": [
+            {
+                "name": "treatment",
+                "threshold": "relevant to intervention comparative effectiveness",
+                "weight": "1.25",
+                "keywords": "therapy",
+            }
+        ],
+    })
+
+    spec = QuerySpec(**data)
+
+    assert spec.clinical_scope == ClinicalScope.CLINICIAN_CDS
+    assert spec.facets[0].threshold == 0.70
+    assert spec.facets[0].weight == 1.25
+    assert spec.facets[0].keywords == ["therapy"]

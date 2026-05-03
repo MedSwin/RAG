@@ -13,8 +13,15 @@ class Settings(BaseSettings):
     benchmark_user_id: str = Field(default="bench-user", alias="BENCHMARK_USER_ID")
     request_timeout_s: float = Field(default=120.0, alias="REQUEST_TIMEOUT_S")
     default_token_budget: int = Field(default=4096, alias="DEFAULT_TOKEN_BUDGET")
-    run_store_dir: str = Field(default="/app/audits", alias="RUN_STORE_DIR")
+    # Root Cause vs Logic: the UI path previously defaulted to /app/audits, which
+    # breaks when the benchmark container or host mount makes /app read-only.
+    # Logic: keep audit artifacts in a writable cache location by default and let
+    # deployments override it explicitly when they want a different persistence mount.
+    run_store_dir: str = Field(default="/tmp/medswin-audits", alias="RUN_STORE_DIR")
     max_cases_default: int = Field(default=25, alias="MAX_CASES_DEFAULT")
+    benchmark_random_seed: int = Field(default=1337, alias="BENCHMARK_RANDOM_SEED")
+    benchmark_corpus_sample_size: int = Field(default=5000, alias="BENCHMARK_CORPUS_SAMPLE_SIZE")
+    benchmark_max_topics: int = Field(default=30, alias="BENCHMARK_MAX_TOPICS")
 
 
 @lru_cache

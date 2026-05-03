@@ -110,6 +110,14 @@ class MedSwinClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def build_index(self, *, force_rebuild: bool = True) -> dict[str, Any]:
+        resp = await self.client.post(
+            f"{self.base_url}/api/v1/storage/index/build",
+            json={"force_rebuild": force_rebuild},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def trace(self, trace_id: str, include_details: bool = True) -> dict[str, Any]:
         resp = await self.client.get(
             f"{self.base_url}/api/v1/medswin/traces/{trace_id}",

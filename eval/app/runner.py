@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -16,14 +15,17 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
     cases = read_jsonl_cases(req.cases_path)
     if req.max_cases is not None:
         cases = cases[: req.max_cases]
+    elif settings.benchmark_max_topics:
+        cases = cases[: settings.benchmark_max_topics]
     elif settings.max_cases_default:
         cases = cases[: settings.max_cases_default]
 
+    import uuid
     run_id = str(uuid.uuid4())
-    # Motivation vs Logic: benchmark runs need tenant isolation so repeated audits
-    # do not collide through shared document and patient namespaces. Scoping each
-    # run to a unique org_id keeps the corpus deterministic and reproducible.
-    benchmark_org_id = f"{settings.benchmark_org_id}-{run_id}"
+    # Motivation vs Logic: the benchmark corpus is prepared once in a fixed org
+    # namespace, while each case note is still patient-scoped. Using the same org
+    # for eval runs makes the 5000-sample corpus visible to /medswin/chat.
+    benchmark_org_id = settings.benchmark_org_id
 
     run = RunAudit(
         run_id=run_id,
@@ -54,12 +56,23 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"MedSwin runtime health check failed: {exc}") from exc
 
+        preindexed_context = req.ingest_case_context and hasattr(client, "build_index")
+        if preindexed_context:
+            # Motivation vs Logic: benchmark EMR notes must be visible to dense
+            # retrieval, not only stored in Mongo after the ANN index is built.
+            # Ingest all notes first, then rebuild once so chat exercises the
+            # full dense+lexical+rereank MedSwin path.
+            for case in cases:
+                await client.ingest_case_context(case)
+            if hasattr(client, "build_index"):
+                await client.build_index(force_rebuild=True)
+
         for case in cases:
             errors: list[str] = []
             response: dict[str, Any] = {}
             trace_summary: dict[str, Any] | None = None
             try:
-                if req.ingest_case_context:
+                if req.ingest_case_context and not preindexed_context:
                     await client.ingest_case_context(case)
                 response = await client.chat(
                     case,
@@ -74,6 +87,7 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
                         trace_summary = await client.trace(trace_id, include_details=True)
                     except Exception as exc:  # noqa: BLE001
                         errors.append(f"trace_fetch_failed: {exc}")
+                errors.extend(_architecture_errors(response, trace_summary))
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"case_failed: {exc}")
                 response = {"answer": "", "policy_decision": {"passed": False}, "citations": [], "evidence_bundle": {}}
@@ -87,3 +101,28 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
 
 def run_benchmark_sync(req: RunRequest, settings: Settings) -> RunAudit:
     return asyncio.run(run_benchmark(req, settings))
+
+
+def _architecture_errors(response: dict[str, Any], trace_summary: dict[str, Any] | None) -> list[str]:
+    """Return errors when a case skips required MedSwin architecture artifacts."""
+    errors: list[str] = []
+    degraded = response.get("degraded_mode")
+    if degraded is True or (isinstance(degraded, dict) and any(degraded.values())):
+        errors.append("architecture_degraded")
+    evidence_bundle = response.get("evidence_bundle") or {}
+    if not evidence_bundle:
+        errors.append("missing_evidence_bundle")
+    if response.get("policy_decision") is None:
+        errors.append("missing_policy_decision")
+    if not response.get("trace_id"):
+        errors.append("missing_trace_id")
+    if trace_summary is None:
+        errors.append("missing_trace_summary")
+    else:
+        if int(trace_summary.get("sufficiency_checks_count") or 0) <= 0:
+            errors.append("missing_sufficiency_checks")
+        if int(trace_summary.get("messages_count") or 0) <= 0:
+            errors.append("missing_agent_messages")
+        if int(trace_summary.get("evidence_passages_count") or 0) <= 0:
+            errors.append("missing_trace_evidence")
+    return errors

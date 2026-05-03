@@ -327,6 +327,11 @@ class Chunk(BaseModel):
     evidence_grade: Optional[EvidenceGrade] = None
     source_reliability: float = 0.50
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    embedding: List[float] = Field(default_factory=list)
+    embedding_model: Optional[str] = None
+    embedding_dim: Optional[int] = None
+    embedding_space: Optional[str] = None
+    embedding_updated_at: Optional[datetime] = None
     # For BM25
     tokenized_text: Optional[List[str]] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)

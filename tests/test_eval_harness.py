@@ -62,7 +62,8 @@ class _FakeClient:
 
 
 @pytest.mark.asyncio
-async def test_run_benchmark_isolates_each_run_and_keeps_query_pure(monkeypatch, tmp_path):
+async def test_run_benchmark_uses_fixed_org_and_keeps_query_pure(monkeypatch, tmp_path):
+    _FakeClient.instances = []
     case = BenchmarkCase(
         case_id="case-1",
         dataset="sample",
@@ -86,11 +87,12 @@ async def test_run_benchmark_isolates_each_run_and_keeps_query_pure(monkeypatch,
 
     run = await run_benchmark(RunRequest(cases_path="ignored.jsonl"), settings)
 
-    assert run.config["benchmark_org_id"].startswith("bench-org-")
+    assert run.config["benchmark_org_id"] == "bench-org"
     assert _FakeClient.instances[0].org_id == run.config["benchmark_org_id"]
     assert _FakeClient.instances[0].ingest_calls == ["case-1"]
     assert _FakeClient.instances[0].chat_queries == ["What therapy is safest?"]
     assert run.cases[0].trace_id == "trace-case-1"
+    assert run.cases[0].errors == []
 
 
 def test_trace_completeness_accepts_runtime_plural_count_keys():

@@ -20,3 +20,7 @@ def test_evidence_grade_defaults_follow_source_type():
 
     assert cpg_grade.score > emr_grade.score
     assert emr_grade.label == "emr"
+
+
+def test_section_aware_chunks_handles_empty_text():
+    assert _section_aware_chunks("doc1", "", None) == []

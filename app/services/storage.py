@@ -176,7 +176,7 @@ class StorageService:
             logger.error(f"Error building HNSW index: {e}")
             raise
 
-    async def refresh_cloud_embeddings(self, batch_size: Optional[int] = None) -> Dict[str, Any]:
+    async def refresh_cloud_embeddings(self, batch_size: Optional[int] = None, org_id: Optional[str] = None) -> Dict[str, Any]:
         """Refresh stale chunk embeddings for the active cloud embedding space.
 
         Motivation vs Logic: Cloud embedding models occupy a different vector
@@ -202,7 +202,7 @@ class StorageService:
         try:
             db = get_database()
             coll = db["chunks"]
-            stale_filter = self._stale_embedding_filter()
+            stale_filter = self._stale_embedding_filter(org_id=org_id)
             stale_count = await coll.count_documents(stale_filter)
             EMBEDDING_REFRESH_STATUS["stale"] = stale_count
 
@@ -249,15 +249,23 @@ class StorageService:
     def get_embedding_refresh_status(self) -> Dict[str, Any]:
         return EMBEDDING_REFRESH_STATUS.copy()
 
-    def _stale_embedding_filter(self) -> Dict[str, Any]:
-        return {
+    def _stale_embedding_filter(self, org_id: Optional[str] = None) -> Dict[str, Any]:
+        expected_dim = settings.active_embedding_dimension()
+        filter_dict: Dict[str, Any] = {
             "$or": [
+                {"embedding": {"$exists": False}},
+                {"embedding": []},
                 {"embedding_space": {"$ne": settings.active_embedding_space()}},
                 {"embedding_space": {"$exists": False}},
                 {"embedding_model": {"$ne": settings.CLOUD_EMBEDDING}},
                 {"embedding_model": {"$exists": False}},
+                {"embedding_dim": {"$ne": expected_dim}},
+                {"embedding_dim": {"$exists": False}},
             ]
         }
+        if org_id:
+            filter_dict["org_id"] = org_id
+        return filter_dict
     
     def _build_hnsw_index_sync(
         self,
@@ -287,15 +295,31 @@ class StorageService:
                 }
             
             # Get embedding dimension
-            embedding_dim = chunks[0].get('embedding_dim', settings.EMBEDDING_DIMENSION)
+            embedding_dim = chunks[0].get('embedding_dim', settings.active_embedding_dimension())
             
             # Prepare embeddings and mapping
             embeddings = []
             chunk_ids = []
             
             for chunk in chunks:
+                if len(chunk.get("embedding") or []) != embedding_dim:
+                    logger.warning(
+                        "Skipping chunk %s with mismatched embedding dimension %s (expected %s)",
+                        chunk.get("chunk_id"),
+                        len(chunk.get("embedding") or []),
+                        embedding_dim,
+                    )
+                    continue
                 embeddings.append(chunk['embedding'])
                 chunk_ids.append(chunk['chunk_id'])
+            if not embeddings:
+                return {
+                    "success": False,
+                    "index_path": index_path,
+                    "mapping_path": mapping_path,
+                    "total_vectors": 0,
+                    "message": "No chunks with active-dimension embeddings found"
+                }
             
             # Initialize strategy manager
             strategy_manager = IndexStrategyManager()
@@ -358,6 +382,7 @@ class StorageService:
         if settings.CLOUD_MODE:
             filter_dict["embedding_space"] = settings.active_embedding_space()
             filter_dict["embedding_model"] = settings.CLOUD_EMBEDDING
+            filter_dict["embedding_dim"] = settings.active_embedding_dimension()
         return filter_dict
     
     async def get_storage_stats(self) -> Dict[str, Any]:
@@ -423,6 +448,45 @@ class StorageService:
             
         except Exception as e:
             logger.error(f"Error clearing chunks: {e}")
+            raise
+
+    async def clear_benchmark_org(self, org_id: str, remove_indexes: bool = True) -> Dict[str, Any]:
+        """Clear benchmark-scoped runtime data without touching other tenants.
+
+        Motivation vs Logic: Benchmark reruns need a fresh corpus and traces, but
+        deleting the whole database is unsafe in a shared development runtime.
+        This reset deletes only the configured benchmark org and optionally
+        removes global ANN files so they can be rebuilt from active embeddings.
+        """
+        try:
+            db = get_sync_database()
+            deleted: Dict[str, int] = {}
+            for collection_name in ("chunks", "documents", "traces", "sessions"):
+                result = db[collection_name].delete_many({"org_id": org_id})
+                deleted[collection_name] = result.deleted_count
+
+            removed_indexes = []
+            if remove_indexes:
+                for path_value in (
+                    settings.HNSW_INDEX_PATH,
+                    settings.HNSW_MAPPING_PATH,
+                    settings.FAISS_INDEX_PATH,
+                    settings.FAISS_MAPPING_PATH,
+                    settings.TREE_INDEX_PATH,
+                    settings.TREE_MAPPING_PATH,
+                ):
+                    path = Path(path_value)
+                    if path.exists():
+                        path.unlink()
+                        removed_indexes.append(str(path))
+
+            return {
+                "org_id": org_id,
+                "deleted": deleted,
+                "removed_indexes": removed_indexes,
+            }
+        except Exception as e:
+            logger.error(f"Error clearing benchmark org {org_id}: {e}")
             raise
     
     async def get_chunk(self, chunk_id: str) -> Optional[Dict[str, Any]]:
@@ -503,9 +567,9 @@ class StorageService:
                     
                     if mapping:
                         # Get embedding dimension from first chunk
-                        sample_chunk = coll.find_one({"embedding": {"$exists": True, "$ne": []}})
+                        sample_chunk = coll.find_one(self._index_embedding_filter())
                         if sample_chunk:
-                            embedding_dim = sample_chunk.get('embedding_dim', settings.EMBEDDING_DIMENSION)
+                            embedding_dim = sample_chunk.get('embedding_dim', settings.active_embedding_dimension())
                             builder = HNSWIndexBuilder(embedding_dim)
                             index_valid = builder.load(str(index_path), str(mapping_path))
                 except Exception as e:

@@ -3,11 +3,19 @@
 import httpx
 import logging
 from typing import List, Optional
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, retry_if_exception
 from app.core.config import settings
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def _is_retryable_http_error(exc: BaseException) -> bool:
+    return (
+        isinstance(exc, httpx.HTTPStatusError)
+        and exc.response is not None
+        and exc.response.status_code in {429, 500, 502, 503, 504}
+    )
 
 
 class EmbeddingClient:
@@ -33,9 +41,12 @@ class EmbeddingClient:
         self.client = httpx.AsyncClient(timeout=self.timeout)
     
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
+        stop=stop_after_attempt(6),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=(
+            retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError))
+            | retry_if_exception(_is_retryable_http_error)
+        ),
         reraise=True
     )
     async def embed(self, texts: List[str], request_id: Optional[str] = None) -> List[np.ndarray]:

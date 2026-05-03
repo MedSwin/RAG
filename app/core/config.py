@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     CLOUD_MODE: bool = False
     CLOUD_MODEL: str = "gpt-5.4"
     CLOUD_EMBEDDING: str = "embed-v-4-0"
+    CLOUD_EMBEDDING_DIMENSION: Optional[int] = None
     CLOUD_RERANKER: str = "Cohere-rerank-v4.0-fast"
     AZURE_AI_FOUNDRY_ENDPOINT: Optional[str] = None
     AZURE_AI_FOUNDRY_API_KEY: Optional[str] = None
@@ -127,6 +128,7 @@ class Settings(BaseSettings):
     # MMR configuration
     MMR_LAMBDA: float = 0.75
     MMR_MAX_EVIDENCE_CHUNKS: int = 10
+    HNSW_MAX_EF_SEARCH: int = 2000
     
     # Enterprise features
     ENABLE_AUTH: bool = False
@@ -213,6 +215,16 @@ class Settings(BaseSettings):
     def active_embedding_space(self) -> str:
         mode = "cloud" if self.CLOUD_MODE else "local"
         return f"{mode}:{self.active_embedding_model()}"
+
+    def active_embedding_dimension(self) -> int:
+        if self.CLOUD_MODE:
+            if self.CLOUD_EMBEDDING_DIMENSION:
+                return self.CLOUD_EMBEDDING_DIMENSION
+            known_cloud_dims = {
+                "embed-v-4-0": 1536,
+            }
+            return known_cloud_dims.get(self.CLOUD_EMBEDDING, self.EMBEDDING_DIMENSION)
+        return self.EMBEDDING_DIMENSION
 
 def _path_is_under_app_root(path_value: str) -> bool:
     """Return True when a configured path targets the Docker /app tree."""

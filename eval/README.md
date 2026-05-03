@@ -30,7 +30,7 @@ Benchmark FastAPI service :8200
         | chat call                 -> POST /api/v1/medswin/chat
         | trace call                -> GET  /api/v1/medswin/traces/{trace_id}
         v
-MedSwin runtime :8100 (per-run org namespace)
+MedSwin runtime :8100 (fixed benchmark org namespace)
         |
         v
 Audit JSON: MSAS, facet recall, critical-facet recall, citation precision,
@@ -75,7 +75,6 @@ cd eval
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
 python3 -m uvicorn app.main:app --reload --port 8200
 ```
 
@@ -115,6 +114,19 @@ python scripts/ingest_trec_pmc.py \
   --org-id bench-org
 ```
 
+For the default benchmark subset:
+
+```bash
+python3 scripts/ingest_trec_pmc.py \
+  --dataset pmc/v2 \
+  --sample-size 5000 \
+  --seed 1337 \
+  --reset-org \
+  --build-index \
+  --medswin-base-url http://localhost:8100 \
+  --org-id bench-org
+```
+
 For final experiments, use the full TREC CDS evidence corpus or an explicitly documented judged-pool + hard-negative subset. Report the corpus construction in the paper.
 
 ## Running an audit
@@ -134,7 +146,7 @@ curl -X POST http://localhost:8200/api/run \
 
 The output is saved to `audits/{run_id}.json`.
 
-Each run uses a unique benchmark org derived from the configured `BENCHMARK_ORG_ID`, which prevents repeated evaluations from colliding on document IDs or patient-scoped retrieval state.
+Each run uses the fixed configured `BENCHMARK_ORG_ID`, so the prepared corpus remains visible to `/api/v1/medswin/chat`. Use the benchmark reset endpoint or the ingest script's `--reset-org` option before preparing a fresh corpus.
 
 ## Main metric: MedSwin System Audit Score
 

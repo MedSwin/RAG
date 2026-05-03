@@ -3,6 +3,7 @@
 from typing import List, Optional, Dict, Any
 from app.repositories.base import BaseRepository
 from app.models.medswin import Document, SourceType
+from pymongo import ReplaceOne
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,18 +26,39 @@ class DocumentRepository(BaseRepository):
         logger.info("Documents collection indexes created")
     
     async def create(self, document: Document, org_id: str) -> Dict[str, Any]:
-        """Create a document."""
+        """Create or reuse a document."""
         data = document.model_dump()
         data = self._ensure_org_id(data, org_id)
-        result = await self.collection.insert_one(data)
-        return {"doc_id": document.doc_id, "inserted_id": str(result.inserted_id)}
+        # Root Cause vs Logic: Ingest retries and overlapping batches can resend
+        # the same doc_id. A plain insert_one turns that benign replay into a
+        # DuplicateKeyError, so we upsert on the natural key and preserve the
+        # first stored payload instead of failing the whole ingest.
+        result = await self.collection.replace_one(
+            {"doc_id": document.doc_id},
+            data,
+            upsert=True,
+        )
+        return {
+            "doc_id": document.doc_id,
+            "inserted_id": str(result.upserted_id) if result.upserted_id else document.doc_id,
+            "upserted": bool(result.upserted_id),
+        }
     
     async def create_many(self, documents: List[Document], org_id: str) -> List[Dict[str, Any]]:
-        """Create multiple documents."""
-        data_list = [self._ensure_org_id(doc.model_dump(), org_id) for doc in documents]
-        result = await self.collection.insert_many(data_list)
-        return [{"doc_id": doc.doc_id, "inserted_id": str(id)} 
-                for doc, id in zip(documents, result.inserted_ids)]
+        """Create or reuse multiple documents."""
+        operations = []
+        for doc in documents:
+            data = self._ensure_org_id(doc.model_dump(), org_id)
+            operations.append(ReplaceOne({"doc_id": doc.doc_id}, data, upsert=True))
+        result = await self.collection.bulk_write(operations, ordered=False)
+        return [
+            {
+                "doc_id": doc.doc_id,
+                "inserted_id": str(result.upserted_ids.get(idx, doc.doc_id)),
+                "upserted": idx in result.upserted_ids,
+            }
+            for idx, doc in enumerate(documents)
+        ]
     
     async def get_by_id(self, doc_id: str, org_id: str) -> Optional[Dict[str, Any]]:
         """Get document by ID."""
@@ -76,4 +98,3 @@ class DocumentRepository(BaseRepository):
     async def count_by_org(self, org_id: str) -> int:
         """Count documents for an organization."""
         return await self.collection.count_documents({"org_id": org_id})
-

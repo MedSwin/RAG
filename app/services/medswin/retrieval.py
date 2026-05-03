@@ -60,6 +60,7 @@ from app.services.strategy import (
 )
 from app.services.adapters.embedding import EmbeddingClient
 from app.services.adapters.reranker import RerankerClient
+from app.services.storage import StorageService
 from app.models.medswin import (
     CandidatePassage,
     SourceType,
@@ -185,11 +186,13 @@ class RetrievalPipeline:
             index = await self._load_index(embedding_dim, strategy)
             
             # Query index
-            labels, distances = index.query(query_embedding.reshape(1, -1), k)
+            labels, distances = await self._query_index_with_rebuild(index, query_embedding, k, embedding_dim, strategy)
+            labels = np.asarray(labels).reshape(-1)
+            distances = np.asarray(distances).reshape(-1)
             
             # Get chunks from database
             chunk_ids = []
-            for label in labels[0]:
+            for label in labels:
                 chunk_id = index.mapping.get(str(int(label)))
                 if chunk_id:
                     chunk_ids.append(chunk_id)
@@ -205,7 +208,10 @@ class RetrievalPipeline:
             # Create candidate passages
             candidates = []
             chunk_dict = {c["chunk_id"]: c for c in chunks}
-            distance_dict = {chunk_ids[i]: float(distances[0][i]) for i in range(len(chunk_ids))}
+            distance_dict = {
+                chunk_ids[i]: float(distances[i])
+                for i in range(min(len(chunk_ids), len(distances)))
+            }
             
             for chunk in chunks:
                 chunk_id = chunk["chunk_id"]
@@ -232,6 +238,25 @@ class RetrievalPipeline:
         except Exception as e:
             logger.error(f"Dense retrieval failed: {e}")
             return []
+
+    async def _query_index_with_rebuild(
+        self,
+        index: Any,
+        query_embedding: np.ndarray,
+        k: int,
+        embedding_dim: int,
+        strategy: IndexStrategy,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        try:
+            return index.query(query_embedding.reshape(1, -1), k)
+        except RuntimeError as exc:
+            message = str(exc).lower()
+            if "contiguous 2d array" not in message and "ef or m is too small" not in message:
+                raise
+            logger.warning("HNSW query failed with graph breadth error; rebuilding active index once: %s", exc)
+            await StorageService().build_hnsw_index_async(force_rebuild=True)
+            rebuilt_index = await self._load_index(embedding_dim, strategy)
+            return rebuilt_index.query(query_embedding.reshape(1, -1), k)
     
     async def _lexical_retrieval(
         self,
@@ -349,7 +374,17 @@ class RetrievalPipeline:
         if source_type_filter:
             filter_dict["source_type"] = source_type_filter.value
         elif source_policy and source_policy != "ANY":
-            filter_dict["source_type"] = source_policy
+            source_policy_map = {
+                "CPG_ONLY": SourceType.CPG.value,
+                "EMR_ONLY": SourceType.EMR.value,
+                "LIT_ONLY": SourceType.LIT.value,
+                SourceType.CPG.value: SourceType.CPG.value,
+                SourceType.EMR.value: SourceType.EMR.value,
+                SourceType.LIT.value: SourceType.LIT.value,
+            }
+            mapped_source = source_policy_map.get(str(source_policy).upper())
+            if mapped_source:
+                filter_dict["source_type"] = mapped_source
 
         if patient_id:
             filter_dict["patient_id"] = patient_id
@@ -357,6 +392,7 @@ class RetrievalPipeline:
         if settings.CLOUD_MODE:
             filter_dict["embedding_space"] = settings.active_embedding_space()
             filter_dict["embedding_model"] = settings.CLOUD_EMBEDDING
+            filter_dict["embedding_dim"] = settings.active_embedding_dimension()
 
         min_grade = constraints.get("min_evidence_grade")
         if min_grade is not None:

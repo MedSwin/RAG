@@ -64,11 +64,18 @@ class LLMClient:
         payload = {
             "model": self.model,
             "messages": messages,
-            "temperature": temperature,
         }
+        if not self.model.lower().startswith("gpt-5"):
+            payload["temperature"] = temperature
         
         if max_tokens:
-            payload["max_tokens"] = max_tokens
+            # Root Cause vs Logic: Azure OpenAI-compatible GPT-5.x deployments
+            # reject the legacy max_tokens field. Use the model-family specific
+            # completion budget while preserving local/legacy payloads.
+            if self.model.lower().startswith("gpt-5"):
+                payload["max_completion_tokens"] = max_tokens
+            else:
+                payload["max_tokens"] = max_tokens
         
         # Add JSON schema if provided (via system message instruction)
         if json_schema:

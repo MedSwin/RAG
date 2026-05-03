@@ -4,6 +4,7 @@ from typing import List, Optional, Dict, Any
 from app.repositories.base import BaseRepository
 from app.models.medswin import Chunk, SourceType
 from bson import ObjectId
+from pymongo import ReplaceOne
 import logging
 
 logger = logging.getLogger(__name__)
@@ -27,18 +28,39 @@ class ChunkRepository(BaseRepository):
         logger.info("Chunks collection indexes created")
     
     async def create(self, chunk: Chunk, org_id: str) -> Dict[str, Any]:
-        """Create a chunk."""
+        """Create or reuse a chunk."""
         data = chunk.model_dump()
         data = self._ensure_org_id(data, org_id)
-        result = await self.collection.insert_one(data)
-        return {"chunk_id": chunk.chunk_id, "inserted_id": str(result.inserted_id)}
+        # Root Cause vs Logic: repeated ingests regenerate deterministic chunk
+        # IDs for the same source text, so insert_one would fail on reruns even
+        # when the payload is effectively identical. Upserting keeps ingest
+        # idempotent while still honoring the unique chunk identity.
+        result = await self.collection.replace_one(
+            {"chunk_id": chunk.chunk_id},
+            data,
+            upsert=True,
+        )
+        return {
+            "chunk_id": chunk.chunk_id,
+            "inserted_id": str(result.upserted_id) if result.upserted_id else chunk.chunk_id,
+            "upserted": bool(result.upserted_id),
+        }
     
     async def create_many(self, chunks: List[Chunk], org_id: str) -> List[Dict[str, Any]]:
-        """Create multiple chunks."""
-        data_list = [self._ensure_org_id(chunk.model_dump(), org_id) for chunk in chunks]
-        result = await self.collection.insert_many(data_list)
-        return [{"chunk_id": chunk.chunk_id, "inserted_id": str(id)} 
-                for chunk, id in zip(chunks, result.inserted_ids)]
+        """Create or reuse multiple chunks."""
+        operations = []
+        for chunk in chunks:
+            data = self._ensure_org_id(chunk.model_dump(), org_id)
+            operations.append(ReplaceOne({"chunk_id": chunk.chunk_id}, data, upsert=True))
+        result = await self.collection.bulk_write(operations, ordered=False)
+        return [
+            {
+                "chunk_id": chunk.chunk_id,
+                "inserted_id": str(result.upserted_ids.get(idx, chunk.chunk_id)),
+                "upserted": idx in result.upserted_ids,
+            }
+            for idx, chunk in enumerate(chunks)
+        ]
     
     async def get_by_id(self, chunk_id: str, org_id: str) -> Optional[Dict[str, Any]]:
         """Get chunk by ID."""
@@ -83,4 +105,3 @@ class ChunkRepository(BaseRepository):
     async def count_by_org(self, org_id: str) -> int:
         """Count chunks for an organization."""
         return await self.collection.count_documents({"org_id": org_id})
-

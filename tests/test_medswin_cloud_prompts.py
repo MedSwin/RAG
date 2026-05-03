@@ -40,10 +40,14 @@ async def test_llm_client_injects_schema_once_and_uses_cloud_headers():
     response = await client.call_llm(
         [{"role": "system", "content": query.SYSTEM}, {"role": "user", "content": "q"}],
         json_schema=query.SCHEMA,
+        max_tokens=32,
     )
 
     assert response["content"] == "{\"ok\": true}"
     assert seen["json"]["model"] == "gpt-5.4"
+    assert "max_tokens" not in seen["json"]
+    assert seen["json"]["max_completion_tokens"] == 32
+    assert "temperature" not in seen["json"]
     assert seen["headers"]["api-key"] == "key"
     schema_messages = [
         item for item in seen["json"]["messages"]
@@ -122,14 +126,18 @@ def test_settings_accept_azure_and_cloud_defaults_without_env_file():
 def test_storage_filters_stale_cloud_embedding_space(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_MODE", True)
     monkeypatch.setattr(settings, "CLOUD_EMBEDDING", "embed-v-4-0")
+    monkeypatch.setattr(settings, "CLOUD_EMBEDDING_DIMENSION", 1536)
 
     service = StorageService()
-    stale = service._stale_embedding_filter()
+    stale = service._stale_embedding_filter(org_id="bench-org")
     active = service._index_embedding_filter()
 
     assert {"embedding_space": {"$ne": "cloud:embed-v-4-0"}} in stale["$or"]
+    assert {"embedding_dim": {"$ne": 1536}} in stale["$or"]
     assert active["embedding_model"] == "embed-v-4-0"
     assert active["embedding_space"] == "cloud:embed-v-4-0"
+    assert active["embedding_dim"] == 1536
+    assert stale["org_id"] == "bench-org"
 
 
 def test_final_answer_renderer_rejects_fabricated_citations():

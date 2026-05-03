@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    RUN_STORE_DIR=/app/audits
+    RUN_STORE_DIR=/tmp/medswin-audits
 
 WORKDIR /app
 

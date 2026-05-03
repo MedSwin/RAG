@@ -255,8 +255,7 @@ class MedSwinOrchestrator:
                 json_schema=query_prompt.SCHEMA
             )
             
-            spec_data = extract_json_object(response["content"])
-            spec_data.setdefault("clinical_scope", ClinicalScope.CLINICIAN_CDS.value)
+            spec_data = self._coerce_query_spec_data(extract_json_object(response["content"]))
             query_spec = QuerySpec(**spec_data)
             
             trace.messages.append(AgentMessage(
@@ -273,6 +272,52 @@ class MedSwinOrchestrator:
             logger.warning(f"Query normalization failed: {e}")
             # Return basic spec
             return QuerySpec(canonical_terms=[query])
+
+    def _coerce_query_spec_data(self, spec_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Coerce model JSON into the strict QuerySpec contract.
+
+        Root Cause vs Logic: Query-normalization LLMs can emit descriptive
+        strings where the runtime requires enums/floats. Coercing recoverable
+        fields preserves useful normalized terms while preventing benign schema
+        drift from disabling retrieval normalization entirely.
+        """
+        if not isinstance(spec_data, dict):
+            return {"canonical_terms": [], "clinical_scope": ClinicalScope.CLINICIAN_CDS.value}
+
+        data = dict(spec_data)
+        data.setdefault("canonical_terms", [])
+        data.setdefault("abbreviations", {})
+        data.setdefault("retrieval_hints", {})
+
+        try:
+            data["clinical_scope"] = ClinicalScope(data.get("clinical_scope")).value
+        except (TypeError, ValueError):
+            data["clinical_scope"] = ClinicalScope.CLINICIAN_CDS.value
+
+        coerced_facets = []
+        for facet in data.get("facets") or []:
+            if isinstance(facet, str):
+                facet = {"name": facet}
+            if not isinstance(facet, dict):
+                continue
+            item = dict(facet)
+            item["name"] = str(item.get("name") or "clinical_evidence")
+            item["required"] = bool(item.get("required", True))
+            item["threshold"] = self._coerce_float(item.get("threshold"), 0.70)
+            item["weight"] = self._coerce_float(item.get("weight"), 1.0)
+            keywords = item.get("keywords") or []
+            if isinstance(keywords, str):
+                keywords = [keywords]
+            item["keywords"] = [str(keyword) for keyword in keywords if str(keyword).strip()]
+            coerced_facets.append(item)
+        data["facets"] = coerced_facets
+        return data
+
+    def _coerce_float(self, value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
     
     async def _retrieve_with_sufficiency(
         self,
