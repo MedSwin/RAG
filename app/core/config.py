@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_S: int = 60
     RERANK_TIMEOUT_S: int = 30
     EMBED_TIMEOUT_S: int = 30
+    MODEL_RATE_LIMIT_MAX_ATTEMPTS: int = 6
+    MODEL_RATE_LIMIT_MAX_CONCURRENCY: int = 2
+    MODEL_RATE_LIMIT_BASE_COOLDOWN_S: float = 2.0
+    MODEL_RATE_LIMIT_MAX_COOLDOWN_S: float = 60.0
+    MODEL_RATE_LIMIT_JITTER_S: float = 0.25
     
     # Legacy model settings (for backward compatibility)
     EMBEDDING_MODEL_PATH: str = "./models/MedEmbed-large-v0.1"

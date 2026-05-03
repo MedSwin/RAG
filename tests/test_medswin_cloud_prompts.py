@@ -14,10 +14,14 @@ from app.services.prompts import answer, emr, guideline, query, safety
 
 
 class FakeResponse:
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200, headers=None):
         self.payload = payload
+        self.status_code = status_code
+        self.headers = headers or {}
 
     def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
         return None
 
     def json(self):
@@ -73,6 +77,30 @@ async def test_cloud_embedding_payload_uses_deployment_model_and_api_key():
     assert seen["json"] == {"input": ["sample"], "model": "embed-v-4-0"}
     assert seen["headers"]["api-key"] == "key"
     assert embeddings[0].tolist() == pytest.approx([0.1, 0.2, 0.3])
+
+
+@pytest.mark.asyncio
+async def test_embedding_client_retries_after_rate_limit_cooldown(monkeypatch):
+    calls = 0
+    monkeypatch.setattr(settings, "MODEL_RATE_LIMIT_BASE_COOLDOWN_S", 0.0)
+    monkeypatch.setattr(settings, "MODEL_RATE_LIMIT_MAX_COOLDOWN_S", 0.0)
+    monkeypatch.setattr(settings, "MODEL_RATE_LIMIT_JITTER_S", 0.0)
+
+    client = EmbeddingClient("https://example.test/openai/v1/embeddings", model="embed-v-4-0", api_key="key")
+
+    async def fake_post(url, json, headers):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return FakeResponse({"error": "rate limited"}, status_code=429, headers={"Retry-After": "0"})
+        return FakeResponse({"data": [{"embedding": [0.4, 0.5]}]})
+
+    client.client.post = fake_post
+
+    embeddings = await client.embed(["sample"])
+
+    assert calls == 2
+    assert embeddings[0].tolist() == pytest.approx([0.4, 0.5])
 
 
 @pytest.mark.asyncio

@@ -3,8 +3,8 @@
 import httpx
 import logging
 from typing import List, Dict, Any, Optional
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from app.core.config import settings
+from app.services.adapters.rate_limit import request_with_model_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +32,8 @@ class RerankerClient:
         self.api_key = api_key or (settings.AZURE_AI_FOUNDRY_API_KEY if settings.CLOUD_MODE else None)
         self.provider = provider or ("cohere" if settings.CLOUD_MODE else "default")
         self.client = httpx.AsyncClient(timeout=self.timeout)
+        self.rate_limit_key = f"reranker:{self.base_url}:{self.model}"
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
-        reraise=True
-    )
     async def rerank(
         self,
         query: str,
@@ -85,8 +80,11 @@ class RerankerClient:
         
         try:
             logger.debug(f"Calling reranker at {self.base_url} for {len(passages)} passages")
-            response = await self.client.post(
+            response = await request_with_model_rate_limit(
+                self.client,
                 self.base_url,
+                rate_limit_key=self.rate_limit_key,
+                logger=logger,
                 json=payload,
                 headers=headers
             )

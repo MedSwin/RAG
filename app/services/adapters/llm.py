@@ -3,8 +3,8 @@
 import httpx
 import logging
 from typing import List, Dict, Any, Optional
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from app.core.config import settings
+from app.services.adapters.rate_limit import request_with_model_rate_limit
 from app.services.prompts.structured import schema_instruction
 
 logger = logging.getLogger(__name__)
@@ -31,13 +31,8 @@ class LLMClient:
         self.model = model or (settings.CLOUD_MODEL if settings.CLOUD_MODE else "default")
         self.api_key = api_key or (settings.AZURE_AI_FOUNDRY_API_KEY if settings.CLOUD_MODE else None)
         self.client = httpx.AsyncClient(timeout=self.timeout)
+        self.rate_limit_key = f"llm:{self.base_url}:{self.model}"
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
-        reraise=True
-    )
     async def call_llm(
         self,
         messages: List[Dict[str, str]],
@@ -94,8 +89,11 @@ class LLMClient:
         
         try:
             logger.debug(f"Calling LLM at {self.base_url} with {len(messages)} messages")
-            response = await self.client.post(
+            response = await request_with_model_rate_limit(
+                self.client,
                 self.base_url,
+                rate_limit_key=self.rate_limit_key,
+                logger=logger,
                 json=payload,
                 headers=headers
             )

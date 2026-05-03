@@ -3,19 +3,11 @@
 import httpx
 import logging
 from typing import List, Optional
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, retry_if_exception
 from app.core.config import settings
+from app.services.adapters.rate_limit import request_with_model_rate_limit
 import numpy as np
 
 logger = logging.getLogger(__name__)
-
-
-def _is_retryable_http_error(exc: BaseException) -> bool:
-    return (
-        isinstance(exc, httpx.HTTPStatusError)
-        and exc.response is not None
-        and exc.response.status_code in {429, 500, 502, 503, 504}
-    )
 
 
 class EmbeddingClient:
@@ -39,16 +31,8 @@ class EmbeddingClient:
         self.model = model or (settings.CLOUD_EMBEDDING if settings.CLOUD_MODE else "default")
         self.api_key = api_key or (settings.AZURE_AI_FOUNDRY_API_KEY if settings.CLOUD_MODE else None)
         self.client = httpx.AsyncClient(timeout=self.timeout)
+        self.rate_limit_key = f"embedding:{self.base_url}:{self.model}"
     
-    @retry(
-        stop=stop_after_attempt(6),
-        wait=wait_exponential(multiplier=1, min=2, max=30),
-        retry=(
-            retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError))
-            | retry_if_exception(_is_retryable_http_error)
-        ),
-        reraise=True
-    )
     async def embed(self, texts: List[str], request_id: Optional[str] = None) -> List[np.ndarray]:
         """Generate embeddings for texts.
         
@@ -78,8 +62,11 @@ class EmbeddingClient:
         
         try:
             logger.debug(f"Calling embedding service at {self.base_url} for {len(texts)} texts")
-            response = await self.client.post(
+            response = await request_with_model_rate_limit(
+                self.client,
                 self.base_url,
+                rate_limit_key=self.rate_limit_key,
+                logger=logger,
                 json=payload,
                 headers=headers
             )
