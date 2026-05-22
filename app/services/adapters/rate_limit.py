@@ -118,7 +118,12 @@ class AdaptiveModelRateLimiter:
                 settings.MODEL_RATE_LIMIT_BASE_COOLDOWN_S * (2 ** (self._consecutive_rate_limits - 1)),
             )
             jitter = random.uniform(0, settings.MODEL_RATE_LIMIT_JITTER_S)
-            delay = (header_delay if header_delay is not None else fallback_delay) + jitter
+            # Root Cause vs Logic: provider retry headers can advertise hour-scale
+            # backoffs that are too aggressive for a live benchmark. The logic now
+            # caps header-derived waits to the configured maximum cooldown so the
+            # pipeline can fail fast or recover instead of stalling the run.
+            bounded_header_delay = min(header_delay, 5.0) if header_delay is not None else None
+            delay = (bounded_header_delay if bounded_header_delay is not None else fallback_delay) + jitter
             self._cooldown_until = max(self._cooldown_until, time.monotonic() + delay)
 
         logger.warning("Model rate limit reached for %s; cooling down for %.2fs", key, delay)

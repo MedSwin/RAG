@@ -1,0 +1,737 @@
+{
+  "run_id": "7d835b48-7f82-44e7-a6dd-c5bc09a96ad8",
+  "created_at": "2026-05-03T23:13:17.371790+00:00",
+  "dataset": "sample",
+  "num_cases": 2,
+  "aggregate": {
+    "mean_facet_recall": 0.0,
+    "mean_critical_facet_recall": 0.0,
+    "mean_evidence_doc_recall": 0.0,
+    "mean_citation_precision": 0.0,
+    "mean_trace_completeness": 1.0,
+    "mean_sufficiency_decision_score": 1.0,
+    "mean_groundedness_proxy": 0.65,
+    "mean_unsupported_penalty": 0.35,
+    "mean_unsafe_omission_penalty": 1.0,
+    "mean_msas": 0.18670833333333334,
+    "policy_pass_rate": 0.0,
+    "degraded_rate": 0.0,
+    "error_rate": 0.0
+  },
+  "cases": [
+    {
+      "case_id": "sample-treatment-1",
+      "dataset": "sample",
+      "trace_id": "7f027d66-fbbb-4685-b445-1726286faaaf",
+      "session_id": null,
+      "policy_passed": false,
+      "degraded_mode": false,
+      "answer_chars": 530,
+      "selected_doc_ids": [
+        "sample:sample-treatment-1:note"
+      ],
+      "cited_doc_ids": [
+        "sample:sample-treatment-1:note"
+      ],
+      "selected_chunk_ids": [
+        "sample:sample-treatment-1:note_chunk_0"
+      ],
+      "gold_doc_ids": [
+        "PMC_SAMPLE_SAFETY_1",
+        "PMC_SAMPLE_TREATMENT_1"
+      ],
+      "facet_recall": 0.0,
+      "critical_facet_recall": 0.0,
+      "evidence_doc_recall": 0.0,
+      "citation_precision": 0.0,
+      "trace_completeness": 1.0,
+      "sufficiency_decision_score": 1.0,
+      "groundedness_proxy": 0.65,
+      "unsupported_penalty": 0.35,
+      "unsafe_omission_penalty": 1.0,
+      "msas": 0.18916666666666668,
+      "errors": [],
+      "raw_response": {
+        "answer": "Clinician decision support only: this response supports clinical review and does not establish a final diagnosis.\n\nThe available evidence is insufficient to provide a grounded clinician decision-support answer for the query: For this patient, what evidence should inform safe treatment options?. Missing or uncertain evidence: treatment recommendation evidence, safety contraindications or adverse risks, patient applicability. The next step is targeted evidence retrieval or clinician review of the relevant EMR/guideline source.",
+        "evidence_bundle": {
+          "passages": [
+            {
+              "chunk_id": "sample:sample-treatment-1:note_chunk_0",
+              "doc_id": "sample:sample-treatment-1:note",
+              "source_type": "EMR",
+              "text": "Adult patient admitted with shortness of breath, reduced kidney function, and a history of medication allergy documented in the chart. Current medication list includes an anticoagulant.",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 185,
+              "metadata": {
+                "benchmark_case_id": "sample-treatment-1",
+                "dataset": "sample",
+                "query_type": "treatment",
+                "title": "TREC CDS case note sample-treatment-1",
+                "version": "benchmark",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null,
+                "source_reliability": 0.8,
+                "evidence_grade": {
+                  "label": "emr_note",
+                  "score": 0.7,
+                  "source_reliability": 0.8,
+                  "rationale": null
+                },
+                "rerank_logit": null,
+                "calibration_version": "identity:cohere-v2"
+              },
+              "dense_score": 0.2769864797592163,
+              "lexical_score": null,
+              "rerank_score": 0.67883813,
+              "fusion_score": 0.6627433209872934,
+              "token_count": 34,
+              "calibrated_score": 0.67883813,
+              "recency_score": 0.5,
+              "section_score": 0.65,
+              "source_score": 0.85,
+              "evidence_grade_score": 0.7,
+              "noise_score": 0.0,
+              "safety_score": 0.16,
+              "contradiction_score": 0.0,
+              "facet_scores": {
+                "treatment recommendation evidence": 0.0,
+                "safety contraindications or adverse risks": 0.0,
+                "patient applicability": 0.0
+              },
+              "selected_reason": "marginal_utility_per_token=0.026287"
+            }
+          ],
+          "total_tokens": 34,
+          "cpg_count": 0,
+          "emr_count": 1,
+          "lit_count": 0,
+          "coverage_ratios": {
+            "cpg_ratio": 0.0,
+            "emr_ratio": 1.0,
+            "lit_ratio": 0.0
+          },
+          "facet_coverage": [
+            {
+              "facet": "treatment recommendation evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "safety contraindications or adverse risks",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "evidence_ledger": [
+            {
+              "chunk_id": "sample:sample-treatment-1:note_chunk_0",
+              "doc_id": "sample:sample-treatment-1:note",
+              "source_type": "EMR",
+              "agent_id": "retrieval",
+              "facets": [],
+              "claims": [],
+              "calibrated_relevance": 0.67883813,
+              "fusion_score": 0.6627433209872934,
+              "evidence_grade": {
+                "label": "emr_note",
+                "score": 0.7,
+                "source_reliability": 0.8,
+                "rationale": null
+              },
+              "safety_relevance": 0.16,
+              "contradiction_risk": 0.0,
+              "provenance": {
+                "doc_id": "sample:sample-treatment-1:note",
+                "section": null,
+                "offset_start": 0,
+                "offset_end": 185,
+                "source_type": "EMR",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null
+              }
+            }
+          ],
+          "contradictions": [],
+          "policy_decision": {
+            "passed": false,
+            "action": "insufficient_evidence",
+            "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+            "iteration": 2,
+            "clinical_scope": "clinician_cds",
+            "facet_coverage": [
+              {
+                "facet": "treatment recommendation evidence",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              },
+              {
+                "facet": "safety contraindications or adverse risks",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              },
+              {
+                "facet": "patient applicability",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              }
+            ],
+            "contradictions": [],
+            "marginal_utility_per_token": 0.0688235294117647,
+            "unresolved_critical_conflicts": false,
+            "missing_facets": [
+              "treatment recommendation evidence",
+              "safety contraindications or adverse risks",
+              "patient applicability"
+            ],
+            "retrieval_hints": {
+              "increase_k": true,
+              "relax_filters": false,
+              "expand_synonyms": true,
+              "missing_facets": [
+                "treatment recommendation evidence",
+                "safety contraindications or adverse risks",
+                "patient applicability"
+              ]
+            },
+            "created_at": "2026-05-03T23:13:32.773418"
+          }
+        },
+        "safety_notes": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+        "trace_id": "7f027d66-fbbb-4685-b445-1726286faaaf",
+        "degraded_mode": {},
+        "uncertainty_level": "high",
+        "citations": [
+          {
+            "chunk_id": "sample:sample-treatment-1:note_chunk_0",
+            "doc_id": "sample:sample-treatment-1:note",
+            "source_type": "EMR",
+            "section": null,
+            "offset_start": 0,
+            "offset_end": 185,
+            "guideline_version": "benchmark",
+            "effective_date": null,
+            "timestamp": null,
+            "facets": [],
+            "calibrated_relevance": 0.67883813,
+            "fusion_score": 0.6627433209872934,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            }
+          }
+        ],
+        "policy_decision": {
+          "passed": false,
+          "action": "insufficient_evidence",
+          "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+          "iteration": 2,
+          "clinical_scope": "clinician_cds",
+          "facet_coverage": [
+            {
+              "facet": "treatment recommendation evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "safety contraindications or adverse risks",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "contradictions": [],
+          "marginal_utility_per_token": 0.0688235294117647,
+          "unresolved_critical_conflicts": false,
+          "missing_facets": [
+            "treatment recommendation evidence",
+            "safety contraindications or adverse risks",
+            "patient applicability"
+          ],
+          "retrieval_hints": {
+            "increase_k": true,
+            "relax_filters": false,
+            "expand_synonyms": true,
+            "missing_facets": [
+              "treatment recommendation evidence",
+              "safety contraindications or adverse risks",
+              "patient applicability"
+            ]
+          },
+          "created_at": "2026-05-03T23:13:32.773418"
+        },
+        "facet_coverage": [
+          {
+            "facet": "treatment recommendation evidence",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          },
+          {
+            "facet": "safety contraindications or adverse risks",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          },
+          {
+            "facet": "patient applicability",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          }
+        ],
+        "contradictions": [],
+        "evidence_ledger": [
+          {
+            "chunk_id": "sample:sample-treatment-1:note_chunk_0",
+            "doc_id": "sample:sample-treatment-1:note",
+            "source_type": "EMR",
+            "agent_id": "retrieval",
+            "facets": [],
+            "claims": [],
+            "calibrated_relevance": 0.67883813,
+            "fusion_score": 0.6627433209872934,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            },
+            "safety_relevance": 0.16,
+            "contradiction_risk": 0.0,
+            "provenance": {
+              "doc_id": "sample:sample-treatment-1:note",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 185,
+              "source_type": "EMR",
+              "guideline_version": "benchmark",
+              "effective_date": null,
+              "timestamp": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "sample-diagnosis-1",
+      "dataset": "sample",
+      "trace_id": "1b3903b7-9465-4154-a426-d07b509d344c",
+      "session_id": null,
+      "policy_passed": false,
+      "degraded_mode": false,
+      "answer_chars": 471,
+      "selected_doc_ids": [
+        "sample:sample-diagnosis-1:note"
+      ],
+      "cited_doc_ids": [
+        "sample:sample-diagnosis-1:note"
+      ],
+      "selected_chunk_ids": [
+        "sample:sample-diagnosis-1:note_chunk_0"
+      ],
+      "gold_doc_ids": [
+        "PMC_SAMPLE_DX_1"
+      ],
+      "facet_recall": 0.0,
+      "critical_facet_recall": 0.0,
+      "evidence_doc_recall": 0.0,
+      "citation_precision": 0.0,
+      "trace_completeness": 1.0,
+      "sufficiency_decision_score": 1.0,
+      "groundedness_proxy": 0.65,
+      "unsupported_penalty": 0.35,
+      "unsafe_omission_penalty": 1.0,
+      "msas": 0.18425,
+      "errors": [],
+      "raw_response": {
+        "answer": "Clinician decision support only: this response supports clinical review and does not establish a final diagnosis.\n\nThe available evidence is insufficient to provide a grounded clinician decision-support answer for the query: For this patient, what evidence is relevant to the likely diagnosis?. Missing or uncertain evidence: diagnosis evidence, patient applicability. The next step is targeted evidence retrieval or clinician review of the relevant EMR/guideline source.",
+        "evidence_bundle": {
+          "passages": [
+            {
+              "chunk_id": "sample:sample-diagnosis-1:note_chunk_0",
+              "doc_id": "sample:sample-diagnosis-1:note",
+              "source_type": "EMR",
+              "text": "Adult patient with fever, abnormal inflammatory markers, and imaging findings described in the admission note. Several possible diagnoses are mentioned by clinicians.",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 166,
+              "metadata": {
+                "benchmark_case_id": "sample-diagnosis-1",
+                "dataset": "sample",
+                "query_type": "diagnosis",
+                "title": "TREC CDS case note sample-diagnosis-1",
+                "version": "benchmark",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null,
+                "source_reliability": 0.8,
+                "evidence_grade": {
+                  "label": "emr_note",
+                  "score": 0.7,
+                  "source_reliability": 0.8,
+                  "rationale": null
+                },
+                "rerank_logit": null,
+                "calibration_version": "identity:cohere-v2"
+              },
+              "dense_score": 0.45708608627319336,
+              "lexical_score": null,
+              "rerank_score": 0.6972792,
+              "fusion_score": 0.6689057877539933,
+              "token_count": 26,
+              "calibrated_score": 0.6972792,
+              "recency_score": 0.5,
+              "section_score": 0.65,
+              "source_score": 0.85,
+              "evidence_grade_score": 0.7,
+              "noise_score": 0.0,
+              "safety_score": 0.0,
+              "contradiction_score": 0.0,
+              "facet_scores": {
+                "diagnosis evidence": 0.0,
+                "patient applicability": 0.0
+              },
+              "selected_reason": "marginal_utility_per_token=0.032458"
+            }
+          ],
+          "total_tokens": 26,
+          "cpg_count": 0,
+          "emr_count": 1,
+          "lit_count": 0,
+          "coverage_ratios": {
+            "cpg_ratio": 0.0,
+            "emr_ratio": 1.0,
+            "lit_ratio": 0.0
+          },
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "evidence_ledger": [
+            {
+              "chunk_id": "sample:sample-diagnosis-1:note_chunk_0",
+              "doc_id": "sample:sample-diagnosis-1:note",
+              "source_type": "EMR",
+              "agent_id": "retrieval",
+              "facets": [],
+              "claims": [],
+              "calibrated_relevance": 0.6972792,
+              "fusion_score": 0.6689057877539933,
+              "evidence_grade": {
+                "label": "emr_note",
+                "score": 0.7,
+                "source_reliability": 0.8,
+                "rationale": null
+              },
+              "safety_relevance": 0.0,
+              "contradiction_risk": 0.0,
+              "provenance": {
+                "doc_id": "sample:sample-diagnosis-1:note",
+                "section": null,
+                "offset_start": 0,
+                "offset_end": 166,
+                "source_type": "EMR",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null
+              }
+            }
+          ],
+          "contradictions": [],
+          "policy_decision": {
+            "passed": false,
+            "action": "insufficient_evidence",
+            "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+            "iteration": 2,
+            "clinical_scope": "clinician_cds",
+            "facet_coverage": [
+              {
+                "facet": "diagnosis evidence",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              },
+              {
+                "facet": "patient applicability",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              }
+            ],
+            "contradictions": [],
+            "marginal_utility_per_token": 0.060000000000000005,
+            "unresolved_critical_conflicts": false,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ],
+            "retrieval_hints": {
+              "increase_k": true,
+              "relax_filters": false,
+              "expand_synonyms": true,
+              "missing_facets": [
+                "diagnosis evidence",
+                "patient applicability"
+              ]
+            },
+            "created_at": "2026-05-03T23:13:35.389567"
+          }
+        },
+        "safety_notes": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+        "trace_id": "1b3903b7-9465-4154-a426-d07b509d344c",
+        "degraded_mode": {},
+        "uncertainty_level": "high",
+        "citations": [
+          {
+            "chunk_id": "sample:sample-diagnosis-1:note_chunk_0",
+            "doc_id": "sample:sample-diagnosis-1:note",
+            "source_type": "EMR",
+            "section": null,
+            "offset_start": 0,
+            "offset_end": 166,
+            "guideline_version": "benchmark",
+            "effective_date": null,
+            "timestamp": null,
+            "facets": [],
+            "calibrated_relevance": 0.6972792,
+            "fusion_score": 0.6689057877539933,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            }
+          }
+        ],
+        "policy_decision": {
+          "passed": false,
+          "action": "insufficient_evidence",
+          "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+          "iteration": 2,
+          "clinical_scope": "clinician_cds",
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "contradictions": [],
+          "marginal_utility_per_token": 0.060000000000000005,
+          "unresolved_critical_conflicts": false,
+          "missing_facets": [
+            "diagnosis evidence",
+            "patient applicability"
+          ],
+          "retrieval_hints": {
+            "increase_k": true,
+            "relax_filters": false,
+            "expand_synonyms": true,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ]
+          },
+          "created_at": "2026-05-03T23:13:35.389567"
+        },
+        "facet_coverage": [
+          {
+            "facet": "diagnosis evidence",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          },
+          {
+            "facet": "patient applicability",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          }
+        ],
+        "contradictions": [],
+        "evidence_ledger": [
+          {
+            "chunk_id": "sample:sample-diagnosis-1:note_chunk_0",
+            "doc_id": "sample:sample-diagnosis-1:note",
+            "source_type": "EMR",
+            "agent_id": "retrieval",
+            "facets": [],
+            "claims": [],
+            "calibrated_relevance": 0.6972792,
+            "fusion_score": 0.6689057877539933,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            },
+            "safety_relevance": 0.0,
+            "contradiction_risk": 0.0,
+            "provenance": {
+              "doc_id": "sample:sample-diagnosis-1:note",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 166,
+              "source_type": "EMR",
+              "guideline_version": "benchmark",
+              "effective_date": null,
+              "timestamp": null
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "config": {
+    "cases_path": "data/sample/cases.jsonl",
+    "max_cases": 2,
+    "medswin_base_url": "http://localhost:8100",
+    "benchmark_org_id": "bench-org",
+    "source_policy": "ANY",
+    "guideline_only": false,
+    "min_evidence_grade": 0.3,
+    "clinical_scope": "clinician_cds",
+    "ingest_case_context": true,
+    "include_patient_context_in_query": false
+  }
+}

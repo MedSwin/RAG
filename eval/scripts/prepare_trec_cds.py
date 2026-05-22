@@ -52,8 +52,14 @@ QUERY_TYPE_TO_FACETS = {
 
 
 def topic_text(query: Any) -> str:
-    qtype = getattr(query, "type", None) or "clinical"
-    return f"For this patient, what evidence is relevant to the clinical question type: {qtype}?"
+    # Motivation vs Logic: the benchmark query must preserve the original TREC CDS
+    # clinical information need so retrieval quality reflects evidence matching,
+    # not a synthetic placeholder that collapses all topics to the same prompt.
+    description = getattr(query, "description", None) or ""
+    summary = getattr(query, "summary", None) or ""
+    note = getattr(query, "note", None) or ""
+    parts = [str(part).strip() for part in (description, summary, note) if str(part).strip()]
+    return parts[0] if parts else f"Clinical question for topic {getattr(query, 'query_id', '')}"
 
 
 def get_patient_context(query: Any) -> str:

@@ -1,0 +1,2090 @@
+{
+  "run_id": "64891cc0-4110-4b50-9bde-53391ad5138b",
+  "created_at": "2026-05-22T01:40:00.589677+00:00",
+  "dataset": "pmc/v2/trec-cds-2016",
+  "num_cases": 5,
+  "aggregate": {
+    "mean_facet_recall": 0.0,
+    "mean_critical_facet_recall": 0.0,
+    "mean_evidence_doc_recall": 0.0,
+    "mean_citation_precision": 0.0,
+    "mean_trace_completeness": 1.0,
+    "mean_sufficiency_decision_score": 1.0,
+    "mean_groundedness_proxy": 0.65,
+    "mean_unsupported_penalty": 0.35,
+    "mean_unsafe_omission_penalty": 1.0,
+    "mean_msas": 0.19500000000000003,
+    "policy_pass_rate": 0.0,
+    "degraded_rate": 0.0,
+    "error_rate": 0.0
+  },
+  "cases": [
+    {
+      "case_id": "1",
+      "dataset": "pmc/v2/trec-cds-2016",
+      "trace_id": "a78235bf-e78f-411b-91eb-f268ccc600d1",
+      "session_id": null,
+      "policy_passed": false,
+      "degraded_mode": false,
+      "answer_chars": 674,
+      "selected_doc_ids": [
+        "pmc/v2/trec-cds-2016:1:note"
+      ],
+      "cited_doc_ids": [
+        "pmc/v2/trec-cds-2016:1:note"
+      ],
+      "selected_chunk_ids": [
+        "pmc/v2/trec-cds-2016:1:note_chunk_0"
+      ],
+      "gold_doc_ids": [
+        "1131908",
+        "1750992",
+        "2481453",
+        "2526415",
+        "2577108",
+        "2702049",
+        "2740091",
+        "2769390",
+        "2803871",
+        "2850185",
+        "2988937",
+        "2990396",
+        "2995092",
+        "2999735",
+        "3014590",
+        "3081857",
+        "3113160",
+        "3124140",
+        "3132123",
+        "3140176",
+        "3180658",
+        "3194090",
+        "3205774",
+        "3256225",
+        "3284077",
+        "3286730",
+        "3289029",
+        "3299279",
+        "3350036",
+        "3354358",
+        "3363052",
+        "3363058",
+        "3371901",
+        "3407781",
+        "3429734",
+        "3429740",
+        "3429741",
+        "3429742",
+        "3471405",
+        "3503351",
+        "3518074",
+        "3526517",
+        "3535727",
+        "3551437",
+        "3557730",
+        "3572955",
+        "3584831",
+        "3608256",
+        "3613943",
+        "3635127",
+        "3649508",
+        "3715331",
+        "3716978",
+        "3725433",
+        "3763584",
+        "3797929",
+        "3855220",
+        "3907202",
+        "3959352",
+        "3959928",
+        "3981409",
+        "3981435",
+        "3990128",
+        "3990148",
+        "3999026",
+        "4017462",
+        "4020130",
+        "4056027",
+        "4058852",
+        "4070603",
+        "4130891",
+        "4137735",
+        "4140002",
+        "4154932",
+        "4155089",
+        "4175623",
+        "4180205",
+        "4189074",
+        "4207378",
+        "4212306",
+        "4219139",
+        "4227380",
+        "4248584",
+        "4275832",
+        "4290653",
+        "4300344",
+        "4302625",
+        "4309677",
+        "4359939",
+        "4413863",
+        "4414754",
+        "4435309",
+        "4435403",
+        "4435406",
+        "4440284",
+        "4446460",
+        "4462464",
+        "4471306",
+        "4480181",
+        "4521113",
+        "4529650",
+        "4532108",
+        "4554498",
+        "4556920",
+        "4566314",
+        "4575013",
+        "4593448",
+        "4601954",
+        "4604673",
+        "4612748",
+        "4612755",
+        "4625701",
+        "4625821",
+        "4631331",
+        "4640374",
+        "4651414",
+        "4659952",
+        "4678475",
+        "4724023",
+        "4725400",
+        "4736815",
+        "4748192",
+        "4754525",
+        "4768653",
+        "4770549",
+        "4791644",
+        "4798841",
+        "4798933"
+      ],
+      "facet_recall": 0.0,
+      "critical_facet_recall": 0.0,
+      "evidence_doc_recall": 0.0,
+      "citation_precision": 0.0,
+      "trace_completeness": 1.0,
+      "sufficiency_decision_score": 1.0,
+      "groundedness_proxy": 0.65,
+      "unsupported_penalty": 0.35,
+      "unsafe_omission_penalty": 1.0,
+      "msas": 0.19500000000000003,
+      "errors": [],
+      "raw_response": {
+        "answer": "Clinician decision support only: this response supports clinical review and does not establish a final diagnosis.\n\nThe available evidence is insufficient to provide a grounded clinician decision-support answer for the query: 78 M transferred to nursing home for rehab after CABG. Reportedly readmitted with a small NQWMI. Yesterday, he was noted to have a melanotic stool and then today he had approximately 9 loose BM w/ some melena and some frank blood just prior to transfer, unclear quantity.. Missing or uncertain evidence: diagnosis evidence, patient applicability. The next step is targeted evidence retrieval or clinician review of the relevant EMR/guideline source.",
+        "evidence_bundle": {
+          "passages": [
+            {
+              "chunk_id": "pmc/v2/trec-cds-2016:1:note_chunk_0",
+              "doc_id": "pmc/v2/trec-cds-2016:1:note",
+              "source_type": "EMR",
+              "text": "78 M w/ pmh of CABG in early [**Month (only) 3**] at [**Hospital6 4406**]\n   (transferred to nursing home for rehab on [**12-8**] after several falls out\n   of bed.) He was then readmitted to [**Hospital6 1749**] on\n   [**3120-12-11**] after developing acute pulmonary edema/CHF/unresponsiveness?.\n   There was a question whether he had a small MI; he reportedly had a\n   small NQWMI. He improved with diuresis and was not intubated. \n   .\n   Yesterday, he was noted to have a melanotic stool earlier this evening\n   and then approximately 9 loose BM w/ some melena and some frank blood\n   just prior to transfer, unclear quantity.",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 640,
+              "metadata": {
+                "benchmark_case_id": "1",
+                "dataset": "pmc/v2/trec-cds-2016",
+                "query_type": "diagnosis",
+                "title": "TREC CDS case note 1",
+                "version": "benchmark",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null,
+                "source_reliability": 0.8,
+                "evidence_grade": {
+                  "label": "emr_note",
+                  "score": 0.7,
+                  "source_reliability": 0.8,
+                  "rationale": null
+                },
+                "rerank_logit": null,
+                "calibration_version": "identity:cohere-v2"
+              },
+              "dense_score": 0.7731748819351196,
+              "lexical_score": null,
+              "rerank_score": 0.973403,
+              "fusion_score": 0.8835816575858809,
+              "token_count": 182,
+              "calibrated_score": 0.973403,
+              "recency_score": 0.5,
+              "section_score": 0.65,
+              "source_score": 0.85,
+              "evidence_grade_score": 0.7,
+              "noise_score": 0.0,
+              "safety_score": 0.0,
+              "contradiction_score": 0.0,
+              "facet_scores": {
+                "diagnosis evidence": 0.0,
+                "patient applicability": 0.0
+              },
+              "selected_reason": "marginal_utility_per_token=0.005816"
+            }
+          ],
+          "total_tokens": 182,
+          "cpg_count": 0,
+          "emr_count": 1,
+          "lit_count": 0,
+          "coverage_ratios": {
+            "cpg_ratio": 0.0,
+            "emr_ratio": 1.0,
+            "lit_ratio": 0.0
+          },
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "evidence_ledger": [
+            {
+              "chunk_id": "pmc/v2/trec-cds-2016:1:note_chunk_0",
+              "doc_id": "pmc/v2/trec-cds-2016:1:note",
+              "source_type": "EMR",
+              "agent_id": "retrieval",
+              "facets": [],
+              "claims": [],
+              "calibrated_relevance": 0.973403,
+              "fusion_score": 0.8835816575858809,
+              "evidence_grade": {
+                "label": "emr_note",
+                "score": 0.7,
+                "source_reliability": 0.8,
+                "rationale": null
+              },
+              "safety_relevance": 0.0,
+              "contradiction_risk": 0.0,
+              "provenance": {
+                "doc_id": "pmc/v2/trec-cds-2016:1:note",
+                "section": null,
+                "offset_start": 0,
+                "offset_end": 640,
+                "source_type": "EMR",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null
+              }
+            }
+          ],
+          "contradictions": [],
+          "policy_decision": {
+            "passed": false,
+            "action": "insufficient_evidence",
+            "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+            "iteration": 2,
+            "clinical_scope": "clinician_cds",
+            "facet_coverage": [
+              {
+                "facet": "diagnosis evidence",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              },
+              {
+                "facet": "patient applicability",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              }
+            ],
+            "contradictions": [],
+            "marginal_utility_per_token": 0.008571428571428572,
+            "unresolved_critical_conflicts": false,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ],
+            "retrieval_hints": {
+              "increase_k": true,
+              "relax_filters": false,
+              "expand_synonyms": true,
+              "missing_facets": [
+                "diagnosis evidence",
+                "patient applicability"
+              ]
+            },
+            "created_at": "2026-05-22T01:42:53.174605"
+          }
+        },
+        "safety_notes": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+        "trace_id": "a78235bf-e78f-411b-91eb-f268ccc600d1",
+        "degraded_mode": {},
+        "uncertainty_level": "high",
+        "citations": [
+          {
+            "chunk_id": "pmc/v2/trec-cds-2016:1:note_chunk_0",
+            "doc_id": "pmc/v2/trec-cds-2016:1:note",
+            "source_type": "EMR",
+            "section": null,
+            "offset_start": 0,
+            "offset_end": 640,
+            "guideline_version": "benchmark",
+            "effective_date": null,
+            "timestamp": null,
+            "facets": [],
+            "calibrated_relevance": 0.973403,
+            "fusion_score": 0.8835816575858809,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            }
+          }
+        ],
+        "policy_decision": {
+          "passed": false,
+          "action": "insufficient_evidence",
+          "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+          "iteration": 2,
+          "clinical_scope": "clinician_cds",
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "contradictions": [],
+          "marginal_utility_per_token": 0.008571428571428572,
+          "unresolved_critical_conflicts": false,
+          "missing_facets": [
+            "diagnosis evidence",
+            "patient applicability"
+          ],
+          "retrieval_hints": {
+            "increase_k": true,
+            "relax_filters": false,
+            "expand_synonyms": true,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ]
+          },
+          "created_at": "2026-05-22T01:42:53.174605"
+        },
+        "facet_coverage": [
+          {
+            "facet": "diagnosis evidence",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          },
+          {
+            "facet": "patient applicability",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          }
+        ],
+        "contradictions": [],
+        "evidence_ledger": [
+          {
+            "chunk_id": "pmc/v2/trec-cds-2016:1:note_chunk_0",
+            "doc_id": "pmc/v2/trec-cds-2016:1:note",
+            "source_type": "EMR",
+            "agent_id": "retrieval",
+            "facets": [],
+            "claims": [],
+            "calibrated_relevance": 0.973403,
+            "fusion_score": 0.8835816575858809,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            },
+            "safety_relevance": 0.0,
+            "contradiction_risk": 0.0,
+            "provenance": {
+              "doc_id": "pmc/v2/trec-cds-2016:1:note",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 640,
+              "source_type": "EMR",
+              "guideline_version": "benchmark",
+              "effective_date": null,
+              "timestamp": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "2",
+      "dataset": "pmc/v2/trec-cds-2016",
+      "trace_id": "f7c3892c-8386-4692-ae73-0fbc7a220f7c",
+      "session_id": null,
+      "policy_passed": false,
+      "degraded_mode": false,
+      "answer_chars": 646,
+      "selected_doc_ids": [
+        "pmc/v2/trec-cds-2016:2:note"
+      ],
+      "cited_doc_ids": [
+        "pmc/v2/trec-cds-2016:2:note"
+      ],
+      "selected_chunk_ids": [
+        "pmc/v2/trec-cds-2016:2:note_chunk_0"
+      ],
+      "gold_doc_ids": [
+        "2740164",
+        "2759595",
+        "2759599",
+        "2767143",
+        "2911928",
+        "2917564",
+        "2981898",
+        "3087225",
+        "3092498",
+        "3134022",
+        "3169987",
+        "3170801",
+        "3180441",
+        "3214747",
+        "3235307",
+        "3242950",
+        "3261383",
+        "3295703",
+        "3298517",
+        "3318264",
+        "3338223",
+        "3360183",
+        "3377140",
+        "3382155",
+        "3479894",
+        "3495212",
+        "3506841",
+        "3528042",
+        "3753755",
+        "3940987",
+        "4404766",
+        "4427957",
+        "4494722",
+        "4525462"
+      ],
+      "facet_recall": 0.0,
+      "critical_facet_recall": 0.0,
+      "evidence_doc_recall": 0.0,
+      "citation_precision": 0.0,
+      "trace_completeness": 1.0,
+      "sufficiency_decision_score": 1.0,
+      "groundedness_proxy": 0.65,
+      "unsupported_penalty": 0.35,
+      "unsafe_omission_penalty": 1.0,
+      "msas": 0.19500000000000003,
+      "errors": [],
+      "raw_response": {
+        "answer": "Clinician decision support only: this response supports clinical review and does not establish a final diagnosis.\n\nThe available evidence is insufficient to provide a grounded clinician decision-support answer for the query: An elderly female with past medical history of hypertension, severe aortic stenosis, hyperlipidemia, and right hip arthroplasty. Presents after feeling a snap of her right leg and falling to the ground. No head trauma or loss of consciousness.. Missing or uncertain evidence: diagnosis evidence, patient applicability. The next step is targeted evidence retrieval or clinician review of the relevant EMR/guideline source.",
+        "evidence_bundle": {
+          "passages": [
+            {
+              "chunk_id": "pmc/v2/trec-cds-2016:2:note_chunk_0",
+              "doc_id": "pmc/v2/trec-cds-2016:2:note",
+              "source_type": "EMR",
+              "text": "Ms [**Known patient lastname 241**] is a [**Age over 90 2398**] year old woman with past medical history significant for hypertension, severe aortic stenosis, hyperlipidemia, arthroplasty.\n    .\n   Per the patient, she was standing and felt a snap of her right leg and fell to the ground. \n   No head trauma or LOC. She was evaluated by orthopedics and transferred to\n   medicine for optimization of her cardiac status. \n   \n   Review of systems:\n   Ear, Nose, Throat: Dry mouth\n   Cardiovascular: Edema, Orthopnea\n   Respiratory: Dyspnea\n   Flowsheet Data as of [**3294-3-6**] 10:33 PM\n   Vital Signs\n   Hemodynamic monitoring\n   Fluid Balance 24 hours Since [**96**] AM\n   Tmax: 37.5 C (99.5)\n   Tcurrent: 37.5 C (99.5)\n   HR: 102 (93 - 102) bpm\n   BP: 117/54(70) {117/54(70) - 117/54(70)} mmHg\n   RR: 24 (15 - 24) insp/min\n   SpO2: 100%\n   Heart rhythm: ST (Sinus Tachycardia)\n           \n   .\n   -- Clarify She appears comfortable with adequate pain\n   control with prn morphine. Given her tight valvular stenosis,\n   she is high risk for general anesthesia.\n   - would start standing tylenol 1g q8\n   - continue morphine IV prn for breakthrough\n   - plan for OR tomorrow am per ortho pending optimization of her cardiac\n   function, and improvement in renal function\n   .\n   # CAD: No clear documentation, however given age calcific\n   atherosclerosis is highly likely\n   -- continue statin\n   -- Hold beta blocker for now\n   -- hold aspirin in perioperative period\n   .\n   # ATRIAL FIBRILLATION: In setting of acute pain and peri-op. Will need\n to monitor as pt with high CHADS score, however in periop period would\n   not be able to have systemic anticoagulation\n   -- Rate control with beta blocker once stable\n   -- If unstable, would use esmolol first, cardiovert last option.\n   .\n   # HTN: Better controlled on floor. Good BP control essential for\n   preventing flash pulmonary edema in setting of AS.\n   - continue metoprolol, as above\n   - continue to monitor BP and consider adding another [**Doctor Last Name **] such\n   as amlodipine 5mg daily if BP sustains above SBP 150s\n   .\n   # Hyperlipidemia\n   - continue simvastatin 40mg PO daily\n   .\n   # FEN/GI: Low sodium diet, replete lytes PRN\n   .\n   # CODE: Confirmed DNR/DNI",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 2251,
+              "metadata": {
+                "benchmark_case_id": "2",
+                "dataset": "pmc/v2/trec-cds-2016",
+                "query_type": "diagnosis",
+                "title": "TREC CDS case note 2",
+                "version": "benchmark",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null,
+                "source_reliability": 0.8,
+                "evidence_grade": {
+                  "label": "emr_note",
+                  "score": 0.7,
+                  "source_reliability": 0.8,
+                  "rationale": null
+                },
+                "rerank_logit": null,
+                "calibration_version": "identity:cohere-v2"
+              },
+              "dense_score": 0.6804105043411255,
+              "lexical_score": null,
+              "rerank_score": 0.9617643,
+              "fusion_score": 0.8688527043975725,
+              "token_count": 647,
+              "calibrated_score": 0.9617643,
+              "recency_score": 0.5,
+              "section_score": 0.65,
+              "source_score": 0.85,
+              "evidence_grade_score": 0.7,
+              "noise_score": 0.0,
+              "safety_score": 0.16,
+              "contradiction_score": 0.0,
+              "facet_scores": {
+                "diagnosis evidence": 0.0,
+                "patient applicability": 0.0
+              },
+              "selected_reason": "marginal_utility_per_token=0.001700"
+            }
+          ],
+          "total_tokens": 647,
+          "cpg_count": 0,
+          "emr_count": 1,
+          "lit_count": 0,
+          "coverage_ratios": {
+            "cpg_ratio": 0.0,
+            "emr_ratio": 1.0,
+            "lit_ratio": 0.0
+          },
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "evidence_ledger": [
+            {
+              "chunk_id": "pmc/v2/trec-cds-2016:2:note_chunk_0",
+              "doc_id": "pmc/v2/trec-cds-2016:2:note",
+              "source_type": "EMR",
+              "agent_id": "retrieval",
+              "facets": [],
+              "claims": [],
+              "calibrated_relevance": 0.9617643,
+              "fusion_score": 0.8688527043975725,
+              "evidence_grade": {
+                "label": "emr_note",
+                "score": 0.7,
+                "source_reliability": 0.8,
+                "rationale": null
+              },
+              "safety_relevance": 0.16,
+              "contradiction_risk": 0.0,
+              "provenance": {
+                "doc_id": "pmc/v2/trec-cds-2016:2:note",
+                "section": null,
+                "offset_start": 0,
+                "offset_end": 2251,
+                "source_type": "EMR",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null
+              }
+            }
+          ],
+          "contradictions": [],
+          "policy_decision": {
+            "passed": false,
+            "action": "insufficient_evidence",
+            "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+            "iteration": 2,
+            "clinical_scope": "clinician_cds",
+            "facet_coverage": [
+              {
+                "facet": "diagnosis evidence",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              },
+              {
+                "facet": "patient applicability",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              }
+            ],
+            "contradictions": [],
+            "marginal_utility_per_token": 0.00241112828438949,
+            "unresolved_critical_conflicts": false,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ],
+            "retrieval_hints": {
+              "increase_k": true,
+              "relax_filters": false,
+              "expand_synonyms": true,
+              "missing_facets": [
+                "diagnosis evidence",
+                "patient applicability"
+              ]
+            },
+            "created_at": "2026-05-22T01:43:56.297774"
+          }
+        },
+        "safety_notes": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+        "trace_id": "f7c3892c-8386-4692-ae73-0fbc7a220f7c",
+        "degraded_mode": {},
+        "uncertainty_level": "high",
+        "citations": [
+          {
+            "chunk_id": "pmc/v2/trec-cds-2016:2:note_chunk_0",
+            "doc_id": "pmc/v2/trec-cds-2016:2:note",
+            "source_type": "EMR",
+            "section": null,
+            "offset_start": 0,
+            "offset_end": 2251,
+            "guideline_version": "benchmark",
+            "effective_date": null,
+            "timestamp": null,
+            "facets": [],
+            "calibrated_relevance": 0.9617643,
+            "fusion_score": 0.8688527043975725,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            }
+          }
+        ],
+        "policy_decision": {
+          "passed": false,
+          "action": "insufficient_evidence",
+          "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+          "iteration": 2,
+          "clinical_scope": "clinician_cds",
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "contradictions": [],
+          "marginal_utility_per_token": 0.00241112828438949,
+          "unresolved_critical_conflicts": false,
+          "missing_facets": [
+            "diagnosis evidence",
+            "patient applicability"
+          ],
+          "retrieval_hints": {
+            "increase_k": true,
+            "relax_filters": false,
+            "expand_synonyms": true,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ]
+          },
+          "created_at": "2026-05-22T01:43:56.297774"
+        },
+        "facet_coverage": [
+          {
+            "facet": "diagnosis evidence",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          },
+          {
+            "facet": "patient applicability",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          }
+        ],
+        "contradictions": [],
+        "evidence_ledger": [
+          {
+            "chunk_id": "pmc/v2/trec-cds-2016:2:note_chunk_0",
+            "doc_id": "pmc/v2/trec-cds-2016:2:note",
+            "source_type": "EMR",
+            "agent_id": "retrieval",
+            "facets": [],
+            "claims": [],
+            "calibrated_relevance": 0.9617643,
+            "fusion_score": 0.8688527043975725,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            },
+            "safety_relevance": 0.16,
+            "contradiction_risk": 0.0,
+            "provenance": {
+              "doc_id": "pmc/v2/trec-cds-2016:2:note",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 2251,
+              "source_type": "EMR",
+              "guideline_version": "benchmark",
+              "effective_date": null,
+              "timestamp": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "3",
+      "dataset": "pmc/v2/trec-cds-2016",
+      "trace_id": "29908584-e155-4b8e-8fb3-0da346dcf1d8",
+      "session_id": null,
+      "policy_passed": false,
+      "degraded_mode": false,
+      "answer_chars": 1400,
+      "selected_doc_ids": [
+        "pmc/v2/trec-cds-2016:3:note"
+      ],
+      "cited_doc_ids": [
+        "pmc/v2/trec-cds-2016:3:note"
+      ],
+      "selected_chunk_ids": [
+        "pmc/v2/trec-cds-2016:3:note_chunk_0"
+      ],
+      "gold_doc_ids": [
+        "1036271",
+        "1065094",
+        "1156895",
+        "125316",
+        "2249616",
+        "2526068",
+        "2556667",
+        "2565068",
+        "2577109",
+        "2635358",
+        "2672256",
+        "2687610",
+        "270697",
+        "2763138",
+        "2765633",
+        "2804020",
+        "2820226",
+        "2840933",
+        "2842888",
+        "2843714",
+        "2843839",
+        "2876747",
+        "2887145",
+        "2888329",
+        "2899863",
+        "2939498",
+        "2987304",
+        "3053378",
+        "3104646",
+        "3109782",
+        "3109793",
+        "3180153",
+        "3200192",
+        "3205785",
+        "3221973",
+        "3228238",
+        "3229087",
+        "3237266",
+        "3247108",
+        "3254238",
+        "3284177",
+        "3307996",
+        "3312358",
+        "3318852",
+        "3338238",
+        "3354941",
+        "3358187",
+        "3362964",
+        "3371576",
+        "3373052",
+        "3376137",
+        "3396250",
+        "3414444",
+        "3426475",
+        "3481701",
+        "3483665",
+        "3488377",
+        "3505772",
+        "3522482",
+        "3539373",
+        "3544066",
+        "3546010",
+        "3546560",
+        "3556696",
+        "3557872",
+        "3565908",
+        "3576492",
+        "3630912",
+        "3662630",
+        "3665061",
+        "3672412",
+        "3673351",
+        "3679010",
+        "3722976",
+        "3741079",
+        "3743519",
+        "3785334",
+        "3808825",
+        "3826854",
+        "3841330",
+        "3884710",
+        "3892609",
+        "3903623",
+        "3916366",
+        "3916372",
+        "3916373",
+        "3916382",
+        "3943129",
+        "3943131",
+        "3964641",
+        "3986828",
+        "3994662",
+        "4000140",
+        "4031877",
+        "4056524",
+        "4057416",
+        "4089585",
+        "4092055",
+        "4111645",
+        "4120759",
+        "4129442",
+        "4136371",
+        "4158638",
+        "4162386",
+        "4166876",
+        "4182685",
+        "4194386",
+        "4225728",
+        "4231703",
+        "4277161",
+        "4286984",
+        "4289239",
+        "4296499",
+        "4307707",
+        "4316598",
+        "4334314",
+        "4337692",
+        "4347958",
+        "4391931",
+        "4396454",
+        "4399411",
+        "4427370",
+        "4435405",
+        "4460115",
+        "4471255",
+        "4487405",
+        "4491276",
+        "4501434",
+        "4509542",
+        "4519607",
+        "4570603",
+        "4598129",
+        "4601161",
+        "4606901",
+        "4607768",
+        "4619625",
+        "4666222",
+        "4672604",
+        "4676347",
+        "4676442",
+        "4697073",
+        "4716281",
+        "4734542",
+        "4735082",
+        "4745868",
+        "4756185",
+        "4762789",
+        "4771845",
+        "4771874",
+        "4800461",
+        "503388",
+        "544349"
+      ],
+      "facet_recall": 0.0,
+      "critical_facet_recall": 0.0,
+      "evidence_doc_recall": 0.0,
+      "citation_precision": 0.0,
+      "trace_completeness": 1.0,
+      "sufficiency_decision_score": 1.0,
+      "groundedness_proxy": 0.65,
+      "unsupported_penalty": 0.35,
+      "unsafe_omission_penalty": 1.0,
+      "msas": 0.19500000000000003,
+      "errors": [],
+      "raw_response": {
+        "answer": "Clinician decision support only: this response supports clinical review and does not establish a final diagnosis.\n\nThe available evidence is insufficient to provide a grounded clinician decision-support answer for the query: A 75F with a PMHx significant for severe PVD, CAD, DM, and CKD presented after being found down unresponsive at home. She was found to be hypoglycemic to 29 with hypotension and bradycardia.  Her hypotension and confusion improved with hydration. She had a positive UA which eventually grew klebsiella. She had temp 96.3, respiratory rate 22, BP 102/26, a leukocytosis to 18 and a creatinine of 6 (baseline 2).  Pt has blood cultures positive for group A streptococcus.  On the day of transfer her blood pressure dropped to the 60s.  She was anuric throughout the day.  She received 80mg IV solumedrol this morning in the setting of low BPs and rare eos in urine. On arrival to the MICU pt was awake but drowsy.  On ROS, pt denies pain, lightheadedness, headache, neck pain, sore throat, recent illness or sick contacts, cough, shortness of breath, chest discomfort, heartburn, abd pain, n/v, diarrhea, constipation, dysuria.  Is a poor historian regarding how long she has had a rash on her legs.. Missing or uncertain evidence: diagnosis evidence, patient applicability. The next step is targeted evidence retrieval or clinician review of the relevant EMR/guideline source.",
+        "evidence_bundle": {
+          "passages": [
+            {
+              "chunk_id": "pmc/v2/trec-cds-2016:3:note_chunk_0",
+              "doc_id": "pmc/v2/trec-cds-2016:3:note",
+              "source_type": "EMR",
+              "text": "Pt is a 75F with a PMHx significant for severe PVD, CAD, DM, and CKD\n   who presented to [**Hospital1 **]-[**Location (un) 1375**] on [**6-25**] \n   after being found down unresponsive at home. She was found to be hypoglycemic \n   to 29 with hypotension and bradycardia.  \n   Her hypotension and confusion improved with hydration.\n   She had a positive UA which eventually grew klebsiella, treated\n   initially with levofloxacin. She had a leukocytosis to 18 and a\n   creatinine of 6 up from presumed prior baseline of ~2.  On morning of\n   transfer, pt had blood cultures result 3/3 bottles positive for GAS,\n   her antibiotics were switched to vancomycin which was then changed to\n   ceftriaxone.  Her blood pressure dropped to the 60s. She was given a\n   bolus of bicarb and transfered to their ICU.  After an additional bolus\n   of 500cc she was started on levophed. She was anuric throughout the\n   day.  She had a midline placed on right side. She received 80mg IV\n   solumedrol this morning in the setting of low BPs and rare eos in\n   urine.\n   On arrival to the MICU pt was awake but drowsy.  She was receiving\n   levophed throughout her transfer. Arrival VS: 96.3 68 102/26 22 97% 2L\n   NC on 0.04mcg/kg/min levophed.  On ROS, pt denies pain,\n   lightheadedness, headache, neck pain, sore throat, recent illness or\n   sick contacts, cough, shortness of breath, chest discomfort, heartburn,\n   abd pain, n/v, diarrhea, constipation, dysuria.  Is a poor historian\n   regarding how long she has had a rash on her legs. States she has not\n   felt ill and she was brought to the hospital because her daughter came\n   home and found her sleeping.  Does complain of feeling very thirsty.\"",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 1700,
+              "metadata": {
+                "benchmark_case_id": "3",
+                "dataset": "pmc/v2/trec-cds-2016",
+                "query_type": "diagnosis",
+                "title": "TREC CDS case note 3",
+                "version": "benchmark",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null,
+                "source_reliability": 0.8,
+                "evidence_grade": {
+                  "label": "emr_note",
+                  "score": 0.7,
+                  "source_reliability": 0.8,
+                  "rationale": null
+                },
+                "rerank_logit": null,
+                "calibration_version": "identity:cohere-v2"
+              },
+              "dense_score": 0.8517058491706848,
+              "lexical_score": null,
+              "rerank_score": 0.9461207,
+              "fusion_score": 0.847607360869508,
+              "token_count": 479,
+              "calibrated_score": 0.9461207,
+              "recency_score": 0.5,
+              "section_score": 0.65,
+              "source_score": 0.85,
+              "evidence_grade_score": 0.7,
+              "noise_score": 0.0,
+              "safety_score": 0.0,
+              "contradiction_score": 0.0,
+              "facet_scores": {
+                "diagnosis evidence": 0.0,
+                "patient applicability": 0.0
+              },
+              "selected_reason": "marginal_utility_per_token=0.002135"
+            }
+          ],
+          "total_tokens": 479,
+          "cpg_count": 0,
+          "emr_count": 1,
+          "lit_count": 0,
+          "coverage_ratios": {
+            "cpg_ratio": 0.0,
+            "emr_ratio": 1.0,
+            "lit_ratio": 0.0
+          },
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "evidence_ledger": [
+            {
+              "chunk_id": "pmc/v2/trec-cds-2016:3:note_chunk_0",
+              "doc_id": "pmc/v2/trec-cds-2016:3:note",
+              "source_type": "EMR",
+              "agent_id": "retrieval",
+              "facets": [],
+              "claims": [],
+              "calibrated_relevance": 0.9461207,
+              "fusion_score": 0.847607360869508,
+              "evidence_grade": {
+                "label": "emr_note",
+                "score": 0.7,
+                "source_reliability": 0.8,
+                "rationale": null
+              },
+              "safety_relevance": 0.0,
+              "contradiction_risk": 0.0,
+              "provenance": {
+                "doc_id": "pmc/v2/trec-cds-2016:3:note",
+                "section": null,
+                "offset_start": 0,
+                "offset_end": 1700,
+                "source_type": "EMR",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null
+              }
+            }
+          ],
+          "contradictions": [],
+          "policy_decision": {
+            "passed": false,
+            "action": "insufficient_evidence",
+            "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+            "iteration": 2,
+            "clinical_scope": "clinician_cds",
+            "facet_coverage": [
+              {
+                "facet": "diagnosis evidence",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              },
+              {
+                "facet": "patient applicability",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              }
+            ],
+            "contradictions": [],
+            "marginal_utility_per_token": 0.00325678496868476,
+            "unresolved_critical_conflicts": false,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ],
+            "retrieval_hints": {
+              "increase_k": true,
+              "relax_filters": false,
+              "expand_synonyms": true,
+              "missing_facets": [
+                "diagnosis evidence",
+                "patient applicability"
+              ]
+            },
+            "created_at": "2026-05-22T01:44:58.419294"
+          }
+        },
+        "safety_notes": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+        "trace_id": "29908584-e155-4b8e-8fb3-0da346dcf1d8",
+        "degraded_mode": {},
+        "uncertainty_level": "high",
+        "citations": [
+          {
+            "chunk_id": "pmc/v2/trec-cds-2016:3:note_chunk_0",
+            "doc_id": "pmc/v2/trec-cds-2016:3:note",
+            "source_type": "EMR",
+            "section": null,
+            "offset_start": 0,
+            "offset_end": 1700,
+            "guideline_version": "benchmark",
+            "effective_date": null,
+            "timestamp": null,
+            "facets": [],
+            "calibrated_relevance": 0.9461207,
+            "fusion_score": 0.847607360869508,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            }
+          }
+        ],
+        "policy_decision": {
+          "passed": false,
+          "action": "insufficient_evidence",
+          "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+          "iteration": 2,
+          "clinical_scope": "clinician_cds",
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "contradictions": [],
+          "marginal_utility_per_token": 0.00325678496868476,
+          "unresolved_critical_conflicts": false,
+          "missing_facets": [
+            "diagnosis evidence",
+            "patient applicability"
+          ],
+          "retrieval_hints": {
+            "increase_k": true,
+            "relax_filters": false,
+            "expand_synonyms": true,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ]
+          },
+          "created_at": "2026-05-22T01:44:58.419294"
+        },
+        "facet_coverage": [
+          {
+            "facet": "diagnosis evidence",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          },
+          {
+            "facet": "patient applicability",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          }
+        ],
+        "contradictions": [],
+        "evidence_ledger": [
+          {
+            "chunk_id": "pmc/v2/trec-cds-2016:3:note_chunk_0",
+            "doc_id": "pmc/v2/trec-cds-2016:3:note",
+            "source_type": "EMR",
+            "agent_id": "retrieval",
+            "facets": [],
+            "claims": [],
+            "calibrated_relevance": 0.9461207,
+            "fusion_score": 0.847607360869508,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            },
+            "safety_relevance": 0.0,
+            "contradiction_risk": 0.0,
+            "provenance": {
+              "doc_id": "pmc/v2/trec-cds-2016:3:note",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 1700,
+              "source_type": "EMR",
+              "guideline_version": "benchmark",
+              "effective_date": null,
+              "timestamp": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "4",
+      "dataset": "pmc/v2/trec-cds-2016",
+      "trace_id": "a657190a-8340-497a-a1e0-087b3001fab4",
+      "session_id": null,
+      "policy_passed": false,
+      "degraded_mode": false,
+      "answer_chars": 1070,
+      "selected_doc_ids": [
+        "pmc/v2/trec-cds-2016:4:note"
+      ],
+      "cited_doc_ids": [
+        "pmc/v2/trec-cds-2016:4:note"
+      ],
+      "selected_chunk_ids": [
+        "pmc/v2/trec-cds-2016:4:note_chunk_0"
+      ],
+      "gold_doc_ids": [
+        "1459158",
+        "2529301",
+        "2700561",
+        "2769425",
+        "2835690",
+        "2836993",
+        "2989526",
+        "3047842",
+        "3199125",
+        "3212425",
+        "3252886",
+        "3406277",
+        "3490454",
+        "3570241",
+        "4005623",
+        "4100853",
+        "4241333",
+        "4431985"
+      ],
+      "facet_recall": 0.0,
+      "critical_facet_recall": 0.0,
+      "evidence_doc_recall": 0.0,
+      "citation_precision": 0.0,
+      "trace_completeness": 1.0,
+      "sufficiency_decision_score": 1.0,
+      "groundedness_proxy": 0.65,
+      "unsupported_penalty": 0.35,
+      "unsafe_omission_penalty": 1.0,
+      "msas": 0.19500000000000003,
+      "errors": [],
+      "raw_response": {
+        "answer": "Clinician decision support only: this response supports clinical review and does not establish a final diagnosis.\n\nThe available evidence is insufficient to provide a grounded clinician decision-support answer for the query: An 87 yo woman with h/o osteoporosis, multiple recent falls, CAD, who presents from nursing home with C2 fracture.  The patient was in her usual state of health at her nursing home until yesterday morning when she sustained a fall when trying to get up to go to the bathroom.  The fall was not witnessed, but the [REDACTED_PATIENT_ID] did not lose consciousness.  The [REDACTED_PATIENT_ID] of neck and rib pain. She was taken to OSH, where she was found to have a comminuted fracture of C2.  In the ED, the patient's VS were T 99.1, BP 106/42, P 101, R 24.  She had an ECG which showed sinus tachycardia and ST depressions in V3 and V4.  CT head was negative for ICH.. Missing or uncertain evidence: diagnosis evidence, patient applicability. The next step is targeted evidence retrieval or clinician review of the relevant EMR/guideline source.",
+        "evidence_bundle": {
+          "passages": [
+            {
+              "chunk_id": "pmc/v2/trec-cds-2016:4:note_chunk_0",
+              "doc_id": "pmc/v2/trec-cds-2016:4:note",
+              "source_type": "EMR",
+              "text": "The patient is an 87 yo woman with h/o osteoporosis, multiple recent\n   falls, CAD, who presents from nursing home with C2 fracture and\n   evidence of pulmonary emoblus.  The patient was in her usual state of\n   health at her nursing home until yesterday morning when she sustained a\n   fall when trying to get up to go to the bathroom.  The fall was not\n   witnessed, but the patient reportedly did not lose consciousness.  At\n   3:30 that afternoon, the patient complained of neck and rib pain. She\n   was taken to OSH, where she was found to have a comminuted fracture of\n   C2.  She was transferred to [**Hospital1 1**] for further evaluation.  Of note, the\n   patient was recently treated for CDiff infection at her nursing\n   facility, per discussion with her daughter.\n   .\n   In the ED, the patient's VS were T 99.1, BP 106/42, P 101, R 24.  She\n   had an ECG which showed sinus tachycardia and ST depressions in V3 and\n   V4.  CT head was negative for ICH.  She was seen by Trauma surgery, who\n   recommended stabalization with a cervical collar for the next six to\n   eight weeks, but they deemed that she is not an operable candidate.",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 1154,
+              "metadata": {
+                "benchmark_case_id": "4",
+                "dataset": "pmc/v2/trec-cds-2016",
+                "query_type": "diagnosis",
+                "title": "TREC CDS case note 4",
+                "version": "benchmark",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null,
+                "source_reliability": 0.8,
+                "evidence_grade": {
+                  "label": "emr_note",
+                  "score": 0.7,
+                  "source_reliability": 0.8,
+                  "rationale": null
+                },
+                "rerank_logit": null,
+                "calibration_version": "identity:cohere-v2"
+              },
+              "dense_score": 0.7901307940483093,
+              "lexical_score": null,
+              "rerank_score": 0.94691175,
+              "fusion_score": 0.8465241263891046,
+              "token_count": 300,
+              "calibrated_score": 0.94691175,
+              "recency_score": 0.5,
+              "section_score": 0.65,
+              "source_score": 0.85,
+              "evidence_grade_score": 0.7,
+              "noise_score": 0.0,
+              "safety_score": 0.0,
+              "contradiction_score": 0.0,
+              "facet_scores": {
+                "diagnosis evidence": 0.0,
+                "patient applicability": 0.0
+              },
+              "selected_reason": "marginal_utility_per_token=0.003405"
+            }
+          ],
+          "total_tokens": 300,
+          "cpg_count": 0,
+          "emr_count": 1,
+          "lit_count": 0,
+          "coverage_ratios": {
+            "cpg_ratio": 0.0,
+            "emr_ratio": 1.0,
+            "lit_ratio": 0.0
+          },
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "evidence_ledger": [
+            {
+              "chunk_id": "pmc/v2/trec-cds-2016:4:note_chunk_0",
+              "doc_id": "pmc/v2/trec-cds-2016:4:note",
+              "source_type": "EMR",
+              "agent_id": "retrieval",
+              "facets": [],
+              "claims": [],
+              "calibrated_relevance": 0.94691175,
+              "fusion_score": 0.8465241263891046,
+              "evidence_grade": {
+                "label": "emr_note",
+                "score": 0.7,
+                "source_reliability": 0.8,
+                "rationale": null
+              },
+              "safety_relevance": 0.0,
+              "contradiction_risk": 0.0,
+              "provenance": {
+                "doc_id": "pmc/v2/trec-cds-2016:4:note",
+                "section": null,
+                "offset_start": 0,
+                "offset_end": 1154,
+                "source_type": "EMR",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null
+              }
+            }
+          ],
+          "contradictions": [],
+          "policy_decision": {
+            "passed": false,
+            "action": "insufficient_evidence",
+            "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+            "iteration": 2,
+            "clinical_scope": "clinician_cds",
+            "facet_coverage": [
+              {
+                "facet": "diagnosis evidence",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              },
+              {
+                "facet": "patient applicability",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              }
+            ],
+            "contradictions": [],
+            "marginal_utility_per_token": 0.0052,
+            "unresolved_critical_conflicts": false,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ],
+            "retrieval_hints": {
+              "increase_k": true,
+              "relax_filters": false,
+              "expand_synonyms": true,
+              "missing_facets": [
+                "diagnosis evidence",
+                "patient applicability"
+              ]
+            },
+            "created_at": "2026-05-22T01:45:05.493119"
+          }
+        },
+        "safety_notes": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+        "trace_id": "a657190a-8340-497a-a1e0-087b3001fab4",
+        "degraded_mode": {},
+        "uncertainty_level": "high",
+        "citations": [
+          {
+            "chunk_id": "pmc/v2/trec-cds-2016:4:note_chunk_0",
+            "doc_id": "pmc/v2/trec-cds-2016:4:note",
+            "source_type": "EMR",
+            "section": null,
+            "offset_start": 0,
+            "offset_end": 1154,
+            "guideline_version": "benchmark",
+            "effective_date": null,
+            "timestamp": null,
+            "facets": [],
+            "calibrated_relevance": 0.94691175,
+            "fusion_score": 0.8465241263891046,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            }
+          }
+        ],
+        "policy_decision": {
+          "passed": false,
+          "action": "insufficient_evidence",
+          "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+          "iteration": 2,
+          "clinical_scope": "clinician_cds",
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "contradictions": [],
+          "marginal_utility_per_token": 0.0052,
+          "unresolved_critical_conflicts": false,
+          "missing_facets": [
+            "diagnosis evidence",
+            "patient applicability"
+          ],
+          "retrieval_hints": {
+            "increase_k": true,
+            "relax_filters": false,
+            "expand_synonyms": true,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ]
+          },
+          "created_at": "2026-05-22T01:45:05.493119"
+        },
+        "facet_coverage": [
+          {
+            "facet": "diagnosis evidence",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          },
+          {
+            "facet": "patient applicability",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          }
+        ],
+        "contradictions": [],
+        "evidence_ledger": [
+          {
+            "chunk_id": "pmc/v2/trec-cds-2016:4:note_chunk_0",
+            "doc_id": "pmc/v2/trec-cds-2016:4:note",
+            "source_type": "EMR",
+            "agent_id": "retrieval",
+            "facets": [],
+            "claims": [],
+            "calibrated_relevance": 0.94691175,
+            "fusion_score": 0.8465241263891046,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            },
+            "safety_relevance": 0.0,
+            "contradiction_risk": 0.0,
+            "provenance": {
+              "doc_id": "pmc/v2/trec-cds-2016:4:note",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 1154,
+              "source_type": "EMR",
+              "guideline_version": "benchmark",
+              "effective_date": null,
+              "timestamp": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "5",
+      "dataset": "pmc/v2/trec-cds-2016",
+      "trace_id": "993ae4e0-724d-4711-b917-7eecc62eed31",
+      "session_id": null,
+      "policy_passed": false,
+      "degraded_mode": false,
+      "answer_chars": 716,
+      "selected_doc_ids": [
+        "pmc/v2/trec-cds-2016:5:note"
+      ],
+      "cited_doc_ids": [
+        "pmc/v2/trec-cds-2016:5:note"
+      ],
+      "selected_chunk_ids": [
+        "pmc/v2/trec-cds-2016:5:note_chunk_0"
+      ],
+      "gold_doc_ids": [
+        "1397848",
+        "1413549",
+        "1550946",
+        "1570456",
+        "1821031",
+        "1936425",
+        "2133286",
+        "2138862",
+        "2175052",
+        "2390581",
+        "2672801",
+        "2680832",
+        "2695191",
+        "2700454",
+        "2707150",
+        "2714572",
+        "2732457",
+        "2769394",
+        "2802352",
+        "2804000",
+        "2808596",
+        "2862516",
+        "2876707",
+        "2878709",
+        "2887203",
+        "2893430",
+        "2911691",
+        "2943190",
+        "2989655",
+        "3085066",
+        "3118372",
+        "3124326",
+        "3170633",
+        "3177592",
+        "3177593",
+        "3179729",
+        "3205006",
+        "3206111",
+        "3219397",
+        "3219759",
+        "3265990",
+        "3279485",
+        "3279680",
+        "3322186",
+        "3322781",
+        "3337385",
+        "3388422",
+        "3449432",
+        "3506076",
+        "3522406",
+        "3529714",
+        "3560221",
+        "3610129",
+        "3616179",
+        "3674684",
+        "3728139",
+        "3734890",
+        "3751499",
+        "3775210",
+        "3789906",
+        "3884115",
+        "3920447",
+        "4010004",
+        "4075808",
+        "4083727",
+        "4096672",
+        "4105837",
+        "4148341",
+        "4272454",
+        "4317064",
+        "4347759",
+        "4358709",
+        "4375738",
+        "4406689",
+        "4514331",
+        "4517711",
+        "4525785",
+        "4528890",
+        "4544810",
+        "4549099",
+        "4556185",
+        "4575933",
+        "4582879",
+        "4600341",
+        "4628679",
+        "4635095",
+        "4636101",
+        "4647554",
+        "4653927",
+        "4663880",
+        "4681960",
+        "4681963",
+        "4714524",
+        "4734536",
+        "4745185",
+        "4745348",
+        "4760950",
+        "4775775"
+      ],
+      "facet_recall": 0.0,
+      "critical_facet_recall": 0.0,
+      "evidence_doc_recall": 0.0,
+      "citation_precision": 0.0,
+      "trace_completeness": 1.0,
+      "sufficiency_decision_score": 1.0,
+      "groundedness_proxy": 0.65,
+      "unsupported_penalty": 0.35,
+      "unsafe_omission_penalty": 1.0,
+      "msas": 0.19500000000000003,
+      "errors": [],
+      "raw_response": {
+        "answer": "Clinician decision support only: this response supports clinical review and does not establish a final diagnosis.\n\nThe available evidence is insufficient to provide a grounded clinician decision-support answer for the query: An 82 man with chronic obstructive pulmonary disease, status-post bioprosthetic atrial valve replacement for atrial stenosis, atrial fibrillation with cardioversion, right nephrectomy for renal cell carcinoma, colon cancer status-post colectomy, presents with 9 day history of productive cough, fever and dyspnea.. Missing or uncertain evidence: diagnosis evidence, patient applicability. The next step is targeted evidence retrieval or clinician review of the relevant EMR/guideline source.",
+        "evidence_bundle": {
+          "passages": [
+            {
+              "chunk_id": "pmc/v2/trec-cds-2016:5:note_chunk_0",
+              "doc_id": "pmc/v2/trec-cds-2016:5:note",
+              "source_type": "EMR",
+              "text": "An 82 M with COPD, s/p bioprosthetic AVR for AS, afib s/p CV, right\n   nephrectomy for RCC, colon ca s/p colectomy who presents with 9 day\n   hostory of productive cough and fevers.light of stairs baseline.\n   dyspnea and productive cough of several weeks. Otherwise patient is\n   without any complaints\n   In the ED, initial vs were: 80, sbp 100, mid 90s on 6L/NC. Last vital\n   signs prior to ER transfer were 98.1, 83, 116/40, 20, 95% on 3L/NC.\n   Patient looked comnfortable. 90% room air, INR 8, ABG, ARF, 2 liters\n   ivf. guiac + brown, got levo, ceftriaxone.\n   \n   Physical Examination\n   General Appearance: No acute distress\n   Eyes / Conjunctiva: PERRL\n   Head, Ears, Nose, Throat: Normocephalic\n   Cardiovascular: (PMI Normal), (S1: Normal), (S2: Normal), (Murmur:\n   Systolic)\n   Peripheral Vascular: (Right radial pulse: Present), (Left radial pulse:\n   Present), (Right DP pulse: Present), (Left DP pulse: Present)\n   Respiratory / Chest: (Expansion: Symmetric), (Breath Sounds: Crackles :\n   RLL, Wheezes : diffuse)\n   Abdominal: Soft, Non-tender, Bowel sounds present\n   Extremities: Right lower extremity edema: Absent, Left lower extremity\n   edema: Absent\n   Skin:  Warm\n   Neurologic: Attentive, Follows simple commands, Responds to: Verbal\n   stimuli, Oriented (to): x3, Movement: Purposeful, Tone: Normal",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 1336,
+              "metadata": {
+                "benchmark_case_id": "5",
+                "dataset": "pmc/v2/trec-cds-2016",
+                "query_type": "diagnosis",
+                "title": "TREC CDS case note 5",
+                "version": "benchmark",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null,
+                "source_reliability": 0.8,
+                "evidence_grade": {
+                  "label": "emr_note",
+                  "score": 0.7,
+                  "source_reliability": 0.8,
+                  "rationale": null
+                },
+                "rerank_logit": null,
+                "calibration_version": "identity:cohere-v2"
+              },
+              "dense_score": 0.7088214159011841,
+              "lexical_score": null,
+              "rerank_score": 0.9721621,
+              "fusion_score": 0.8797020009829069,
+              "token_count": 417,
+              "calibrated_score": 0.9721621,
+              "recency_score": 0.5,
+              "section_score": 0.65,
+              "source_score": 0.85,
+              "evidence_grade_score": 0.7,
+              "noise_score": 0.0,
+              "safety_score": 0.0,
+              "contradiction_score": 0.0,
+              "facet_scores": {
+                "diagnosis evidence": 0.0,
+                "patient applicability": 0.0
+              },
+              "selected_reason": "marginal_utility_per_token=0.002529"
+            }
+          ],
+          "total_tokens": 417,
+          "cpg_count": 0,
+          "emr_count": 1,
+          "lit_count": 0,
+          "coverage_ratios": {
+            "cpg_ratio": 0.0,
+            "emr_ratio": 1.0,
+            "lit_ratio": 0.0
+          },
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "evidence_ledger": [
+            {
+              "chunk_id": "pmc/v2/trec-cds-2016:5:note_chunk_0",
+              "doc_id": "pmc/v2/trec-cds-2016:5:note",
+              "source_type": "EMR",
+              "agent_id": "retrieval",
+              "facets": [],
+              "claims": [],
+              "calibrated_relevance": 0.9721621,
+              "fusion_score": 0.8797020009829069,
+              "evidence_grade": {
+                "label": "emr_note",
+                "score": 0.7,
+                "source_reliability": 0.8,
+                "rationale": null
+              },
+              "safety_relevance": 0.0,
+              "contradiction_risk": 0.0,
+              "provenance": {
+                "doc_id": "pmc/v2/trec-cds-2016:5:note",
+                "section": null,
+                "offset_start": 0,
+                "offset_end": 1336,
+                "source_type": "EMR",
+                "guideline_version": "benchmark",
+                "effective_date": null,
+                "timestamp": null
+              }
+            }
+          ],
+          "contradictions": [],
+          "policy_decision": {
+            "passed": false,
+            "action": "insufficient_evidence",
+            "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+            "iteration": 2,
+            "clinical_scope": "clinician_cds",
+            "facet_coverage": [
+              {
+                "facet": "diagnosis evidence",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              },
+              {
+                "facet": "patient applicability",
+                "required": true,
+                "threshold": 0.78,
+                "coverage_probability": 0.0,
+                "lower_confidence_bound": 0.0,
+                "entropy": 3.134004785335168e-08,
+                "status": "missing",
+                "supporting_chunk_ids": [],
+                "contradicting_chunk_ids": []
+              }
+            ],
+            "contradictions": [],
+            "marginal_utility_per_token": 0.0037410071942446045,
+            "unresolved_critical_conflicts": false,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ],
+            "retrieval_hints": {
+              "increase_k": true,
+              "relax_filters": false,
+              "expand_synonyms": true,
+              "missing_facets": [
+                "diagnosis evidence",
+                "patient applicability"
+              ]
+            },
+            "created_at": "2026-05-22T01:45:09.722745"
+          }
+        },
+        "safety_notes": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+        "trace_id": "993ae4e0-724d-4711-b917-7eecc62eed31",
+        "degraded_mode": {},
+        "uncertainty_level": "high",
+        "citations": [
+          {
+            "chunk_id": "pmc/v2/trec-cds-2016:5:note_chunk_0",
+            "doc_id": "pmc/v2/trec-cds-2016:5:note",
+            "source_type": "EMR",
+            "section": null,
+            "offset_start": 0,
+            "offset_end": 1336,
+            "guideline_version": "benchmark",
+            "effective_date": null,
+            "timestamp": null,
+            "facets": [],
+            "calibrated_relevance": 0.9721621,
+            "fusion_score": 0.8797020009829069,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            }
+          }
+        ],
+        "policy_decision": {
+          "passed": false,
+          "action": "insufficient_evidence",
+          "reason": "Evidence remains insufficient for clinician CDS after policy-bounded retrieval.",
+          "iteration": 2,
+          "clinical_scope": "clinician_cds",
+          "facet_coverage": [
+            {
+              "facet": "diagnosis evidence",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            },
+            {
+              "facet": "patient applicability",
+              "required": true,
+              "threshold": 0.78,
+              "coverage_probability": 0.0,
+              "lower_confidence_bound": 0.0,
+              "entropy": 3.134004785335168e-08,
+              "status": "missing",
+              "supporting_chunk_ids": [],
+              "contradicting_chunk_ids": []
+            }
+          ],
+          "contradictions": [],
+          "marginal_utility_per_token": 0.0037410071942446045,
+          "unresolved_critical_conflicts": false,
+          "missing_facets": [
+            "diagnosis evidence",
+            "patient applicability"
+          ],
+          "retrieval_hints": {
+            "increase_k": true,
+            "relax_filters": false,
+            "expand_synonyms": true,
+            "missing_facets": [
+              "diagnosis evidence",
+              "patient applicability"
+            ]
+          },
+          "created_at": "2026-05-22T01:45:09.722745"
+        },
+        "facet_coverage": [
+          {
+            "facet": "diagnosis evidence",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          },
+          {
+            "facet": "patient applicability",
+            "required": true,
+            "threshold": 0.78,
+            "coverage_probability": 0.0,
+            "lower_confidence_bound": 0.0,
+            "entropy": 3.134004785335168e-08,
+            "status": "missing",
+            "supporting_chunk_ids": [],
+            "contradicting_chunk_ids": []
+          }
+        ],
+        "contradictions": [],
+        "evidence_ledger": [
+          {
+            "chunk_id": "pmc/v2/trec-cds-2016:5:note_chunk_0",
+            "doc_id": "pmc/v2/trec-cds-2016:5:note",
+            "source_type": "EMR",
+            "agent_id": "retrieval",
+            "facets": [],
+            "claims": [],
+            "calibrated_relevance": 0.9721621,
+            "fusion_score": 0.8797020009829069,
+            "evidence_grade": {
+              "label": "emr_note",
+              "score": 0.7,
+              "source_reliability": 0.8,
+              "rationale": null
+            },
+            "safety_relevance": 0.0,
+            "contradiction_risk": 0.0,
+            "provenance": {
+              "doc_id": "pmc/v2/trec-cds-2016:5:note",
+              "section": null,
+              "offset_start": 0,
+              "offset_end": 1336,
+              "source_type": "EMR",
+              "guideline_version": "benchmark",
+              "effective_date": null,
+              "timestamp": null
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "config": {
+    "cases_path": "data/trec_cds_2016/cases.jsonl",
+    "max_cases": 5,
+    "medswin_base_url": "http://localhost:8100",
+    "benchmark_org_id": "bench-org",
+    "source_policy": "ANY",
+    "guideline_only": false,
+    "min_evidence_grade": 0.3,
+    "clinical_scope": "clinician_cds",
+    "ingest_case_context": true,
+    "include_patient_context_in_query": false
+  }
+}

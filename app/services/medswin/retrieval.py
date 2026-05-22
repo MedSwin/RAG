@@ -386,7 +386,16 @@ class RetrievalPipeline:
             if mapped_source:
                 filter_dict["source_type"] = mapped_source
 
-        if patient_id:
+        # Root Cause vs Logic: patient_id was previously applied as a hard filter for
+        # every retrieval request, which unintentionally excluded literature and guideline
+        # evidence from patient-scoped benchmarks. The logic now only hard-filters by
+        # patient_id when the request is explicitly EMR-only or the caller opts into
+        # patient-scope-only retrieval; otherwise patient_id remains a ranking/context cue.
+        if patient_id and (
+            source_type_filter == SourceType.EMR
+            or str(source_policy).upper() == "EMR_ONLY"
+            or constraints.get("patient_scope_only") is True
+        ):
             filter_dict["patient_id"] = patient_id
 
         if settings.CLOUD_MODE:

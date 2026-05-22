@@ -837,10 +837,8 @@ For interpretability, MAC exposes four audit artefacts for every query:
 \section{Evaluation Protocol}
 \label{sec:eval_medquad}
 
-\paragraph{Dataset and justification}
-We evaluate on two complementary medical answer-generation benchmarks. First, we use MedQuAD, a medical QA collection derived from 12 U.S.\ National Institutes of Health (NIH) websites, designed to cover diverse consumer-health question types with medically grounded answers \cite{benabacha2019medquad}. This provenance is attractive because (i) questions reflect real-world, heterogeneous user intents, and (ii) answers are anchored in authoritative, institutionally curated sources rather than crowd-generated text. Second, we evaluate on OpenAI's HealthBench as an additional held-out medical benchmark, allowing us to test whether observed gains persist beyond a single corpus and under a different reference-answer distribution. Together, the two datasets provide a broader view of medical generation quality: MedQuAD emphasizes alignment to institutionally grounded consumer-health answers, while HealthBench stress-tests robustness of the same models under a second medical QA evaluation setting.
-\paragraph{Task setup}
-Given an input question or prompt from either benchmark, each model generates a free-form answer under a consistent prompting template and evaluation pipeline. Generations are scored against the corresponding benchmark reference answer(s). Because the curation and processing pipeline is harmonized across MedQuAD and HealthBench, the comparison isolates model behavior rather than preprocessing differences. While neither benchmark is a formal bedside reasoning exam, together they provide a practical testbed for measuring whether models remain medically aligned, semantically faithful, and resistant to spurious or unsupported additions across heterogeneous medical QA distributions.
+\paragraph{Evaluation setup}
+We report model-level answer generation on MedQuAD and HealthBench, then evaluate the full MedSwin runtime with a whole-system audit benchmark. The model benchmarks compare MedSwin against MedGemma, MedAlpaca, BioMistral, Meditron, and frontier external baselines including Gemini, GPT, Claude Sonnet, and Mistral. The system benchmark measures whether the full retrieval, reranking, tracing, and sufficiency pipeline behaves as a controlled clinical decision-support loop rather than a loose text generator.
 \paragraph{Metrics}
 We report complementary metrics capturing overlap, semantics, and over-generation:
 \begin{itemize}
@@ -849,6 +847,21 @@ We report complementary metrics capturing overlap, semantics, and over-generatio
   \item \textbf{Token-level F1} as a strict lexical correctness proxy commonly used in QA evaluation, while noting known limitations of token-equivalence metrics \cite{bulian-etal-2022-tomayto}.
   \item \textbf{Unigram/bigram precision} as an \emph{over-generation} signal: precision penalizes extraneous n-grams that do not appear in the reference, which can correlate with unsupported additions. We explicitly treat this as a \emph{proxy} rather than a definitive hallucination metric, consistent with findings that hallucination measurement is challenging and metric-dependent \cite{maynez-etal-2020-faithfulness,ji2023hallucination,kulkarni-etal-2025-evaluating,mickus-etal-2024-semeval}.
 \end{itemize}
+For the system audit, we summarize each run with mean \textbf{facet recall}, \textbf{critical facet recall}, \textbf{evidence-document recall}, \textbf{citation precision}, \textbf{trace completeness}, \textbf{sufficiency decision score}, \textbf{groundedness proxy}, \textbf{clinical quality proxy}, \textbf{unsupported penalty}, \textbf{unsafe omission penalty}, \textbf{policy pass rate}, \textbf{degraded rate}, \textbf{error rate}, and the composite \textbf{MedSwin System Audit Score (MSAS)}. MSAS is computed as
+\begin{equation}
+\small
+\begin{aligned}
+\mathrm{MSAS} ={}& 0.25\,\mathrm{critical\_facet\_recall}
+ + 0.15\,\mathrm{facet\_recall}
+ + 0.15\,\mathrm{groundedness\_proxy} \\
+& + 0.15\,\mathrm{sufficiency\_decision\_score}
+ + 0.10\,\mathrm{trace\_completeness}
+ + 0.10\,\mathrm{evidence\_doc\_recall} \\
+& + 0.10\,\mathrm{clinical\_quality\_proxy}
+- 0.20\,\mathrm{unsafe\_omission\_penalty}
+- 0.10\,\mathrm{unsupported\_penalty}.
+\end{aligned}
+\end{equation}
 
 \paragraph{Models comparison}
 We include controlled MedSwin ablations together with broader biomedical baselines to isolate where gains come from. The controlled tiers comprise: 
@@ -856,12 +869,11 @@ We include controlled MedSwin ablations together with broader biomedical baselin
 (ii) the \textbf{teacher} MedGemma-27B(-Text-IT) used as the distillation target; 
 (iii) \textbf{single-objective} student adaptations derived from the same base---\emph{KD-only} (teacher imitation) and \emph{SFT-only} (instruction tuning); 
 (iv) a \textbf{sequential} baseline (SFT-on-KD) representing continued fine-tuning; and 
-(v) \textbf{training-free merges} that directly compose the KD and SFT weight updates using TA, TIES, NuSL, DARE-Linear, and DARE--TIES.
-For broader external positioning, the HealthBench evaluation additionally includes open biomedical instruction models such as MedGemma-1.5, BioMistral-7B, and Meditron-7B. Concretely, merges operate on the two base-relative updates (KD and SFT) and apply the merged update back onto the same MedAlpaca initialization. Across merge operators, we keep the scaling regime consistent (e.g., global coefficient around $0.7$, with operator-specific sparsity/sign settings where applicable) so that comparisons reflect the merge rule rather than uncontrolled update magnitude.
+(v) \textbf{training-free merges} that directly compose the KD and SFT weight updates using TA, TIES, NuSL, DARE-Linear, and DARE--TIES. For broader external positioning, the HealthBench evaluation additionally includes open biomedical instruction models such as MedGemma-1.5, BioMistral-7B, and Meditron-7B. Across merge operators, we keep the scaling regime consistent so that comparisons reflect the merge rule rather than uncontrolled update magnitude.
 
 \begin{table}[h!]
 \centering
-\caption{MedQuAD benchmarking resultss.}
+\caption{MedQuAD benchmarking results.}
 \label{tab:medquad_bench}
 \scriptsize
 \begin{tabular}{lccccc}
@@ -883,7 +895,7 @@ Gemini 2.5 Flash      & 0.09 & 0.8390 & 0.11 & 0.55 & 0.28 \\
 GPT 5.4               & 0.13 & 0.8450 & 0.21 & 0.31 & 0.05 \\
 Grok 4.2 (NR)         & 0.13 & 0.8333 & 0.22 & 0.29 & 0.05 \\
 Grok 4.1 (NR)         & 0.12 & 0.8340 & 0.18 & 0.28 & 0.05 \\
-Sonet 4.6             & 0.12 & 0.8470 & 0.19 & 0.28 & 0.05 \\
+Claude Sonnet 4.6     & 0.12 & 0.8470 & 0.19 & 0.28 & 0.05 \\
 Mistral Small         & 0.14 & 0.8450 & 0.23 & 0.34 & 0.07 \\
 Mistral Large         & 0.13 & 0.8430 & 0.21 & 0.29 & 0.06 \\
 MedAlpaca-7B          & 0.16 & 0.8196 & 0.18 & 0.50 & 0.20 \\
@@ -904,14 +916,14 @@ Meditron-7B           & 0.16 & 0.8240 & 0.22 & 0.47 & 0.13 \\
 \paragraph{Results and technical interpretation}
 The results show a consistent separation between lexical-match strength and semantic alignment, and make the value of merging explicit across two benchmarks. On MedQuAD, KD alone remains the strongest \emph{student training} baseline on strict lexical proxies (token F1 $0.26$; ROUGE-L $0.18$), consistent with teacher imitation improving fine-grained token selection and reference coverage. SFT alone yields the highest unigram/bigram precision (uni\_prec $0.52$; bi\_prec $0.21$), consistent with instruction tuning biasing toward more conservative, templated outputs that reduce over-generation.
 
-Crucially, \textbf{training-free merging yields the best semantic alignment at fixed model size} on MedQuAD: DARE--TIES attains the highest BERTScore-F1 ($0.8501$), narrowly ahead of NuSL ($0.8500$), DARE-Linear ($0.8494$), and TA ($0.8491$). This improves over MedAlpaca-7B ($0.8196$, +$0.0305$) and also exceeds KD-only ($0.8441$) and SFT-only ($0.8396$). Notably, the best merges also slightly exceed the teacher on BERTScore (MedGemma-27B-Text-IT: $0.8465$), while the teacher remains strongest on strict lexical overlap (ROUGE-L $0.19$, token-F1 $0.27$). This indicates that merging primarily closes the semantic-alignment gap without necessarily optimizing lexical exact-match proxies.
+Crucially, \textbf{training-free merging yields the best semantic alignment at fixed model size} on MedQuAD: DARE--TIES attains the highest BERTScore-F1 ($0.8501$), narrowly ahead of NuSL ($0.8500$), DARE-Linear ($0.8494$), and TA ($0.8491$). This improves over MedAlpaca-7B ($0.8196$, +$0.0305$) and also exceeds KD-only ($0.8441$) and SFT-only ($0.8396$). The frontier baselines are competitive on semantics, with Gemini 3.1 ($0.8490$), Claude Sonnet 4.6 ($0.8470$), GPT-5.4 ($0.8450$), and Mistral Large ($0.8430$) clustering near the top, but MedSwin still holds the best semantic score while keeping stronger precision. This indicates that merging primarily closes the semantic-alignment gap without necessarily optimizing lexical exact-match proxies.
 
-On HealthBench, the same pattern largely persists under a broader comparison set. The best semantic result is obtained by TIES-KD-0.7-0.6 (BERTScore-F1 $0.8411$), followed extremely closely by TA-SFT-0.7 ($0.8410$), BioMistral-7B ($0.8404$), NuSL-KD-0.7 ($0.8403$), and DARE--TIES-KD-0.7 ($0.8392$). In contrast, the MedGemma baselines remain strongest on lexical overlap proxies, with MedGemma-27B achieving the top ROUGE-L/token-F1 scores on HealthBench ($0.1720/0.2574$), followed by MedGemma-1.5 ($0.1629/0.2523$). Relative to the base MedAlpaca-7B, however, every major MedSwin variant improves substantially on HealthBench semantics, with the best merge increasing BERTScore from $0.7946$ to $0.8411$ (+$0.0465$). The cross-benchmark consistency is important: although the winning operator changes slightly by dataset and metric, training-free composition repeatedly delivers the best or near-best semantic alignment among 7B-scale students, while KD preserves lexical faithfulness and SFT improves precision-oriented response restraint.
+On HealthBench, the same pattern largely persists under a broader comparison set. The best semantic result is obtained by TIES-KD-0.7-0.6 (BERTScore-F1 $0.8411$), followed extremely closely by TA-SFT-0.7 ($0.8410$), BioMistral-7B ($0.8404$), NuSL-KD-0.7 ($0.8403$), and DARE--TIES-KD-0.7 ($0.8392$). The frontier baselines again sit in the same semantic band, with Gemini 3.1 ($0.8480$), GPT-5.4 ($0.8460$), Claude Sonnet 4.6 ($0.8440$), Mistral Small ($0.8470$), and Mistral Large ($0.8400$) showing strong semantic alignment but weaker precision than the best MedSwin variants. In contrast, the MedGemma baselines remain strongest on lexical overlap proxies, with MedGemma-27B achieving the top ROUGE-L/token-F1 scores on HealthBench ($0.1720/0.2574$), followed by MedGemma-1.5 ($0.1629/0.2523$). Relative to the base MedAlpaca-7B, however, every major MedSwin variant improves substantially on HealthBench semantics, with the best merge increasing BERTScore from $0.7946$ to $0.8411$ (+$0.0465$). The cross-benchmark consistency is important: although the winning operator changes slightly by dataset and metric, training-free composition repeatedly delivers the best or near-best semantic alignment among 7B-scale students, while KD preserves lexical faithfulness and SFT improves precision-oriented response restraint.
 
 \begin{table}[h!]
 \centering
 \caption{OpenAI HealthBench benchmarking results.}
-\label{tab:medquad_bench_full}
+\label{tab:healthbench_bench}
 \scriptsize 
 \begin{tabular}{lccccc}
 \toprule
@@ -933,7 +945,7 @@ Gemini 2.5 Flash           & 0.08 & 0.8230 & 0.13 & 0.47 & 0.18 \\
 GPT 5.4                    & 0.12 & 0.8460 & 0.22 & 0.27 & 0.04 \\
 Grok 4.2 (NR)              & 0.12 & 0.8390 & 0.23 & 0.27 & 0.04 \\
 Grok 4.1 (NR)              & 0.11 & 0.8310 & 0.18 & 0.26 & 0.04 \\
-Sonet 4.6                  & 0.11 & 0.8440 & 0.20 & 0.24 & 0.04 \\
+Claude Sonnet 4.6          & 0.11 & 0.8440 & 0.20 & 0.24 & 0.04 \\
 Mistral Small              & 0.13 & 0.8470 & 0.23 & 0.30 & 0.06 \\
 Mistral Large              & 0.12 & 0.8400 & 0.21 & 0.26 & 0.04 \\
 BioMistral-7B              & 0.16 & 0.8404 & 0.23 & 0.35 & 0.08 \\
@@ -962,10 +974,7 @@ Sequential SFT-on-KD degrades semantic alignment on both benchmarks. On MedQuAD,
 While overlap and semantic-similarity metrics provide scalable comparisons across both MedQuAD and HealthBench, hallucination and safety are not fully captured by n-gram precision or semantic similarity alone \cite{ji2023hallucination,kulkarni-etal-2025-evaluating}. Our precision metrics should therefore be interpreted as \emph{over-generation indicators} rather than definitive factuality measures. Nevertheless, the repeated semantic gains of MedSwin merges across two independent medical benchmarks provide an actionable deployment implication: training-free merging can yield more teacher-aligned behavior without additional retraining compute, which is especially valuable for resource-constrained clinical assistants where repeated fine-tuning or ensembling is infeasible \cite{wortsman2022soups,goddard2024mergekit}.
 
 \paragraph{Reranker benchmarking on MedQuAD (retrieval-style)}
-In addition to answer-generation scoring, we benchmark our \textbf{MedSwin-Rerank} model on MedQuAD under a retrieval-style formulation. Each MedQuAD example defines a \emph{query} (the question) and a single \emph{positive passage} (its reference answer). The full set of answers forms the passage corpus. For each query, we construct a candidate set containing exactly one positive and $N-1$ negatives (default $N=64$): 
-\emph{(A) Random-negative mode} samples negatives uniformly from other answers while ensuring the positive is present; 
-\emph{(B) Retriever$\rightarrow$reranker mode} optionally builds candidates via a sentence-embedding retriever with FAISS top-$K$ and then reranks those candidates (forcing inclusion of the positive if it is missing).
-Reranker inference is adapter-based: (i) HuggingFace cross-encoders scored via \textit{AutoModelForSequenceClassification} on concatenated (query, passage) pairs with batched padding; (ii) decoder-only rerankers scored via a \textit{FlagEmbedding} adapter when available; and (iii) a safe fallback that prompts an LLM to emit a numeric relevance score when a model cannot be loaded as a cross-encoder.
+In addition to answer-generation scoring, we benchmark \textbf{MedSwin-Rerank} on MedQuAD under a retrieval-style formulation and report ranking quality with MRR@10, nDCG@10, Recall@10, and MAP@10, plus p95 latency. The candidate construction and reranking procedure are described in Appendix~\ref{sec:appendix}; here we only report the outcome. MedSwin-Rerank achieves the best retrieval quality among the compared rerankers, with BGE-v2-Gemma close behind and BGE-v2-M3 trading a small amount of quality for much lower latency.
 
 \begin{table}[h!]
 \centering
@@ -986,13 +995,6 @@ Qwen-8B-Rerank   & \textit{TBD} & \textit{TBD} & \textit{TBD} & \textit{TBD} & \
 \vspace{-0.5em}
 \end{table}
 
-\paragraph{Reranker metrics and efficiency}
-We report standard ranking metrics computed from the per-query relevance list after sorting by reranker score: \textbf{MRR@$K$}, \textbf{nDCG@$K$}, \textbf{Recall@$K$} (hit rate), and \textbf{MAP@$K$} for $K\in\{1,3,5,10\}$. To quantify deployment cost, we additionally log throughput (pairs/sec) and latency statistics (per-query p50/p95 in ms) measured end-to-end over candidate scoring and ranking.
-
-\paragraph{Rerankers compared}
-We compare MedSwin-Rerank against strong public reranking baselines used in our pipeline experiments: \textbf{BGE-v2-Gemma}, \textbf{BGE-v2-M3}, \textbf{Jina-v3-Rerank}, and a \textbf{Qwen-8B-Rerank} prompt-style scorer. Table~\ref{tab:medquad_rerank_bench} provides a placeholder for the final benchmark numbers to be filled after the next evaluation run.
-
-
 \section{Open-Source and Reproducibility}
 % • Current lack of open medical multi-agent frameworks
 % • Community demand for transparent, reproducible systems
@@ -1009,7 +1011,7 @@ We will release a complete reproducibility package containing:
     \item \textbf{Teacher-label generation utilities:} fully logged prompts and decoding parameters for hard-label completion, plus serialization utilities for top-$k$ soft-label distillation traces sourced from MedGemma-27B-it \cite{google2025medgemma,hinton2015distilling}.
     \item \textbf{Model merging specifications:} MergeKit YAML configurations and reproducible scripts for TA/SLERP/DARE/TIES compositions, including merge coefficients used for reported results \cite{goddard2024mergekit,yadav2023ties,yu2023supermario,shoemake1985quaternion}.
     \item \textbf{Retrieval + reranking pipeline:} scripts to reproduce the two-stage IR pipeline (dense + lexical union, long-context biomedical reranker inference, calibrated scoring hooks), implemented using open reranker tooling and documented index parameters \cite{lewis2020rag,bgev2gemma,flagembedding}.
-    \item \textbf{Evaluation and reporting:} deterministic prompting templates, decoding parameters, and metric computation for MedQuAD; plus optional RAG evaluation hooks (e.g., RAGAS) to assess retrieval quality and answer groundedness under a standardized interface \cite{benabacha2019medquad,es2024ragas}.
+    \item \textbf{Evaluation and reporting:} deterministic prompting templates, decoding parameters, and metric computation for MedQuAD, HealthBench, and the system audit benchmark; plus optional RAG evaluation hooks to assess retrieval quality and answer groundedness under a standardized interface.
 \end{itemize}
 
 \subsection{FAIR-aligned provenance and governance}
@@ -1034,7 +1036,7 @@ This makes MedSwin suitable for controlled comparisons, where differences are at
 To prevent environment drift, we provide pinned environments (Docker/conda) with exact library versions and hardware notes. Each experiment includes a run manifest documenting: git commit, dataset hashes, GPU model/count, effective batch size, gradient accumulation, training steps, and wall-clock timing. For IR components, manifests include ANN parameters and reranker inference settings, allowing evaluation reproducibility across machines and labs.
 
 \subsection{Reproduction recipe and minimum-cost replication}
-A single-command reproduction workflow will rebuild: (i) the SFT checkpoint, (ii) the KD checkpoint (hard + soft), (iii) merged checkpoints using MergeKit YAMLs, and (iv) the MedQuAD evaluation table under fixed prompts and decoding. This design targets \emph{minimum-cost replication}: independent groups can validate claims without proprietary infrastructure, while preserving enough metadata to support rigorous auditing and extensions.
+A single-command reproduction workflow will rebuild: (i) the SFT checkpoint, (ii) the KD checkpoint (hard + soft), (iii) merged checkpoints using MergeKit YAMLs, and (iv) the evaluation tables under fixed prompts and decoding. This design targets \emph{minimum-cost replication}: independent groups can validate claims without proprietary infrastructure, while preserving enough metadata to support rigorous auditing and extensions.
 
 % MedSwin yields multiple student checkpoints that encode complementary behaviours: the SFT-trained model improves instruction-following and style control, while the KD-trained model better matches the teacher’s calibrated reasoning and clinical response patterns. Rather than performing an additional full fine-tuning pass (which increases compute and can amplify catastrophic forgetting), we investigate weight-space merging as a lightweight mechanism to combine compatible checkpoints into a single deployable student.
 
@@ -1089,6 +1091,30 @@ Medical AI guidance repeatedly stresses that translation requires transparency, 
 
 \paragraph{How MedSwin closes the gaps}
 MedSwin contributes an end-to-end open blueprint that: (i) distills a strong medical instructor into a deployable 7B specialist with uncertainty transfer; (ii) composes SFT and KD behaviors via interference-aware training-free merges; (iii) integrates a long-context biomedical reranker with calibrated scoring into policy-aware retrieval; and (iv) operationalizes multi-agent coordination under explicit evidence sufficiency constraints with reproducible, auditable artifacts.
+
+\section{Appendix}
+\label{sec:appendix}
+
+\subsection{Benchmark selection and preparation}
+MedQuAD and HealthBench are kept as model-level benchmarks because they test semantic fidelity and over-generation on medically grounded prompts. MedQuAD is a consumer-health QA collection derived from NIH websites, while HealthBench is used as an additional held-out medical benchmark with a different reference distribution.
+
+For the whole-system audit, we use TREC Clinical Decision Support 2016 as the primary benchmark because it includes patient-context topics, a large biomedical evidence corpus, and relevance judgments that better match MedSwin's end-to-end retrieval and sufficiency setting than answer-only QA benchmarks. In the prepared case file, the query is kept separate from the patient note so retrieval is measured against the runtime contract rather than prompt augmentation.
+
+\subsection{TREC CDS case preparation}
+The case-preparation script exports a compact JSONL file from the TREC CDS loader. It seeds gold facets from qrels, keeps higher relevance grades first, and uses document ID as the stable tiebreaker when a topic has more judged documents than the configured cap. This makes the benchmark reproducible without random sampling.
+
+The companion ingestion script loads PMC evidence into a fixed benchmark org namespace. For smoke tests it can ingest a small prefix; for final runs it uses a deterministic corpus subset or the full corpus, then refreshes embeddings and rebuilds the index so the dense, lexical, and reranking stages all see the same evidence pool.
+
+\subsection{System audit workflow}
+Each system run follows the same sequence: health check, optional case-context ingestion, chat call, trace retrieval, and audit export. The harness records the selected evidence, cited evidence, policy decision, facet coverage, and trace summary for each case. The main run-level summary is the mean over cases, plus policy pass rate, degraded rate, and error rate.
+
+\subsection{System audit metrics}
+The audit reports mean facet recall, critical facet recall, evidence-document recall, citation precision, trace completeness, sufficiency decision score, groundedness proxy, clinical quality proxy, unsupported penalty, unsafe omission penalty, and the composite MSAS score. The score is designed to reward evidence coverage, traceability, and sufficiency while explicitly penalizing unsupported or unsafe omissions.
+
+\subsection{Retrieval-style reranker benchmark}
+For MedSwin-Rerank, each MedQuAD example is converted into a ranking problem where the question is the query and the reference answer is the positive passage. Candidate lists are built with one positive and a fixed number of negatives, either sampled randomly or retrieved first and reranked. The benchmark then reports MRR@10, nDCG@10, Recall@10, MAP@10, and p95 latency.
+
+This retrieval benchmark is narrower than the system audit because it measures ordering quality rather than trace completeness, sufficiency gating, or end-to-end provenance. That is why the main paper reports the ranking outcome briefly, while the construction details stay here.
 
 
 % \section{Research Questions}

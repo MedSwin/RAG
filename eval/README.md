@@ -164,9 +164,9 @@ MSAS = 0.25 critical_facet_recall
      - 0.10 unsupported_penalty
 ```
 
-For publication, replace `groundedness_proxy` and `clinical_quality_proxy` with blinded clinician or rubric-based claim adjudication. Keep the automatic metrics as reproducible system diagnostics.
+> For publication, replace `groundedness_proxy` and `clinical_quality_proxy` with blinded clinician or rubric-based claim adjudication. Keep the automatic metrics as reproducible system diagnostics.
 
-## Recommended paper comparison
+## Comparision
 
 Evaluate the same cases under these configurations:
 
