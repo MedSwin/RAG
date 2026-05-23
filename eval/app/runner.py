@@ -11,6 +11,58 @@ from .client import MedSwinClient
 from .schemas import RunAudit, RunRequest
 
 
+def _validate_setup_stats(stats: dict[str, Any], benchmark_org_id: str) -> None:
+    """Fail fast when the benchmark would reuse a stale or foreign index.
+
+    Root Cause vs Logic: a raw `index_exists` check is not enough for a shared
+    runtime because the file may belong to a different org, corpus, or embedding
+    space. The benchmark must validate provenance before it starts spending
+    quota on cases.
+    """
+    source_counts = stats.get("source_counts") or {}
+    manifest = stats.get("index_manifest") or {}
+    errors: list[str] = []
+
+    if int(source_counts.get("LIT") or 0) <= 0:
+        errors.append("LIT corpus is missing")
+    if not bool(stats.get("index_exists")):
+        errors.append("active retrieval index file is missing")
+    if not manifest:
+        errors.append("index provenance manifest is missing")
+    if manifest and manifest.get("org_id") != benchmark_org_id:
+        errors.append(f"index org_id {manifest.get('org_id')!r} does not match benchmark org {benchmark_org_id!r}")
+    if manifest and manifest.get("embedding_space") != stats.get("active_embedding_space"):
+        errors.append("index embedding space does not match the active embedding space")
+    if manifest and manifest.get("embedding_model") != stats.get("active_embedding_model"):
+        errors.append("index embedding model does not match the active embedding model")
+    if manifest and int(manifest.get("embedding_dim") or 0) != int(stats.get("active_embedding_dim") or 0):
+        errors.append("index embedding dimension does not match the active embedding dimension")
+    if stats.get("index_provenance_error"):
+        errors.append(str(stats["index_provenance_error"]))
+
+    if errors:
+        raise RuntimeError("Benchmark setup provenance validation failed: " + "; ".join(errors))
+
+
+def _aggregate_rate_limit_stats(cases: list[Any]) -> dict[str, Any]:
+    totals: dict[str, dict[str, int]] = {}
+    for case in cases:
+        stats = getattr(case, "trace_rate_limit_stats", None) or {}
+        for key, payload in stats.items():
+            bucket = totals.setdefault(
+                key,
+                {
+                    "rate_limit_events": 0,
+                    "retry_events": 0,
+                    "cooldown_events": 0,
+                },
+            )
+            bucket["rate_limit_events"] += int((payload or {}).get("rate_limit_events") or 0)
+            bucket["retry_events"] += int((payload or {}).get("retry_events") or 0)
+            bucket["cooldown_events"] += int(1 if (payload or {}).get("last_delay") else 0)
+    return totals
+
+
 async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
     cases = read_jsonl_cases(req.cases_path)
     if req.max_cases is not None:
@@ -26,6 +78,9 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
     # namespace, while each case note is still patient-scoped. Using the same org
     # for eval runs makes the 5000-sample corpus visible to /medswin/chat.
     benchmark_org_id = settings.benchmark_org_id
+    reranker_budget = max(1, min(int(req.reranker_budget or 1), int(req.max_concurrency or 1) if req.max_concurrency else 1))
+    case_concurrency = max(1, min(int(req.max_concurrency or 1), reranker_budget))
+    setup_concurrency = max(1, min(int(req.max_concurrency or 1), 4))
 
     run = RunAudit(
         run_id=run_id,
@@ -40,6 +95,9 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             "min_evidence_grade": req.min_evidence_grade,
             "clinical_scope": req.clinical_scope,
             "max_concurrency": req.max_concurrency,
+            "reranker_budget": reranker_budget,
+            "case_concurrency": case_concurrency,
+            "setup_concurrency": setup_concurrency,
             "ingest_case_context": req.ingest_case_context,
             "fetch_trace_summary": req.fetch_trace_summary,
             "include_patient_context_in_query": req.include_patient_context_in_query,
@@ -58,26 +116,12 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"MedSwin runtime health check failed: {exc}") from exc
 
-        stats = await client.storage_stats(org_id=benchmark_org_id)
-        # Root Cause vs Logic: a TREC CDS benchmark that contains only case notes
-        # and no literature corpus will trivially retrieve EMR context while never
-        # surfacing judged evidence. The logic below fails fast on an invalid corpus
-        # so we don't publish misleading low-recall scores from a misprepared org.
+        setup_stats_before = await client.storage_stats(org_id=benchmark_org_id)
         if cases:
-            source_counts = stats.get("source_counts") or {}
-            if int(source_counts.get("LIT") or 0) <= 0:
-                raise RuntimeError(
-                    f"Benchmark org {benchmark_org_id!r} is missing literature evidence "
-                    "(LIT=0). Run eval/scripts/ingest_trec_pmc.py for that org and rebuild "
-                    "the index before evaluating clinical benchmark cases."
-                )
-            if not bool(stats.get("index_exists")):
-                raise RuntimeError(
-                    f"Benchmark org {benchmark_org_id!r} is missing the active retrieval index. "
-                    "Run the ingest/build-index step before evaluating benchmark cases."
-                )
+            _validate_setup_stats(setup_stats_before, benchmark_org_id)
 
         preindexed_context = req.ingest_case_context and hasattr(client, "build_index")
+        setup_stats_after = setup_stats_before
         if preindexed_context:
             # Motivation vs Logic: benchmark EMR notes must be visible to dense
             # retrieval, not only stored in Mongo after the ANN index is built.
@@ -85,7 +129,7 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             # clock on setup instead of evaluation, so we keep the same bounded
             # safety envelope as the benchmark chat phase and ingest notes
             # concurrently before rebuilding the index once.
-            ingest_concurrency = max(1, min(int(req.max_concurrency or 1), 4))
+            ingest_concurrency = setup_concurrency
             ingest_semaphore = asyncio.Semaphore(ingest_concurrency)
 
             async def bounded_ingest(case: Any) -> None:
@@ -95,6 +139,8 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             await asyncio.gather(*(bounded_ingest(case) for case in cases))
             if hasattr(client, "build_index"):
                 await client.build_index(force_rebuild=True, org_id=benchmark_org_id)
+            setup_stats_after = await client.storage_stats(org_id=benchmark_org_id)
+            _validate_setup_stats(setup_stats_after, benchmark_org_id)
 
         async def process_case(case: Any) -> tuple[int, Any]:
             errors: list[str] = []
@@ -122,8 +168,7 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
                 response = {"answer": "", "policy_decision": {"passed": False}, "citations": [], "evidence_bundle": {}}
             return 0, audit_case(case, response, trace_summary, errors=errors)
 
-        max_concurrency = max(int(req.max_concurrency or 1), 1)
-        if max_concurrency == 1:
+        if case_concurrency == 1:
             for case in cases:
                 _, case_audit = await process_case(case)
                 run.cases.append(case_audit)
@@ -133,7 +178,7 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             # clock on strictly serial orchestration. We keep the evaluation
             # semantics intact, but allow bounded concurrency so the harness can
             # exercise the live MedSwin stack at a realistic batch size.
-            semaphore = asyncio.Semaphore(max_concurrency)
+            semaphore = asyncio.Semaphore(case_concurrency)
 
             async def bounded_process(index: int, case: Any) -> tuple[int, Any]:
                 async with semaphore:
@@ -148,6 +193,15 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             run.cases.extend(case_audit for case_audit in audits if case_audit is not None)
 
     aggregate_run(run)
+    run.diagnostics = {
+        "setup_stats_before": setup_stats_before,
+        "setup_stats_after": setup_stats_after,
+        "request_stats": dict(client.request_stats),
+        "reranker_budget": reranker_budget,
+        "case_concurrency": case_concurrency,
+        "setup_concurrency": setup_concurrency,
+        "trace_rate_limit_stats": _aggregate_rate_limit_stats(run.cases),
+    }
     output_path = Path(settings.run_store_dir) / f"{run_id}.json"
     write_json(output_path, run.model_dump())
     return run

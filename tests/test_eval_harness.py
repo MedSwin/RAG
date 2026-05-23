@@ -1,8 +1,9 @@
 import pytest
 
+from app.core.config import Settings as RuntimeSettings
 from eval.app.audit import groundedness_proxy, trace_completeness
 from eval.app.config import Settings
-from eval.app.runner import run_benchmark
+from eval.app.runner import _validate_setup_stats, run_benchmark
 from eval.app.schemas import BenchmarkCase, GoldFacet, RunRequest
 
 
@@ -25,6 +26,7 @@ class _FakeClient:
         self.ingest_calls = []
         self.chat_queries = []
         self.trace_calls = []
+        self.request_stats = {"retries": 0, "rate_limits": 0, "timeouts": 0, "network_errors": 0}
         _FakeClient.instances.append(self)
 
     async def __aenter__(self):
@@ -35,6 +37,24 @@ class _FakeClient:
 
     async def health(self):
         return {"status": "ok"}
+
+    async def storage_stats(self, org_id=None):
+        active_settings = RuntimeSettings()
+        return {
+            "source_counts": {"CPG": 0, "EMR": 0, "LIT": 1},
+            "index_exists": True,
+            "index_manifest": {
+                "org_id": org_id,
+                "embedding_space": active_settings.active_embedding_space(),
+                "embedding_model": active_settings.active_embedding_model(),
+                "embedding_dim": active_settings.active_embedding_dimension(),
+                "total_vectors": 1,
+            },
+            "index_provenance_valid": True,
+            "active_embedding_space": active_settings.active_embedding_space(),
+            "active_embedding_model": active_settings.active_embedding_model(),
+            "active_embedding_dim": active_settings.active_embedding_dimension(),
+        }
 
     async def ingest_case_context(self, case):
         self.ingest_calls.append(case.case_id)
@@ -93,6 +113,9 @@ async def test_run_benchmark_uses_fixed_org_and_keeps_query_pure(monkeypatch, tm
     assert _FakeClient.instances[0].chat_queries == ["What therapy is safest?"]
     assert run.cases[0].trace_id == "trace-case-1"
     assert run.cases[0].errors == []
+    assert run.config["reranker_budget"] == 1
+    assert run.diagnostics["setup_stats_before"]["index_provenance_valid"] is True
+    assert run.diagnostics["request_stats"]["retries"] == 0
 
 
 def test_trace_completeness_accepts_runtime_plural_count_keys():
@@ -134,3 +157,23 @@ def test_groundedness_proxy_does_not_treat_contradictions_as_support():
 
     assert score == 0.0
     assert penalty == 1.0
+
+
+def test_validate_setup_stats_rejects_foreign_or_stale_index():
+    with pytest.raises(RuntimeError, match="provenance"):
+        _validate_setup_stats(
+            {
+                "source_counts": {"CPG": 0, "EMR": 0, "LIT": 1},
+                "index_exists": True,
+                "index_manifest": {
+                    "org_id": "other-org",
+                    "embedding_space": RuntimeSettings().active_embedding_space(),
+                    "embedding_model": RuntimeSettings().active_embedding_model(),
+                    "embedding_dim": RuntimeSettings().active_embedding_dimension(),
+                },
+                "active_embedding_space": RuntimeSettings().active_embedding_space(),
+                "active_embedding_model": RuntimeSettings().active_embedding_model(),
+                "active_embedding_dim": RuntimeSettings().active_embedding_dimension(),
+            },
+            "bench-org",
+        )

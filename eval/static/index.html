@@ -34,6 +34,10 @@
       </p>
       <label>Max cases</label>
       <input id="maxCases" type="number" value="2" min="1" />
+      <label>Max concurrency</label>
+      <input id="maxConcurrency" type="number" value="2" min="1" />
+      <label>Reranker budget</label>
+      <input id="rerankerBudget" type="number" value="1" min="1" />
       <label>Source policy</label>
       <select id="sourcePolicy">
         <option>ANY</option>
@@ -77,6 +81,8 @@
       const payload = {
         cases_path: document.getElementById('casesPath').value,
         max_cases: Number(document.getElementById('maxCases').value),
+        max_concurrency: Number(document.getElementById('maxConcurrency').value),
+        reranker_budget: Number(document.getElementById('rerankerBudget').value),
         source_policy: document.getElementById('sourcePolicy').value,
         min_evidence_grade: Number(document.getElementById('minEvidenceGrade').value),
         ingest_case_context: true,

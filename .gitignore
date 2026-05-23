@@ -40,3 +40,10 @@ key/
 *.rpm
 *.msi
 *.exe
+
+.claude*
+.codex*
+
+__pycache__*
+.pytest_cache*
+.venv*

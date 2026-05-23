@@ -32,6 +32,7 @@ class RunRequest(BaseModel):
     cases_path: str = "data/sample/cases.jsonl"
     max_cases: int | None = None
     max_concurrency: int = 1
+    reranker_budget: int | None = None
     ingest_case_context: bool = True
     fetch_trace_summary: bool = True
     include_patient_context_in_query: bool = False
@@ -63,6 +64,7 @@ class CaseAudit(BaseModel):
     unsupported_penalty: float = 0.0
     unsafe_omission_penalty: float = 0.0
     msas: float = 0.0
+    trace_rate_limit_stats: dict[str, Any] = Field(default_factory=dict)
     errors: list[str] = Field(default_factory=list)
     raw_response: dict[str, Any] = Field(default_factory=dict)
 
@@ -75,3 +77,4 @@ class RunAudit(BaseModel):
     aggregate: dict[str, float] = Field(default_factory=dict)
     cases: list[CaseAudit] = Field(default_factory=list)
     config: dict[str, Any] = Field(default_factory=dict)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)

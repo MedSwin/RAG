@@ -213,6 +213,7 @@ def audit_case(case: BenchmarkCase, response: dict[str, Any], trace_summary: dic
         unsupported_penalty=unsupported_penalty,
         unsafe_omission_penalty=unsafe_penalty,
         msas=msas,
+        trace_rate_limit_stats=(trace_summary or {}).get("rate_limit_stats", {}) if trace_summary else {},
         errors=errors or [],
         raw_response=response,
     )

@@ -53,6 +53,7 @@ class TraceResponse(BaseModel):
     tool_calls_count: int
     sufficiency_checks_count: int
     evidence_passages_count: int
+    rate_limit_stats: Optional[Dict[str, Any]] = None
     policy_decisions: Optional[List[Dict[str, Any]]] = None
     facet_coverage: Optional[List[Dict[str, Any]]] = None
     contradictions: Optional[List[Dict[str, Any]]] = None
@@ -158,6 +159,7 @@ async def get_trace(
             tool_calls_count=summary["tool_calls_count"],
             sufficiency_checks_count=summary["sufficiency_checks_count"],
             evidence_passages_count=summary["evidence_passages_count"],
+            rate_limit_stats=summary.get("rate_limit_stats"),
             policy_decisions=summary.get("policy_decisions"),
             facet_coverage=summary.get("facet_coverage"),
             contradictions=summary.get("contradictions"),

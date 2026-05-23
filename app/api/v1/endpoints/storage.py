@@ -64,8 +64,13 @@ class StorageStats(BaseModel):
     cloud_mode: bool = False
     active_embedding_model: Optional[str] = None
     active_embedding_space: Optional[str] = None
+    active_embedding_dim: Optional[int] = None
     embedding_refresh: Dict[str, Any] = Field(default_factory=dict)
     index_exists: bool
+    index_manifest_path: Optional[str] = None
+    index_manifest: Optional[Dict[str, Any]] = None
+    index_provenance_valid: bool = False
+    index_provenance_error: Optional[str] = None
     index_size: Optional[int] = None
     last_updated: Optional[datetime] = None
 

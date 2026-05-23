@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, Iterable, List
 
 from app.models.medswin import CandidatePassage, EvidenceGrade, SourceType
+from app.services.adapters.rate_limit import rate_limit_snapshot
 
 
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
@@ -116,6 +117,13 @@ def redacted_trace_summary(trace: Dict[str, Any], include_policy_details: bool =
         "sufficiency_checks_count": len(trace.get("sufficiency_checks", [])),
         "evidence_passages_count": len(evidence_bundle.get("passages", [])),
     }
+    # Motivation vs Logic: reranker and embedding backoffs are operational
+    # state, not PHI. Exposing the snapshot lets the benchmark audit quota
+    # pressure without scraping logs or guessing from wall-clock time.
+    try:
+        summary["rate_limit_stats"] = rate_limit_snapshot()
+    except Exception:
+        summary["rate_limit_stats"] = {}
     if include_policy_details:
         summary["policy_decisions"] = redact_phi_payload(trace.get("policy_decisions", []))
         summary["facet_coverage"] = redact_phi_payload(trace.get("facet_coverage", []))

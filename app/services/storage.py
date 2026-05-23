@@ -6,6 +6,7 @@ try:
     from pymongo import MongoClient
 except ModuleNotFoundError:
     MongoClient = None
+import hashlib
 import json
 import logging
 from typing import List, Dict, Any, Optional
@@ -46,11 +47,59 @@ EMBEDDING_REFRESH_STATUS: Dict[str, Any] = {
     "completed_at": None,
 }
 
+
+def _index_manifest_path(index_path: str | Path) -> Path:
+    """Return the provenance sidecar path for a given index artifact."""
+    path = Path(index_path)
+    return path.with_name(f"{path.name}.manifest.json")
+
+
+def _corpus_signature(chunk_ids: List[str], org_id: str, embedding_space: str) -> str:
+    """Derive a deterministic corpus signature from the active index contents."""
+    digest = hashlib.sha256()
+    digest.update(org_id.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(embedding_space.encode("utf-8"))
+    digest.update(b"\0")
+    for chunk_id in sorted(chunk_ids):
+        digest.update(chunk_id.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
 class StorageService:
     """Service for managing data storage and indexing."""
     
     def __init__(self):
         self.executor = ThreadPoolExecutor(max_workers=2)
+
+    def _write_index_manifest(self, index_path: str, manifest: Dict[str, Any]) -> str:
+        manifest_path = _index_manifest_path(index_path)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2, default=str)
+        return str(manifest_path)
+
+    def _read_index_manifest(self, index_path: str) -> Dict[str, Any] | None:
+        manifest_path = _index_manifest_path(index_path)
+        if not manifest_path.exists():
+            return None
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to read index manifest %s: %s", manifest_path, exc)
+            return None
+
+    def _manifest_matches_active_scope(self, manifest: Dict[str, Any] | None, org_id: Optional[str]) -> bool:
+        if not manifest:
+            return False
+        if org_id and manifest.get("org_id") != org_id:
+            return False
+        return (
+            manifest.get("embedding_space") == settings.active_embedding_space()
+            and manifest.get("embedding_model") == settings.active_embedding_model()
+            and int(manifest.get("embedding_dim") or 0) == settings.active_embedding_dimension()
+        )
     
     async def store_chunks(
         self, 
@@ -152,14 +201,28 @@ class StorageService:
             index_path = index_path or settings.HNSW_INDEX_PATH
             mapping_path = mapping_path or settings.HNSW_MAPPING_PATH
             
-            # Check if index already exists
+            # Root Cause vs Logic: a cached index file alone does not prove the
+            # index belongs to the current benchmark org or embedding space.
             if not force_rebuild and Path(index_path).exists():
+                manifest = self._read_index_manifest(index_path)
+                if self._manifest_matches_active_scope(manifest, org_id):
+                    return {
+                        "success": True,
+                        "index_path": index_path,
+                        "mapping_path": mapping_path,
+                        "manifest_path": str(_index_manifest_path(index_path)),
+                        "index_manifest": manifest,
+                        "total_vectors": int(manifest.get("total_vectors") or 0) if manifest else 0,
+                        "message": "Index already exists with matching provenance",
+                    }
                 return {
-                    "success": True,
+                    "success": False,
                     "index_path": index_path,
                     "mapping_path": mapping_path,
+                    "manifest_path": str(_index_manifest_path(index_path)),
+                    "index_manifest": manifest,
                     "total_vectors": 0,
-                    "message": "Index already exists"
+                    "message": "Index exists but provenance does not match the active org or embedding space",
                 }
             
             # Run index building in thread pool
@@ -296,6 +359,7 @@ class StorageService:
                     "success": False,
                     "index_path": index_path,
                     "mapping_path": mapping_path,
+                    "manifest_path": str(_index_manifest_path(index_path)),
                     "total_vectors": 0,
                     "message": "No chunks with embeddings found"
                 }
@@ -323,6 +387,7 @@ class StorageService:
                     "success": False,
                     "index_path": index_path,
                     "mapping_path": mapping_path,
+                    "manifest_path": str(_index_manifest_path(index_path)),
                     "total_vectors": 0,
                     "message": "No chunks with active-dimension embeddings found"
                 }
@@ -366,7 +431,33 @@ class StorageService:
             
             # Build the index
             result = builder.build(embeddings, chunk_ids, index_path, mapping_path)
-            
+            manifest = {
+                "org_id": org_id,
+                "index_type": index_type.value,
+                "index_path": index_path,
+                "mapping_path": mapping_path,
+                "manifest_path": str(_index_manifest_path(index_path)),
+                "embedding_space": settings.active_embedding_space(),
+                "embedding_model": settings.active_embedding_model(),
+                "embedding_dim": embedding_dim,
+                "chunk_count": len(chunks),
+                "total_vectors": len(embeddings),
+                "source_counts": {
+                    "CPG": sum(1 for chunk in chunks if chunk.get("source_type") == "CPG"),
+                    "EMR": sum(1 for chunk in chunks if chunk.get("source_type") == "EMR"),
+                    "LIT": sum(1 for chunk in chunks if chunk.get("source_type") == "LIT"),
+                },
+                "corpus_signature": _corpus_signature(
+                    chunk_ids,
+                    org_id or "all",
+                    settings.active_embedding_space(),
+                ),
+                "built_at": datetime.now(timezone.utc).isoformat(),
+            }
+            manifest_path = self._write_index_manifest(index_path, manifest)
+            result["manifest_path"] = manifest_path
+            result["index_manifest"] = manifest
+
             logger.info(
                 "%s index built for %s: %s",
                 index_type.value.upper(),
@@ -382,6 +473,7 @@ class StorageService:
                 "success": False,
                 "index_path": index_path,
                 "mapping_path": mapping_path,
+                "manifest_path": str(_index_manifest_path(index_path)),
                 "total_vectors": 0,
                 "message": f"Index building failed: {str(e)}"
             }
@@ -421,6 +513,14 @@ class StorageService:
             # Check index existence
             index_path = Path(settings.HNSW_INDEX_PATH)
             index_exists = index_path.exists()
+            manifest_path = _index_manifest_path(index_path)
+            index_manifest = self._read_index_manifest(index_path) if index_exists else None
+            index_provenance_valid = self._manifest_matches_active_scope(index_manifest, org_id)
+            index_provenance_error = None
+            if index_exists and not index_manifest:
+                index_provenance_error = "missing index provenance manifest"
+            elif index_exists and not index_provenance_valid:
+                index_provenance_error = "index provenance does not match active org or embedding space"
             index_size = index_path.stat().st_size if index_exists else None
             
             # Get last updated timestamp
@@ -442,8 +542,13 @@ class StorageService:
                 "cloud_mode": settings.CLOUD_MODE,
                 "active_embedding_model": settings.active_embedding_model(),
                 "active_embedding_space": settings.active_embedding_space(),
+                "active_embedding_dim": settings.active_embedding_dimension(),
                 "embedding_refresh": self.get_embedding_refresh_status(),
                 "index_exists": index_exists,
+                "index_manifest_path": str(manifest_path),
+                "index_manifest": index_manifest,
+                "index_provenance_valid": index_provenance_valid,
+                "index_provenance_error": index_provenance_error,
                 "index_size": index_size,
                 "last_updated": last_updated
             }
@@ -497,6 +602,10 @@ class StorageService:
                     if path.exists():
                         path.unlink()
                         removed_indexes.append(str(path))
+                    manifest_path = _index_manifest_path(path)
+                    if manifest_path.exists():
+                        manifest_path.unlink()
+                        removed_indexes.append(str(manifest_path))
 
             return {
                 "org_id": org_id,

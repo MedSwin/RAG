@@ -94,6 +94,10 @@ class AdaptiveModelRateLimiter:
         self._semaphore = asyncio.Semaphore(settings.MODEL_RATE_LIMIT_MAX_CONCURRENCY)
         self._cooldown_until = 0.0
         self._consecutive_rate_limits = 0
+        self._rate_limit_events = 0
+        self._retry_events = 0
+        self._last_delay = 0.0
+        self._last_remaining_quota: Optional[int] = None
 
     async def wait_for_cooldown(self) -> None:
         while True:
@@ -112,6 +116,7 @@ class AdaptiveModelRateLimiter:
     ) -> float:
         async with self._lock:
             self._consecutive_rate_limits += 1
+            self._rate_limit_events += 1
             header_delay = _retry_after_seconds(response)
             fallback_delay = min(
                 settings.MODEL_RATE_LIMIT_MAX_COOLDOWN_S,
@@ -135,6 +140,7 @@ class AdaptiveModelRateLimiter:
             # aggressively instead of cycling at the same interval.
             delay = max(bounded_header_delay if bounded_header_delay is not None else 0.0, fallback_delay) + jitter
             self._cooldown_until = max(self._cooldown_until, time.monotonic() + delay)
+            self._last_delay = delay
 
         logger.warning("Model rate limit reached for %s; cooling down for %.2fs", key, delay)
         return delay
@@ -144,6 +150,7 @@ class AdaptiveModelRateLimiter:
             self._consecutive_rate_limits = 0
             remaining = _remaining_quota(response)
             reset_delay = _retry_after_seconds(response)
+            self._last_remaining_quota = remaining
             if remaining == 0 and reset_delay is not None:
                 self._cooldown_until = max(self._cooldown_until, time.monotonic() + reset_delay)
 
@@ -168,6 +175,7 @@ class AdaptiveModelRateLimiter:
                     response = await client.post(url, json=json, headers=headers)
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_error = exc
+                self._retry_events += 1
                 if attempt == settings.MODEL_RATE_LIMIT_MAX_ATTEMPTS:
                     raise
                 await asyncio.sleep(_retry_backoff_seconds(attempt))
@@ -181,6 +189,7 @@ class AdaptiveModelRateLimiter:
 
             if status_code in {500, 502, 503, 504}:
                 last_response = response
+                self._retry_events += 1
                 if attempt == settings.MODEL_RATE_LIMIT_MAX_ATTEMPTS:
                     response.raise_for_status()
                 await asyncio.sleep(_retry_backoff_seconds(attempt))
@@ -235,3 +244,19 @@ async def request_with_model_rate_limit(
         json=json,
         headers=headers,
     )
+
+
+def rate_limit_snapshot() -> Dict[str, Dict[str, Any]]:
+    """Return a snapshot of shared model throttling state keyed by deployment."""
+    snapshot: Dict[str, Dict[str, Any]] = {}
+    for key, limiter in list(_limiters.items()):
+        snapshot[key] = {
+            "rate_limit_events": limiter._rate_limit_events,
+            "retry_events": limiter._retry_events,
+            "cooldown_until": limiter._cooldown_until,
+            "last_delay": limiter._last_delay,
+            "last_remaining_quota": limiter._last_remaining_quota,
+            "consecutive_rate_limits": limiter._consecutive_rate_limits,
+            "max_concurrency": settings.MODEL_RATE_LIMIT_MAX_CONCURRENCY,
+        }
+    return snapshot
