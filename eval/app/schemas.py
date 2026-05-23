@@ -31,7 +31,9 @@ class BenchmarkCase(BaseModel):
 class RunRequest(BaseModel):
     cases_path: str = "data/sample/cases.jsonl"
     max_cases: int | None = None
+    max_concurrency: int = 1
     ingest_case_context: bool = True
+    fetch_trace_summary: bool = True
     include_patient_context_in_query: bool = False
     source_policy: Literal["ANY", "CPG_ONLY", "EMR_ONLY", "LIT_ONLY"] = "ANY"
     guideline_only: bool = False

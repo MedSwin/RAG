@@ -204,7 +204,12 @@ async def ingest_documents(
         # into a hard 503 for otherwise valid document ingests. We keep the route
         # resilient and rely on section-aware chunking plus persisted metadata.
 
-        # Process each document
+        # Root Cause vs Logic: embedding each document immediately forced one
+        # cloud request per article, so judged-pool ingests degenerated into
+        # thousands of single-item calls. We stage the documents first, attach
+        # embeddings in bulk, and then persist the fully prepared records.
+        staged_documents: list[tuple[Document, list[Chunk]]] = []
+        staged_chunks: list[Chunk] = []
         results = []
         for doc_data in documents:
             # Create document
@@ -268,18 +273,25 @@ async def ingest_documents(
                     tokenized_text=chunk_data.get("tokenized_text") or chunk_data.get("text", chunk_data.get("content", "")).lower().split()
                 )
                 chunks.append(chunk)
-            
+
+            staged_documents.append((document, chunks))
+            staged_chunks.extend(chunks)
+
+        if staged_chunks and settings.CLOUD_MODE:
+            await _attach_active_embeddings(staged_chunks)
+
+        for document, chunks in staged_documents:
+            await doc_repo.create(document, org_id)
+
             # Root Cause vs Logic: Some PMC records are metadata-only or have
             # no recoverable text/section content, which makes the chunk list
             # empty. Mongo rejects insert_many([]), so we only persist chunks
             # when there is at least one materialized passage.
             if chunks:
-                if settings.CLOUD_MODE:
-                    await _attach_active_embeddings(chunks)
                 await chunk_repo.create_many(chunks, org_id)
 
             results.append({
-                "doc_id": doc_id,
+                "doc_id": document.doc_id,
                 "chunks_created": len(chunks),
                 "status": "success"
             })
@@ -321,10 +333,17 @@ async def _attach_active_embeddings(chunks: List[Any]) -> None:
     invisible until an external refresh, so ingest attaches embeddings eagerly
     and the refresh job remains a repair path for stale data.
     """
-    texts = [chunk.text for chunk in chunks]
     client = EmbeddingClient(settings.active_embedding_url())
     try:
-        embeddings = await client.embed(texts)
+        # Motivation vs Logic: the embeddings service accepts batched input,
+        # so we preserve throughput by attaching vectors in moderate batches
+        # rather than issuing one request per article or one giant payload.
+        batch_size = max(int(settings.BATCH_SIZE), 1)
+        embeddings = []
+        for start in range(0, len(chunks), batch_size):
+            batch = chunks[start : start + batch_size]
+            batch_embeddings = await client.embed([chunk.text for chunk in batch])
+            embeddings.extend(batch_embeddings)
     finally:
         await client.close()
     if len(embeddings) != len(chunks):

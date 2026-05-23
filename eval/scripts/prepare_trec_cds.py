@@ -34,19 +34,71 @@ from app.io import write_jsonl
 
 
 QUERY_TYPE_TO_FACETS = {
+    # Motivation vs Logic: the benchmark needs enough facet vocabulary for the
+    # runtime's deterministic sufficiency gate to recognize support signals. We
+    # keep the facet templates compact, but seed benchmark-friendly keywords so
+    # older case files still exercise the intended policy path.
     "diagnosis": [
-        {"facet_id": "dx", "name": "diagnosis evidence", "weight": 1.0, "critical": True},
-        {"facet_id": "patient_fit", "name": "patient applicability", "weight": 1.0, "critical": True},
+        {
+            "facet_id": "dx",
+            "name": "diagnosis evidence",
+            "weight": 1.0,
+            "critical": True,
+            "keywords": ["diagnosis", "evidence", "symptom", "findings", "assessment", "differential"],
+        },
+        {
+            "facet_id": "patient_fit",
+            "name": "patient applicability",
+            "weight": 1.0,
+            "critical": True,
+            "keywords": ["patient", "age", "history", "comorbidity", "allergy", "medication"],
+        },
     ],
     "test": [
-        {"facet_id": "test_indication", "name": "test indication", "weight": 1.0, "critical": True},
-        {"facet_id": "patient_fit", "name": "patient applicability", "weight": 1.0, "critical": True},
-        {"facet_id": "risk", "name": "test risks or limitations", "weight": 0.75, "critical": False},
+        {
+            "facet_id": "test_indication",
+            "name": "test indication",
+            "weight": 1.0,
+            "critical": True,
+            "keywords": ["test", "indication", "diagnostic", "screening", "workup"],
+        },
+        {
+            "facet_id": "patient_fit",
+            "name": "patient applicability",
+            "weight": 1.0,
+            "critical": True,
+            "keywords": ["patient", "age", "history", "comorbidity", "allergy", "pregnancy"],
+        },
+        {
+            "facet_id": "risk",
+            "name": "test risks or limitations",
+            "weight": 0.75,
+            "critical": False,
+            "keywords": ["risk", "limitation", "contraindication", "false positive", "false negative"],
+        },
     ],
     "treatment": [
-        {"facet_id": "treatment", "name": "treatment recommendation evidence", "weight": 1.0, "critical": True},
-        {"facet_id": "safety", "name": "safety contraindications or adverse risks", "weight": 1.2, "critical": True},
-        {"facet_id": "patient_fit", "name": "patient applicability", "weight": 1.0, "critical": True},
+        {
+            "facet_id": "treatment",
+            "name": "treatment recommendation evidence",
+            "weight": 1.0,
+            "critical": True,
+            "keywords": ["treatment", "recommendation", "management", "therapy", "dose"],
+        },
+        {
+            "facet_id": "safety",
+            "name": "safety contraindications or adverse risks",
+            "weight": 1.2,
+            "critical": True,
+            "keywords": ["safety", "contraindication", "adverse", "risk", "avoid", "interaction"],
+        },
+        {
+            "facet_id": "patient_fit",
+            "name": "patient applicability",
+            "weight": 1.0,
+            "critical": True,
+            "keywords": ["patient", "age", "history", "comorbidity", "allergy", "medication"],
+        },
     ],
 }
 

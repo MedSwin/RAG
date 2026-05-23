@@ -39,7 +39,9 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             "guideline_only": req.guideline_only,
             "min_evidence_grade": req.min_evidence_grade,
             "clinical_scope": req.clinical_scope,
+            "max_concurrency": req.max_concurrency,
             "ingest_case_context": req.ingest_case_context,
+            "fetch_trace_summary": req.fetch_trace_summary,
             "include_patient_context_in_query": req.include_patient_context_in_query,
         },
     )
@@ -67,7 +69,7 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             if hasattr(client, "build_index"):
                 await client.build_index(force_rebuild=True)
 
-        for case in cases:
+        async def process_case(case: Any) -> tuple[int, Any]:
             errors: list[str] = []
             response: dict[str, Any] = {}
             trace_summary: dict[str, Any] | None = None
@@ -82,7 +84,7 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
                     clinical_scope=req.clinical_scope,
                 )
                 trace_id = response.get("trace_id") or (response.get("trace") or {}).get("trace_id")
-                if trace_id:
+                if trace_id and req.fetch_trace_summary:
                     try:
                         trace_summary = await client.trace(trace_id, include_details=True)
                     except Exception as exc:  # noqa: BLE001
@@ -91,7 +93,32 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"case_failed: {exc}")
                 response = {"answer": "", "policy_decision": {"passed": False}, "citations": [], "evidence_bundle": {}}
-            run.cases.append(audit_case(case, response, trace_summary, errors=errors))
+            return 0, audit_case(case, response, trace_summary, errors=errors)
+
+        max_concurrency = max(int(req.max_concurrency or 1), 1)
+        if max_concurrency == 1:
+            for case in cases:
+                _, case_audit = await process_case(case)
+                run.cases.append(case_audit)
+        else:
+            # Motivation vs Logic: a 500-case stress run is only useful if the
+            # benchmark can keep the app busy without spending the entire wall
+            # clock on strictly serial orchestration. We keep the evaluation
+            # semantics intact, but allow bounded concurrency so the harness can
+            # exercise the live MedSwin stack at a realistic batch size.
+            semaphore = asyncio.Semaphore(max_concurrency)
+
+            async def bounded_process(index: int, case: Any) -> tuple[int, Any]:
+                async with semaphore:
+                    _, case_audit = await process_case(case)
+                    return index, case_audit
+
+            tasks = [asyncio.create_task(bounded_process(index, case)) for index, case in enumerate(cases)]
+            audits: list[Any | None] = [None] * len(tasks)
+            for task in asyncio.as_completed(tasks):
+                index, case_audit = await task
+                audits[index] = case_audit
+            run.cases.extend(case_audit for case_audit in audits if case_audit is not None)
 
     aggregate_run(run)
     output_path = Path(settings.run_store_dir) / f"{run_id}.json"

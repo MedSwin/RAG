@@ -81,6 +81,12 @@ def main() -> None:
     parser.add_argument("--sample-size", type=int, default=5000)
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument(
+        "--timeout-s",
+        type=float,
+        default=900.0,
+        help="HTTP timeout for ingest/reset/index requests in seconds.",
+    )
     parser.add_argument("--medswin-base-url", default="http://localhost:8100")
     parser.add_argument("--org-id", default="bench-org")
     parser.add_argument("--reset-org", action="store_true")
@@ -94,7 +100,11 @@ def main() -> None:
     batch: list[dict[str, Any]] = []
     total = 0
 
-    with httpx.Client(timeout=180.0) as client:
+    # Root Cause vs Logic: the old 180s client timeout was shorter than some
+    # corpus ingest/index requests, so long-running benchmark loads could fail
+    # mid-stream even when the runtime was healthy. The logic here makes the
+    # timeout explicit and tunable so the ingest can finish deterministically.
+    with httpx.Client(timeout=args.timeout_s) as client:
         if args.reset_org:
             resp = client.post(
                 f"{base_url}/api/v1/storage/benchmark/reset",
@@ -119,7 +129,7 @@ def main() -> None:
             resp = client.post(
                 f"{base_url}/api/v1/storage/embeddings/refresh",
                 json={"org_id": args.org_id},
-                timeout=3600.0,
+                timeout=max(3600.0, args.timeout_s),
             )
             resp.raise_for_status()
             print(resp.json(), flush=True)
@@ -128,7 +138,7 @@ def main() -> None:
             resp = client.post(
                 f"{base_url}/api/v1/storage/index/build",
                 json={"force_rebuild": True},
-                timeout=1800.0,
+                timeout=max(1800.0, args.timeout_s),
             )
             resp.raise_for_status()
             print(resp.json(), flush=True)
