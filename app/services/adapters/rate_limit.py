@@ -128,7 +128,12 @@ class AdaptiveModelRateLimiter:
                 if header_delay is not None
                 else None
             )
-            delay = (bounded_header_delay if bounded_header_delay is not None else fallback_delay) + jitter
+            # Root Cause vs Logic: some cloud embedding deployments emit short
+            # retry hints even when repeated 429s show the real quota window is
+            # longer. We therefore honor the provider hint but never wait less
+            # than the exponential fallback, so repeated failures back off more
+            # aggressively instead of cycling at the same interval.
+            delay = max(bounded_header_delay if bounded_header_delay is not None else 0.0, fallback_delay) + jitter
             self._cooldown_until = max(self._cooldown_until, time.monotonic() + delay)
 
         logger.warning("Model rate limit reached for %s; cooling down for %.2fs", key, delay)

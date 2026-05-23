@@ -347,6 +347,8 @@ async def _attach_active_embeddings(chunks: List[Any]) -> None:
             batch = chunks[start : start + batch_size]
             batch_embeddings = await client.embed([chunk.text for chunk in batch])
             embeddings.extend(batch_embeddings)
+            if settings.CLOUD_MODE and settings.CLOUD_EMBED_BATCH_DELAY_S > 0 and start + batch_size < len(chunks):
+                await asyncio.sleep(settings.CLOUD_EMBED_BATCH_DELAY_S)
     finally:
         await client.close()
     if len(embeddings) != len(chunks):

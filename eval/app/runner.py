@@ -58,35 +58,43 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"MedSwin runtime health check failed: {exc}") from exc
 
-        stats = await client.storage_stats()
+        stats = await client.storage_stats(org_id=benchmark_org_id)
         # Root Cause vs Logic: a TREC CDS benchmark that contains only case notes
         # and no literature corpus will trivially retrieve EMR context while never
         # surfacing judged evidence. The logic below fails fast on an invalid corpus
         # so we don't publish misleading low-recall scores from a misprepared org.
-        if cases and str(cases[0].dataset).startswith("pmc/v2/trec-cds"):
+        if cases:
             source_counts = stats.get("source_counts") or {}
             if int(source_counts.get("LIT") or 0) <= 0:
                 raise RuntimeError(
-                    "Benchmark org is missing literature evidence. "
-                    "Run eval/scripts/ingest_trec_pmc.py and rebuild the index before "
-                    "evaluating TREC CDS cases."
+                    f"Benchmark org {benchmark_org_id!r} is missing literature evidence "
+                    "(LIT=0). Run eval/scripts/ingest_trec_pmc.py for that org and rebuild "
+                    "the index before evaluating clinical benchmark cases."
                 )
             if not bool(stats.get("index_exists")):
                 raise RuntimeError(
-                    "Benchmark org is missing the active retrieval index. "
-                    "Run the PMC ingest/build-index step before evaluating TREC CDS cases."
+                    f"Benchmark org {benchmark_org_id!r} is missing the active retrieval index. "
+                    "Run the ingest/build-index step before evaluating benchmark cases."
                 )
 
         preindexed_context = req.ingest_case_context and hasattr(client, "build_index")
         if preindexed_context:
             # Motivation vs Logic: benchmark EMR notes must be visible to dense
             # retrieval, not only stored in Mongo after the ANN index is built.
-            # Ingest all notes first, then rebuild once so chat exercises the
-            # full dense+lexical+rereank MedSwin path.
-            for case in cases:
-                await client.ingest_case_context(case)
+            # Serial note ingestion makes a 510-case rerun spend most of its wall
+            # clock on setup instead of evaluation, so we keep the same bounded
+            # safety envelope as the benchmark chat phase and ingest notes
+            # concurrently before rebuilding the index once.
+            ingest_concurrency = max(1, min(int(req.max_concurrency or 1), 4))
+            ingest_semaphore = asyncio.Semaphore(ingest_concurrency)
+
+            async def bounded_ingest(case: Any) -> None:
+                async with ingest_semaphore:
+                    await client.ingest_case_context(case)
+
+            await asyncio.gather(*(bounded_ingest(case) for case in cases))
             if hasattr(client, "build_index"):
-                await client.build_index(force_rebuild=True)
+                await client.build_index(force_rebuild=True, org_id=benchmark_org_id)
 
         async def process_case(case: Any) -> tuple[int, Any]:
             errors: list[str] = []

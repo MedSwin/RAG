@@ -54,8 +54,8 @@ class Settings(BaseSettings):
     EMBED_TIMEOUT_S: int = 30
     MODEL_RATE_LIMIT_MAX_ATTEMPTS: int = 6
     MODEL_RATE_LIMIT_MAX_CONCURRENCY: int = 2
-    MODEL_RATE_LIMIT_BASE_COOLDOWN_S: float = 2.0
-    MODEL_RATE_LIMIT_MAX_COOLDOWN_S: float = 60.0
+    MODEL_RATE_LIMIT_BASE_COOLDOWN_S: float = 600.0
+    MODEL_RATE_LIMIT_MAX_COOLDOWN_S: float = 1800.0
     MODEL_RATE_LIMIT_JITTER_S: float = 0.25
     
     # Legacy model settings (for backward compatibility)
@@ -152,7 +152,8 @@ class Settings(BaseSettings):
     ALLOWED_FILE_TYPES: List[str] = [".csv", ".json", ".txt", ".pdf"]
 
     # Cloud embedding batch control
-    CLOUD_EMBED_BATCH_SIZE: int = 16
+    CLOUD_EMBED_BATCH_SIZE: int = 64
+    CLOUD_EMBED_BATCH_DELAY_S: float = 60.0
     
     # Logging settings
     LOG_LEVEL: str = "INFO"

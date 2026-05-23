@@ -144,7 +144,8 @@ class StorageService:
         self,
         index_path: Optional[str] = None,
         mapping_path: Optional[str] = None,
-        force_rebuild: bool = False
+        force_rebuild: bool = False,
+        org_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Build HNSW index asynchronously."""
         try:
@@ -167,7 +168,8 @@ class StorageService:
                 self.executor,
                 self._build_hnsw_index_sync,
                 index_path,
-                mapping_path
+                mapping_path,
+                org_id,
             )
             
             return result
@@ -228,10 +230,12 @@ class StorageService:
                             }},
                         )
                         EMBEDDING_REFRESH_STATUS["updated"] += 1
+                    if batch_size > 0 and settings.CLOUD_EMBED_BATCH_DELAY_S > 0:
+                        await asyncio.sleep(settings.CLOUD_EMBED_BATCH_DELAY_S)
             finally:
                 await client.close()
 
-            await self.build_hnsw_index_async(force_rebuild=True)
+            await self.build_hnsw_index_async(force_rebuild=True, org_id=org_id)
             EMBEDDING_REFRESH_STATUS.update({
                 "running": False,
                 "ready": True,
@@ -272,6 +276,7 @@ class StorageService:
         self,
         index_path: str,
         mapping_path: str,
+        org_id: Optional[str] = None,
         index_type: IndexType = IndexType.HNSW
     ) -> Dict[str, Any]:
         """Synchronous index building function using modular index builders."""
@@ -282,7 +287,7 @@ class StorageService:
             
             # Get all chunks with embeddings
             chunks = list(coll.find(
-                self._index_embedding_filter(),
+                self._index_embedding_filter(org_id=org_id),
                 {"chunk_id": 1, "embedding": 1, "embedding_dim": 1, "metadata": 1}
             ))
             
@@ -363,7 +368,10 @@ class StorageService:
             result = builder.build(embeddings, chunk_ids, index_path, mapping_path)
             
             logger.info(
-                f"{index_type.value.upper()} index built: {result['message']}"
+                "%s index built for %s: %s",
+                index_type.value.upper(),
+                org_id or "all orgs",
+                result["message"],
             )
             
             return result
@@ -378,31 +386,34 @@ class StorageService:
                 "message": f"Index building failed: {str(e)}"
             }
 
-    def _index_embedding_filter(self) -> Dict[str, Any]:
+    def _index_embedding_filter(self, org_id: Optional[str] = None) -> Dict[str, Any]:
         filter_dict: Dict[str, Any] = {"embedding": {"$exists": True, "$ne": []}}
         if settings.CLOUD_MODE:
             filter_dict["embedding_space"] = settings.active_embedding_space()
             filter_dict["embedding_model"] = settings.CLOUD_EMBEDDING
             filter_dict["embedding_dim"] = settings.active_embedding_dimension()
+        if org_id:
+            filter_dict["org_id"] = org_id
         return filter_dict
     
-    async def get_storage_stats(self) -> Dict[str, Any]:
+    async def get_storage_stats(self, org_id: Optional[str] = None) -> Dict[str, Any]:
         """Get storage statistics."""
         try:
             db = get_sync_database()
             coll = db['chunks']
+            scope_filter: Dict[str, Any] = {"org_id": org_id} if org_id else {}
             
             # Get basic stats
-            total_chunks = coll.count_documents({})
-            total_embeddings = coll.count_documents({"embedding": {"$exists": True, "$ne": []}})
+            total_chunks = coll.count_documents(scope_filter)
+            total_embeddings = coll.count_documents({**scope_filter, "embedding": {"$exists": True, "$ne": []}})
             source_counts = {
-                "CPG": coll.count_documents({"source_type": "CPG"}),
-                "EMR": coll.count_documents({"source_type": "EMR"}),
-                "LIT": coll.count_documents({"source_type": "LIT"}),
+                "CPG": coll.count_documents({**scope_filter, "source_type": "CPG"}),
+                "EMR": coll.count_documents({**scope_filter, "source_type": "EMR"}),
+                "LIT": coll.count_documents({**scope_filter, "source_type": "LIT"}),
             }
             if settings.CLOUD_MODE:
-                active_embeddings = coll.count_documents(self._index_embedding_filter())
-                stale_embeddings = coll.count_documents(self._stale_embedding_filter())
+                active_embeddings = coll.count_documents(self._index_embedding_filter(org_id=org_id))
+                stale_embeddings = coll.count_documents(self._stale_embedding_filter(org_id=org_id))
             else:
                 active_embeddings = total_embeddings
                 stale_embeddings = 0
@@ -416,7 +427,7 @@ class StorageService:
             last_updated = None
             if total_chunks > 0:
                 last_chunk = coll.find_one(
-                    {},
+                    scope_filter,
                     sort=[("metadata.created_timestamp", -1)]
                 )
                 if last_chunk and 'metadata' in last_chunk:

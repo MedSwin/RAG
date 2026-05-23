@@ -113,10 +113,10 @@ class MedSwinClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def build_index(self, *, force_rebuild: bool = True) -> dict[str, Any]:
+    async def build_index(self, *, force_rebuild: bool = True, org_id: str | None = None) -> dict[str, Any]:
         resp = await self.client.post(
             f"{self.base_url}/api/v1/storage/index/build",
-            json={"force_rebuild": force_rebuild},
+            json={"force_rebuild": force_rebuild, "org_id": org_id},
         )
         resp.raise_for_status()
         return resp.json()
@@ -129,7 +129,8 @@ class MedSwinClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def storage_stats(self) -> dict[str, Any]:
-        resp = await self.client.get(f"{self.base_url}/api/v1/storage/stats")
+    async def storage_stats(self, org_id: str | None = None) -> dict[str, Any]:
+        params = {"org_id": org_id} if org_id else None
+        resp = await self.client.get(f"{self.base_url}/api/v1/storage/stats", params=params)
         resp.raise_for_status()
         return resp.json()

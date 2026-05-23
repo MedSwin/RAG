@@ -13,17 +13,28 @@ from __future__ import annotations
 
 import argparse
 import random
+import time
 from typing import Any, Iterator
 
 import httpx
 import ir_datasets
 
 
-def doc_to_payload(doc: Any) -> dict[str, Any]:
+def doc_to_payload(doc: Any, max_body_chars: int) -> dict[str, Any]:
     title = getattr(doc, "title", "") or "Untitled PMC article"
     abstract = getattr(doc, "abstract", "") or ""
     body = getattr(doc, "body", "") or ""
-    text = f"{title}\n\nAbstract\n{abstract}\n\nBody\n{body}".strip()
+    body_excerpt = body[:max_body_chars].strip()
+    # Motivation vs Logic: PMC full bodies can be extremely long, which
+    # over-spends cloud embedding quota on boilerplate and reference tails.
+    # The ingest payload keeps the abstract plus a bounded body excerpt so the
+    # literature corpus remains evidence-rich while staying within cloud limits.
+    text_parts = [title]
+    if abstract:
+        text_parts.extend(["Abstract", abstract])
+    if body_excerpt:
+        text_parts.extend(["Body excerpt", body_excerpt])
+    text = "\n\n".join(part for part in text_parts if part).strip()
     return {
         "doc_id": str(getattr(doc, "doc_id")),
         "title": title,
@@ -82,6 +93,18 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument(
+        "--max-body-chars",
+        type=int,
+        default=1200,
+        help="Maximum body excerpt length used for each PMC embedding payload.",
+    )
+    parser.add_argument(
+        "--request-delay-s",
+        type=float,
+        default=5.0,
+        help="Delay between ingest POST batches in seconds to stay under cloud embedding quotas.",
+    )
+    parser.add_argument(
         "--timeout-s",
         type=float,
         default=900.0,
@@ -114,12 +137,19 @@ def main() -> None:
             print(resp.json(), flush=True)
 
         for doc in docs_iter:
-            batch.append(doc_to_payload(doc))
+            batch.append(doc_to_payload(doc, args.max_body_chars))
             if len(batch) >= args.batch_size:
                 post_batch(client, base_url, args.org_id, batch)
                 total += len(batch)
                 print(f"ingested {total}", flush=True)
                 batch = []
+                # Root Cause vs Logic: the benchmark corpus runner can emit
+                # back-to-back ingest requests faster than the cloud embedding
+                # deployment releases quota. A small delay between batches keeps
+                # the corpus build from amplifying 429 retries into a long-lived
+                # quota storm.
+                if args.request_delay_s > 0:
+                    time.sleep(args.request_delay_s)
         if batch:
             post_batch(client, base_url, args.org_id, batch)
             total += len(batch)
@@ -137,7 +167,7 @@ def main() -> None:
         if args.build_index:
             resp = client.post(
                 f"{base_url}/api/v1/storage/index/build",
-                json={"force_rebuild": True},
+                json={"force_rebuild": True, "org_id": args.org_id},
                 timeout=max(1800.0, args.timeout_s),
             )
             resp.raise_for_status()

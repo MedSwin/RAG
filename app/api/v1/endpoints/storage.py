@@ -34,6 +34,7 @@ class BuildIndexRequest(BaseModel):
     index_path: Optional[str] = None
     mapping_path: Optional[str] = None
     force_rebuild: bool = False
+    org_id: Optional[str] = None
 
 class BuildIndexResponse(BaseModel):
     """Response model for building HNSW index."""
@@ -127,7 +128,8 @@ async def build_index(
         result = await storage_service.build_hnsw_index_async(
             index_path=index_path,
             mapping_path=mapping_path,
-            force_rebuild=request.force_rebuild
+            force_rebuild=request.force_rebuild,
+            org_id=request.org_id,
         )
         
         return BuildIndexResponse(
@@ -171,10 +173,10 @@ async def reset_benchmark_org(
         raise HTTPException(status_code=500, detail=f"Failed to reset benchmark org: {str(e)}")
 
 @router.get("/stats", response_model=StorageStats)
-async def get_storage_stats(storage_service = Depends(get_storage_service)):
+async def get_storage_stats(org_id: Optional[str] = None, storage_service = Depends(get_storage_service)):
     """Get storage statistics."""
     try:
-        stats = await storage_service.get_storage_stats()
+        stats = await storage_service.get_storage_stats(org_id=org_id)
         return StorageStats(**stats)
         
     except Exception as e:
