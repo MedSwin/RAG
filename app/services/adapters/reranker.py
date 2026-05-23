@@ -86,7 +86,8 @@ class RerankerClient:
                 rate_limit_key=self.rate_limit_key,
                 logger=logger,
                 json=payload,
-                headers=headers
+                headers=headers,
+                fail_open_after_s=120.0,
             )
             response.raise_for_status()
             data = response.json()

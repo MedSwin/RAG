@@ -1,0 +1,209 @@
+{
+  "run_id": "f1ae3f74-45fc-4b82-bc14-2990a5d2746d",
+  "created_at": "2026-05-23T14:10:35.726750+00:00",
+  "dataset": "pmc/v2/trec-cds-2016",
+  "num_cases": 1,
+  "aggregate": {
+    "mean_facet_recall": 0.0,
+    "mean_critical_facet_recall": 0.0,
+    "mean_evidence_doc_recall": 0.0,
+    "mean_citation_precision": 0.0,
+    "mean_trace_completeness": 0.42857142857142855,
+    "mean_sufficiency_decision_score": 1.0,
+    "mean_groundedness_proxy": 0.0,
+    "mean_unsupported_penalty": 1.0,
+    "mean_unsafe_omission_penalty": 1.0,
+    "mean_msas": 0.0,
+    "policy_pass_rate": 0.0,
+    "degraded_rate": 0.0,
+    "error_rate": 1.0
+  },
+  "cases": [
+    {
+      "case_id": "1-r00",
+      "dataset": "pmc/v2/trec-cds-2016",
+      "trace_id": null,
+      "session_id": null,
+      "policy_passed": false,
+      "degraded_mode": null,
+      "answer_chars": 0,
+      "selected_doc_ids": [],
+      "cited_doc_ids": [],
+      "selected_chunk_ids": [],
+      "gold_doc_ids": [
+        "2769390",
+        "2988937",
+        "2990396",
+        "2995092",
+        "2999735",
+        "3081857",
+        "3289029",
+        "3299279",
+        "3354358",
+        "3363052",
+        "3363058",
+        "3371901",
+        "3429740",
+        "3429741",
+        "3429742",
+        "3526517",
+        "3557730",
+        "3613943",
+        "3635127",
+        "3990128"
+      ],
+      "facet_recall": 0.0,
+      "critical_facet_recall": 0.0,
+      "evidence_doc_recall": 0.0,
+      "citation_precision": 0.0,
+      "trace_completeness": 0.42857142857142855,
+      "sufficiency_decision_score": 1.0,
+      "groundedness_proxy": 0.0,
+      "unsupported_penalty": 1.0,
+      "unsafe_omission_penalty": 1.0,
+      "msas": 0.0,
+      "trace_rate_limit_stats": {},
+      "errors": [
+        "case_failed: "
+      ],
+      "raw_response": {
+        "answer": "",
+        "policy_decision": {
+          "passed": false
+        },
+        "citations": [],
+        "evidence_bundle": {}
+      }
+    }
+  ],
+  "config": {
+    "cases_path": "data/trec_cds_2016/cases_510.jsonl",
+    "max_cases": 1,
+    "medswin_base_url": "http://localhost:8100",
+    "benchmark_org_id": "bench-org",
+    "source_policy": "ANY",
+    "guideline_only": false,
+    "min_evidence_grade": 0.3,
+    "clinical_scope": "clinician_cds",
+    "max_concurrency": 4,
+    "reranker_budget": 4,
+    "case_concurrency": 4,
+    "setup_concurrency": 4,
+    "ingest_case_context": true,
+    "fetch_trace_summary": true,
+    "include_patient_context_in_query": false
+  },
+  "diagnostics": {
+    "setup_stats_before": {
+      "total_chunks": 611,
+      "total_embeddings": 611,
+      "source_counts": {
+        "CPG": 0,
+        "EMR": 510,
+        "LIT": 101
+      },
+      "active_embeddings": 611,
+      "stale_embeddings": 0,
+      "cloud_mode": true,
+      "active_embedding_model": "embed-v-4-0",
+      "active_embedding_space": "cloud:embed-v-4-0",
+      "active_embedding_dim": 1536,
+      "embedding_refresh": {
+        "running": false,
+        "ready": false,
+        "updated": 0,
+        "stale": 0,
+        "error": null,
+        "embedding_space": "cloud:embed-v-4-0",
+        "started_at": null,
+        "completed_at": null
+      },
+      "index_exists": true,
+      "index_manifest_path": "data/hnsw_index.bin.manifest.json",
+      "index_manifest": {
+        "org_id": "bench-org",
+        "index_type": "hnsw",
+        "index_path": "./data/hnsw_index.bin",
+        "mapping_path": "./data/hnsw_mapping.json",
+        "manifest_path": "data/hnsw_index.bin.manifest.json",
+        "embedding_space": "cloud:embed-v-4-0",
+        "embedding_model": "embed-v-4-0",
+        "embedding_dim": 1536,
+        "chunk_count": 611,
+        "total_vectors": 611,
+        "source_counts": {
+          "CPG": 0,
+          "EMR": 0,
+          "LIT": 0
+        },
+        "corpus_signature": "42d6bb0252e7ccb6a9796df5925903d5c3be9e04a13e619cfd8a227787780dea",
+        "built_at": "2026-05-23T14:07:16.948210+00:00"
+      },
+      "index_provenance_valid": true,
+      "index_provenance_error": null,
+      "index_size": 3844784,
+      "last_updated": null
+    },
+    "setup_stats_after": {
+      "total_chunks": 611,
+      "total_embeddings": 611,
+      "source_counts": {
+        "CPG": 0,
+        "EMR": 510,
+        "LIT": 101
+      },
+      "active_embeddings": 611,
+      "stale_embeddings": 0,
+      "cloud_mode": true,
+      "active_embedding_model": "embed-v-4-0",
+      "active_embedding_space": "cloud:embed-v-4-0",
+      "active_embedding_dim": 1536,
+      "embedding_refresh": {
+        "running": false,
+        "ready": false,
+        "updated": 0,
+        "stale": 0,
+        "error": null,
+        "embedding_space": "cloud:embed-v-4-0",
+        "started_at": null,
+        "completed_at": null
+      },
+      "index_exists": true,
+      "index_manifest_path": "data/hnsw_index.bin.manifest.json",
+      "index_manifest": {
+        "org_id": "bench-org",
+        "index_type": "hnsw",
+        "index_path": "./data/hnsw_index.bin",
+        "mapping_path": "./data/hnsw_mapping.json",
+        "manifest_path": "data/hnsw_index.bin.manifest.json",
+        "embedding_space": "cloud:embed-v-4-0",
+        "embedding_model": "embed-v-4-0",
+        "embedding_dim": 1536,
+        "chunk_count": 611,
+        "total_vectors": 611,
+        "source_counts": {
+          "CPG": 0,
+          "EMR": 0,
+          "LIT": 0
+        },
+        "corpus_signature": "42d6bb0252e7ccb6a9796df5925903d5c3be9e04a13e619cfd8a227787780dea",
+        "built_at": "2026-05-23T14:07:16.948210+00:00"
+      },
+      "index_provenance_valid": true,
+      "index_provenance_error": null,
+      "index_size": 3844784,
+      "last_updated": null
+    },
+    "case_context_ready": true,
+    "request_stats": {
+      "retries": 0,
+      "rate_limits": 0,
+      "timeouts": 5,
+      "network_errors": 0
+    },
+    "reranker_budget": 4,
+    "case_concurrency": 4,
+    "setup_concurrency": 4,
+    "trace_rate_limit_stats": {}
+  }
+}

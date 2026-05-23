@@ -63,6 +63,28 @@ def _aggregate_rate_limit_stats(cases: list[Any]) -> dict[str, Any]:
     return totals
 
 
+def _case_context_already_materialized(stats: dict[str, Any], benchmark_org_id: str, case_count: int) -> bool:
+    """Return True when the benchmark org already has the expected EMR corpus.
+
+    Root Cause vs Logic: the runner was always re-ingesting benchmark notes even
+    when the fixed benchmark org already held the matching EMR set and a valid
+    provenance-stamped index. That made smoke probes and full audits spend most
+    of their wall clock rebuilding state that was already in place. The logic
+    below treats the existing benchmark corpus as reusable only when the index
+    provenance matches the benchmark org and the EMR chunk count covers the
+    current case set.
+    """
+    if not stats.get("index_exists") or not stats.get("index_provenance_valid"):
+        return False
+    manifest = stats.get("index_manifest") or {}
+    if manifest.get("org_id") != benchmark_org_id:
+        return False
+    if manifest.get("embedding_space") != stats.get("active_embedding_space"):
+        return False
+    source_counts = stats.get("source_counts") or {}
+    return int(source_counts.get("EMR") or 0) >= int(case_count)
+
+
 async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
     cases = read_jsonl_cases(req.cases_path)
     if req.max_cases is not None:
@@ -120,7 +142,9 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
         if cases:
             _validate_setup_stats(setup_stats_before, benchmark_org_id)
 
-        preindexed_context = req.ingest_case_context and hasattr(client, "build_index")
+        case_context_ready = _case_context_already_materialized(setup_stats_before, benchmark_org_id, len(cases))
+        preindexed_context = req.ingest_case_context and hasattr(client, "build_index") and not case_context_ready
+        ingest_case_context_per_case = req.ingest_case_context and not case_context_ready and not preindexed_context
         setup_stats_after = setup_stats_before
         if preindexed_context:
             # Motivation vs Logic: benchmark EMR notes must be visible to dense
@@ -147,7 +171,7 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             response: dict[str, Any] = {}
             trace_summary: dict[str, Any] | None = None
             try:
-                if req.ingest_case_context and not preindexed_context:
+                if ingest_case_context_per_case:
                     await client.ingest_case_context(case)
                 response = await client.chat(
                     case,
@@ -196,6 +220,7 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
     run.diagnostics = {
         "setup_stats_before": setup_stats_before,
         "setup_stats_after": setup_stats_after,
+        "case_context_ready": case_context_ready,
         "request_stats": dict(client.request_stats),
         "reranker_budget": reranker_budget,
         "case_concurrency": case_concurrency,

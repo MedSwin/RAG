@@ -17,17 +17,19 @@ class _FakeClient:
         user_id: str,
         timeout_s: float = 120.0,
         include_patient_context_in_query: bool = False,
+        storage_stats_payload: dict | None = None,
     ):
         self.base_url = base_url
         self.org_id = org_id
         self.user_id = user_id
         self.timeout_s = timeout_s
         self.include_patient_context_in_query = include_patient_context_in_query
+        self.storage_stats_payload = storage_stats_payload
         self.ingest_calls = []
         self.chat_queries = []
         self.trace_calls = []
         self.request_stats = {"retries": 0, "rate_limits": 0, "timeouts": 0, "network_errors": 0}
-        _FakeClient.instances.append(self)
+        type(self).instances.append(self)
 
     async def __aenter__(self):
         return self
@@ -40,6 +42,8 @@ class _FakeClient:
 
     async def storage_stats(self, org_id=None):
         active_settings = RuntimeSettings()
+        if self.storage_stats_payload is not None:
+            return self.storage_stats_payload
         return {
             "source_counts": {"CPG": 0, "EMR": 0, "LIT": 1},
             "index_exists": True,
@@ -116,6 +120,59 @@ async def test_run_benchmark_uses_fixed_org_and_keeps_query_pure(monkeypatch, tm
     assert run.config["reranker_budget"] == 1
     assert run.diagnostics["setup_stats_before"]["index_provenance_valid"] is True
     assert run.diagnostics["request_stats"]["retries"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_benchmark_skips_reingest_when_benchmark_context_is_ready(monkeypatch, tmp_path):
+    class _ReadyClient(_FakeClient):
+        def __init__(self, *args, **kwargs):
+            super().__init__(
+                *args,
+                **kwargs,
+                storage_stats_payload={
+                    "source_counts": {"CPG": 0, "EMR": 1, "LIT": 1},
+                    "index_exists": True,
+                    "index_manifest": {
+                        "org_id": "bench-org",
+                        "embedding_space": RuntimeSettings().active_embedding_space(),
+                        "embedding_model": RuntimeSettings().active_embedding_model(),
+                        "embedding_dim": RuntimeSettings().active_embedding_dimension(),
+                    },
+                    "index_provenance_valid": True,
+                    "active_embedding_space": RuntimeSettings().active_embedding_space(),
+                    "active_embedding_model": RuntimeSettings().active_embedding_model(),
+                    "active_embedding_dim": RuntimeSettings().active_embedding_dimension(),
+                },
+            )
+
+    _ReadyClient.instances = []
+    case = BenchmarkCase(
+        case_id="case-1",
+        dataset="sample",
+        query="What therapy is safest?",
+        patient_id="patient-1",
+        patient_context="Patient context that should already be present in the benchmark org.",
+        gold_facets=[GoldFacet(facet_id="treatment", name="treatment", critical=True)],
+    )
+
+    monkeypatch.setattr("eval.app.runner.read_jsonl_cases", lambda path: [case])
+    monkeypatch.setattr("eval.app.runner.MedSwinClient", _ReadyClient)
+
+    settings = Settings(
+        medswin_base_url="http://medswin.test",
+        benchmark_org_id="bench-org",
+        benchmark_user_id="bench-user",
+        request_timeout_s=5.0,
+        run_store_dir=str(tmp_path),
+        max_cases_default=25,
+    )
+
+    run = await run_benchmark(RunRequest(cases_path="ignored.jsonl"), settings)
+
+    assert run.diagnostics["case_context_ready"] is True
+    assert _ReadyClient.instances[0].ingest_calls == []
+    assert _ReadyClient.instances[0].chat_queries == ["What therapy is safest?"]
+    assert run.cases[0].errors == []
 
 
 def test_trace_completeness_accepts_runtime_plural_count_keys():

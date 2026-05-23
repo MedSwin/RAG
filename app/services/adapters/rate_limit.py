@@ -163,6 +163,7 @@ class AdaptiveModelRateLimiter:
         logger: logging.Logger,
         json: Dict[str, Any],
         headers: Dict[str, str],
+        fail_open_after_s: float | None = None,
     ) -> httpx.Response:
         last_error: Optional[BaseException] = None
         last_response: Optional[httpx.Response] = None
@@ -184,7 +185,16 @@ class AdaptiveModelRateLimiter:
             status_code = getattr(response, "status_code", 200)
             if status_code == 429:
                 last_response = response
-                await self.register_rate_limit(response, key=key, logger=logger)
+                delay = await self.register_rate_limit(response, key=key, logger=logger)
+                if fail_open_after_s is not None and delay >= fail_open_after_s:
+                    # Root Cause vs Logic: long provider cooldowns can block the
+                    # entire benchmark for far longer than the remaining eval
+                    # window. The reranker can safely fail open to the original
+                    # candidate order, which preserves liveness while still
+                    # recording the quota pressure in diagnostics.
+                    raise RuntimeError(
+                        f"Rate limit cooldown {delay:.2f}s exceeds fail-open threshold for {key}"
+                    )
                 continue
 
             if status_code in {500, 502, 503, 504}:
@@ -226,6 +236,7 @@ async def request_with_model_rate_limit(
     logger: logging.Logger,
     json: Dict[str, Any],
     headers: Dict[str, str],
+    fail_open_after_s: float | None = None,
 ) -> httpx.Response:
     """POST through a shared per-model limiter.
 
@@ -243,6 +254,7 @@ async def request_with_model_rate_limit(
         logger=logger,
         json=json,
         headers=headers,
+        fail_open_after_s=fail_open_after_s,
     )
 
 
