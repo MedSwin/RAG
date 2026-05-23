@@ -31,7 +31,7 @@ if str(EVAL_ROOT) not in sys.path:
     sys.path.insert(0, str(EVAL_ROOT))
 
 from app.io import write_jsonl
-from benchmark_facets import benchmark_facet_templates
+from facets import benchmark_facet_templates
 
 
 def topic_text(query: Any) -> str:

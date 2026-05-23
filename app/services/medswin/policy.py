@@ -24,7 +24,7 @@ from app.models.medswin import (
     SufficiencyCheck,
 )
 from app.services.medswin.governance import clamp, evidence_grade_from_metadata
-from benchmark_facets import benchmark_required_facets
+from facets import benchmark_required_facets
 
 logger = logging.getLogger(__name__)
 

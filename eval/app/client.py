@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from benchmark_facets import benchmark_required_facets
+from facets import benchmark_required_facets
 from .schemas import BenchmarkCase
 
 
