@@ -4,25 +4,8 @@ from typing import Any
 
 import httpx
 
+from benchmark_facets import benchmark_required_facets
 from .schemas import BenchmarkCase
-
-
-QUERY_TYPE_FACET_KEYWORDS = {
-    "diagnosis": {
-        "diagnosis evidence": ["diagnosis", "evidence", "symptom", "findings", "assessment", "differential"],
-        "patient applicability": ["patient", "age", "history", "comorbidity", "allergy", "medication"],
-    },
-    "test": {
-        "test indication": ["test", "indication", "diagnostic", "screening", "workup"],
-        "patient applicability": ["patient", "age", "history", "comorbidity", "allergy", "pregnancy"],
-        "test risks or limitations": ["risk", "limitation", "contraindication", "false positive", "false negative"],
-    },
-    "treatment": {
-        "treatment recommendation evidence": ["treatment", "recommendation", "management", "therapy", "dose"],
-        "safety contraindications or adverse risks": ["safety", "contraindication", "adverse", "risk", "avoid", "interaction"],
-        "patient applicability": ["patient", "age", "history", "comorbidity", "allergy", "medication"],
-    },
-}
 
 
 class MedSwinClient:
@@ -102,18 +85,7 @@ class MedSwinClient:
 
     async def chat(self, case: BenchmarkCase, *, source_policy: str, guideline_only: bool, min_evidence_grade: float, clinical_scope: str) -> dict[str, Any]:
         patient_id = case.patient_id or f"patient-{case.case_id}"
-        required_facets = []
-        query_type_key = (case.query_type or "").lower()
-        facet_keyword_map = QUERY_TYPE_FACET_KEYWORDS.get(query_type_key, {})
-        for facet in case.gold_facets:
-            facet_payload = facet.model_dump()
-            # Root Cause vs Logic: older benchmark case files only stored facet names,
-            # which left the policy engine with empty keywords and zero-valued support
-            # scores. The logic below preserves richer facet metadata when available and
-            # backfills a small benchmark keyword set so sufficiency scoring can operate.
-            if not facet_payload.get("keywords"):
-                facet_payload["keywords"] = facet_keyword_map.get(facet.name, [])
-            required_facets.append(facet_payload)
+        required_facets = benchmark_required_facets(case.query_type, case.gold_facets)
 
         constraints = {
             "clinical_scope": clinical_scope,
@@ -154,5 +126,10 @@ class MedSwinClient:
             f"{self.base_url}/api/v1/medswin/traces/{trace_id}",
             params={"org_id": self.org_id, "include_details": str(include_details).lower()},
         )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def storage_stats(self) -> dict[str, Any]:
+        resp = await self.client.get(f"{self.base_url}/api/v1/storage/stats")
         resp.raise_for_status()
         return resp.json()

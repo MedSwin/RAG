@@ -150,6 +150,9 @@ class Settings(BaseSettings):
     # File upload settings
     MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
     ALLOWED_FILE_TYPES: List[str] = [".csv", ".json", ".txt", ".pdf"]
+
+    # Cloud embedding batch control
+    CLOUD_EMBED_BATCH_SIZE: int = 16
     
     # Logging settings
     LOG_LEVEL: str = "INFO"

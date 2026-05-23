@@ -57,6 +57,7 @@ class StorageStats(BaseModel):
     """Model for storage statistics."""
     total_chunks: int
     total_embeddings: int
+    source_counts: Dict[str, int] = Field(default_factory=dict)
     active_embeddings: int = 0
     stale_embeddings: int = 0
     cloud_mode: bool = False

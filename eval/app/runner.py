@@ -58,6 +58,25 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"MedSwin runtime health check failed: {exc}") from exc
 
+        stats = await client.storage_stats()
+        # Root Cause vs Logic: a TREC CDS benchmark that contains only case notes
+        # and no literature corpus will trivially retrieve EMR context while never
+        # surfacing judged evidence. The logic below fails fast on an invalid corpus
+        # so we don't publish misleading low-recall scores from a misprepared org.
+        if cases and str(cases[0].dataset).startswith("pmc/v2/trec-cds"):
+            source_counts = stats.get("source_counts") or {}
+            if int(source_counts.get("LIT") or 0) <= 0:
+                raise RuntimeError(
+                    "Benchmark org is missing literature evidence. "
+                    "Run eval/scripts/ingest_trec_pmc.py and rebuild the index before "
+                    "evaluating TREC CDS cases."
+                )
+            if not bool(stats.get("index_exists")):
+                raise RuntimeError(
+                    "Benchmark org is missing the active retrieval index. "
+                    "Run the PMC ingest/build-index step before evaluating TREC CDS cases."
+                )
+
         preindexed_context = req.ingest_case_context and hasattr(client, "build_index")
         if preindexed_context:
             # Motivation vs Logic: benchmark EMR notes must be visible to dense

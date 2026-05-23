@@ -189,6 +189,7 @@ class StorageService:
             return EMBEDDING_REFRESH_STATUS.copy()
 
         batch_size = batch_size or settings.BATCH_SIZE
+        batch_size = max(1, min(int(batch_size), int(settings.CLOUD_EMBED_BATCH_SIZE)))
         EMBEDDING_REFRESH_STATUS.update({
             "running": True,
             "ready": False,
@@ -394,6 +395,11 @@ class StorageService:
             # Get basic stats
             total_chunks = coll.count_documents({})
             total_embeddings = coll.count_documents({"embedding": {"$exists": True, "$ne": []}})
+            source_counts = {
+                "CPG": coll.count_documents({"source_type": "CPG"}),
+                "EMR": coll.count_documents({"source_type": "EMR"}),
+                "LIT": coll.count_documents({"source_type": "LIT"}),
+            }
             if settings.CLOUD_MODE:
                 active_embeddings = coll.count_documents(self._index_embedding_filter())
                 stale_embeddings = coll.count_documents(self._stale_embedding_filter())
@@ -419,6 +425,7 @@ class StorageService:
             return {
                 "total_chunks": total_chunks,
                 "total_embeddings": total_embeddings,
+                "source_counts": source_counts,
                 "active_embeddings": active_embeddings,
                 "stale_embeddings": stale_embeddings,
                 "cloud_mode": settings.CLOUD_MODE,

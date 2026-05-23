@@ -31,76 +31,7 @@ if str(EVAL_ROOT) not in sys.path:
     sys.path.insert(0, str(EVAL_ROOT))
 
 from app.io import write_jsonl
-
-
-QUERY_TYPE_TO_FACETS = {
-    # Motivation vs Logic: the benchmark needs enough facet vocabulary for the
-    # runtime's deterministic sufficiency gate to recognize support signals. We
-    # keep the facet templates compact, but seed benchmark-friendly keywords so
-    # older case files still exercise the intended policy path.
-    "diagnosis": [
-        {
-            "facet_id": "dx",
-            "name": "diagnosis evidence",
-            "weight": 1.0,
-            "critical": True,
-            "keywords": ["diagnosis", "evidence", "symptom", "findings", "assessment", "differential"],
-        },
-        {
-            "facet_id": "patient_fit",
-            "name": "patient applicability",
-            "weight": 1.0,
-            "critical": True,
-            "keywords": ["patient", "age", "history", "comorbidity", "allergy", "medication"],
-        },
-    ],
-    "test": [
-        {
-            "facet_id": "test_indication",
-            "name": "test indication",
-            "weight": 1.0,
-            "critical": True,
-            "keywords": ["test", "indication", "diagnostic", "screening", "workup"],
-        },
-        {
-            "facet_id": "patient_fit",
-            "name": "patient applicability",
-            "weight": 1.0,
-            "critical": True,
-            "keywords": ["patient", "age", "history", "comorbidity", "allergy", "pregnancy"],
-        },
-        {
-            "facet_id": "risk",
-            "name": "test risks or limitations",
-            "weight": 0.75,
-            "critical": False,
-            "keywords": ["risk", "limitation", "contraindication", "false positive", "false negative"],
-        },
-    ],
-    "treatment": [
-        {
-            "facet_id": "treatment",
-            "name": "treatment recommendation evidence",
-            "weight": 1.0,
-            "critical": True,
-            "keywords": ["treatment", "recommendation", "management", "therapy", "dose"],
-        },
-        {
-            "facet_id": "safety",
-            "name": "safety contraindications or adverse risks",
-            "weight": 1.2,
-            "critical": True,
-            "keywords": ["safety", "contraindication", "adverse", "risk", "avoid", "interaction"],
-        },
-        {
-            "facet_id": "patient_fit",
-            "name": "patient applicability",
-            "weight": 1.0,
-            "critical": True,
-            "keywords": ["patient", "age", "history", "comorbidity", "allergy", "medication"],
-        },
-    ],
-}
+from benchmark_facets import benchmark_facet_templates
 
 
 def topic_text(query: Any) -> str:
@@ -164,10 +95,7 @@ def prepare(dataset_name: str, out_path: str, max_topics: int | None, max_docs_p
         qtype = str(getattr(query, "type", "clinical")).lower()
         patient_context = get_patient_context(query)
         gold_docs = select_gold_docs(qid, qrels_by_qid, relevance_by_qid, max_docs_per_topic)
-        facets = QUERY_TYPE_TO_FACETS.get(qtype, [
-            {"facet_id": "clinical_evidence", "name": "clinically relevant evidence", "weight": 1.0, "critical": True},
-            {"facet_id": "patient_fit", "name": "patient applicability", "weight": 1.0, "critical": True},
-        ])
+        facets = benchmark_facet_templates(qtype)
         # Attach relevant doc ids to all generated facets. For publication-grade
         # evaluation, replace this weak mapping with clinician facet-level labels.
         for facet in facets:

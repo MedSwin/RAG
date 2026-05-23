@@ -338,7 +338,10 @@ async def _attach_active_embeddings(chunks: List[Any]) -> None:
         # Motivation vs Logic: the embeddings service accepts batched input,
         # so we preserve throughput by attaching vectors in moderate batches
         # rather than issuing one request per article or one giant payload.
-        batch_size = max(int(settings.BATCH_SIZE), 1)
+        # Cloud providers are especially sensitive to oversized embedding
+        # requests, so we cap the batch size lower in cloud mode to favor
+        # reliable corpus builds over peak throughput.
+        batch_size = max(1, int(settings.CLOUD_EMBED_BATCH_SIZE if settings.CLOUD_MODE else settings.BATCH_SIZE))
         embeddings = []
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start : start + batch_size]

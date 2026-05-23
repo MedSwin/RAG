@@ -100,7 +100,7 @@ class RetrievalPipeline:
         self.tokenizer = tiktoken.get_encoding("cl100k_base")  # For token counting
         
         # BM25 cache (per org_id)
-        self._bm25_cache: Dict[str, BM25Okapi] = {}
+        self._bm25_cache: Dict[str, Dict[str, Any]] = {}
     
     async def retrieve(
         self,
@@ -159,8 +159,20 @@ class RetrievalPipeline:
         
         # Normalize scores
         self._normalize_scores(all_candidates)
-        
-        return all_candidates[:k]  # Return top K
+
+        # Root Cause vs Logic: the old code sliced the merged candidate pool
+        # before reranking based on an arbitrary list order, which could discard
+        # high-value literature chunks and keep only the first few dense hits.
+        # Logic: return the full retrieved pool so later reranking and MMR can
+        # choose evidence by score rather than insertion order.
+        all_candidates.sort(
+            key=lambda c: (
+                c.dense_score or 0.0,
+                c.lexical_score or 0.0,
+            ),
+            reverse=True,
+        )
+        return all_candidates
     
     async def _dense_retrieval(
         self,
@@ -270,9 +282,11 @@ class RetrievalPipeline:
         """Perform BM25 lexical retrieval."""
         try:
             # Get or build BM25 index for org
-            bm25 = await self._get_bm25_index(org_id, source_type_filter, patient_id, constraints)
-            if not bm25:
+            bm25_bundle = await self._get_bm25_index(org_id, source_type_filter, patient_id, constraints)
+            if not bm25_bundle:
                 return []
+            bm25 = bm25_bundle["bm25"]
+            chunk_ids = bm25_bundle["chunk_ids"]
             
             # Tokenize query
             query_tokens = query.lower().split()
@@ -286,17 +300,20 @@ class RetrievalPipeline:
             # Fetch chunks
             db = get_database()
             filter_dict = self._retrieval_filter(org_id, source_type_filter, patient_id, constraints)
-            
             chunks_cursor = db.chunks.find(filter_dict)
             chunks = await chunks_cursor.to_list(length=None)
+            chunk_map = {chunk["chunk_id"]: chunk for chunk in chunks if chunk.get("chunk_id")}
             
             # Create candidate passages
             candidates = []
             for idx in top_indices:
-                if idx < len(chunks) and scores[idx] > 0:
-                    chunk = chunks[idx]
+                if idx < len(chunk_ids) and scores[idx] > 0:
+                    chunk_id = chunk_ids[idx]
+                    chunk = chunk_map.get(chunk_id)
+                    if not chunk:
+                        continue
                     candidates.append(CandidatePassage(
-                        chunk_id=chunk["chunk_id"],
+                        chunk_id=chunk_id,
                         doc_id=chunk.get("doc_id", ""),
                         source_type=SourceType(chunk.get("source_type", "CPG")),
                         text=chunk.get("text", chunk.get("content", "")),
@@ -340,8 +357,13 @@ class RetrievalPipeline:
                 return None
             
             # Tokenize texts
+            chunk_ids: list[str] = []
             tokenized_texts = []
             for chunk in chunks:
+                chunk_id = chunk.get("chunk_id")
+                if not chunk_id:
+                    continue
+                chunk_ids.append(chunk_id)
                 if chunk.get("tokenized_text"):
                     tokenized_texts.append(chunk["tokenized_text"])
                 else:
@@ -351,9 +373,9 @@ class RetrievalPipeline:
             
             # Build BM25 index
             bm25 = BM25Okapi(tokenized_texts)
-            self._bm25_cache[cache_key] = bm25
-            
-            return bm25
+            self._bm25_cache[cache_key] = {"bm25": bm25, "chunk_ids": chunk_ids}
+
+            return self._bm25_cache[cache_key]
             
         except Exception as e:
             logger.error(f"Failed to build BM25 index: {e}")
@@ -391,12 +413,22 @@ class RetrievalPipeline:
         # evidence from patient-scoped benchmarks. The logic now only hard-filters by
         # patient_id when the request is explicitly EMR-only or the caller opts into
         # patient-scope-only retrieval; otherwise patient_id remains a ranking/context cue.
+        # For mixed-source CDS runs we still keep EMR evidence patient-scoped so the
+        # benchmark cannot accidentally retrieve another patient's note as if it were
+        # supporting literature.
         if patient_id and (
             source_type_filter == SourceType.EMR
             or str(source_policy).upper() == "EMR_ONLY"
             or constraints.get("patient_scope_only") is True
         ):
             filter_dict["patient_id"] = patient_id
+        elif patient_id:
+            filter_dict["$and"] = filter_dict.get("$and", []) + [
+                {"$or": [
+                    {"source_type": {"$ne": SourceType.EMR.value}},
+                    {"patient_id": patient_id},
+                ]}
+            ]
 
         if settings.CLOUD_MODE:
             filter_dict["embedding_space"] = settings.active_embedding_space()

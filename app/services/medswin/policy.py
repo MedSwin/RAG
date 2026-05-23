@@ -24,6 +24,7 @@ from app.models.medswin import (
     SufficiencyCheck,
 )
 from app.services.medswin.governance import clamp, evidence_grade_from_metadata
+from benchmark_facets import benchmark_required_facets
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class EvidenceSufficiencyPolicy:
         constraints = constraints or {}
         explicit_facets = constraints.get("required_facets") or []
         if explicit_facets:
-            return [self._coerce_facet(item) for item in explicit_facets]
+            return [self._coerce_facet(item) for item in benchmark_required_facets(None, explicit_facets)]
 
         if query_spec and query_spec.facets:
             return query_spec.facets
