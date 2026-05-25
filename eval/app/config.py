@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     benchmark_random_seed: int = Field(default=1337, alias="BENCHMARK_RANDOM_SEED")
     benchmark_corpus_sample_size: int = Field(default=5000, alias="BENCHMARK_CORPUS_SAMPLE_SIZE")
     benchmark_max_topics: int = Field(default=30, alias="BENCHMARK_MAX_TOPICS")
+    benchmark_min_gold_corpus_recall: float = Field(default=0.95, alias="BENCHMARK_MIN_GOLD_CORPUS_RECALL")
+    benchmark_min_gold_index_recall: float = Field(default=0.95, alias="BENCHMARK_MIN_GOLD_INDEX_RECALL")
 
 
 @lru_cache

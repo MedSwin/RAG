@@ -111,27 +111,76 @@ def doc_to_payload(doc: Any, max_body_tokens: int, max_total_tokens: int) -> dic
     }
 
 
-def iter_docs(dataset: Any, limit: int | None, sample_size: int, seed: int) -> Iterator[Any]:
+def load_gold_doc_ids(cases_path: str | None) -> set[str]:
+    if not cases_path:
+        return set()
+    path = Path(cases_path)
+    doc_ids: set[str] = set()
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            for doc_id in row.get("gold_doc_ids") or []:
+                text = str(doc_id).strip()
+                if text:
+                    doc_ids.add(text)
+    return doc_ids
+
+
+def iter_docs(
+    dataset: Any,
+    limit: int | None,
+    sample_size: int,
+    seed: int,
+    priority_doc_ids: set[str] | None = None,
+    require_priority_docs: bool = False,
+) -> Iterator[Any]:
     """Yield either first-N docs or a deterministic random sample."""
-    if limit is not None:
+    priority_doc_ids = priority_doc_ids or set()
+    if not priority_doc_ids and limit is not None:
         for idx, doc in enumerate(dataset.docs_iter()):
             if idx >= limit:
                 break
             yield doc
         return
 
-    # Motivation vs Logic: fixed-size benchmark corpora should be reproducible
-    # without depending on upstream document ordering alone. Reservoir sampling
-    # gives a deterministic random 5000-doc subset while streaming large PMC.
+    # Motivation vs Logic: final TREC CDS audits must include the judged qrel
+    # pool before any hard-negative sampling. A random-only PMC subset can be
+    # stable but still omit nearly every gold article, which makes the benchmark
+    # prove safe abstention rather than clinical RAG.
     rng = random.Random(seed)
     reservoir: list[Any] = []
+    priority_docs: list[Any] = []
+    seen_priority: set[str] = set()
     for idx, doc in enumerate(dataset.docs_iter()):
-        if idx < sample_size:
+        doc_id = str(getattr(doc, "doc_id"))
+        if doc_id in priority_doc_ids:
+            priority_docs.append(doc)
+            seen_priority.add(doc_id)
+            continue
+        if limit is not None:
+            if len(reservoir) < limit:
+                reservoir.append(doc)
+            continue
+        if len(reservoir) < sample_size:
             reservoir.append(doc)
             continue
         replacement = rng.randint(0, idx)
         if replacement < sample_size:
             reservoir[replacement] = doc
+
+    missing_priority = sorted(priority_doc_ids - seen_priority)
+    if missing_priority and require_priority_docs:
+        raise RuntimeError(
+            f"{len(missing_priority)} judged qrel documents were not found in the PMC dataset; "
+            f"sample={missing_priority[:20]}"
+        )
+    if missing_priority:
+        print({"warning": "missing_priority_doc_ids", "count": len(missing_priority), "sample": missing_priority[:20]}, flush=True)
+
+    for doc in priority_docs:
+        yield doc
     for doc in reservoir:
         yield doc
 
@@ -190,6 +239,8 @@ def main() -> None:
     parser.add_argument("--dataset", default="pmc/v2")
     parser.add_argument("--limit", type=int, default=None, help="Ingest first N docs for smoke tests.")
     parser.add_argument("--sample-size", type=int, default=5000)
+    parser.add_argument("--cases-path", default=None, help="Benchmark cases JSONL; gold_doc_ids are ingested before negatives.")
+    parser.add_argument("--require-judged-docs", action="store_true", help="Fail if any case gold_doc_ids are absent from the PMC dataset.")
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument(
@@ -224,7 +275,17 @@ def main() -> None:
     args = parser.parse_args()
 
     dataset = ir_datasets.load(args.dataset)
-    docs_iter = iter_docs(dataset, args.limit, args.sample_size, args.seed)
+    priority_doc_ids = load_gold_doc_ids(args.cases_path)
+    if priority_doc_ids:
+        print({"priority_judged_doc_ids": len(priority_doc_ids), "cases_path": args.cases_path}, flush=True)
+    docs_iter = iter_docs(
+        dataset,
+        args.limit,
+        args.sample_size,
+        args.seed,
+        priority_doc_ids=priority_doc_ids,
+        require_priority_docs=args.require_judged_docs,
+    )
     base_url = args.medswin_base_url.rstrip("/")
     batch: list[dict[str, Any]] = []
     total = 0
@@ -254,6 +315,8 @@ def main() -> None:
             print(resp.json(), flush=True)
             if checkpoint_file.exists() and args.resume:
                 checkpoint_file.unlink()
+            completed_doc_ids = set()
+            total = 0
 
         for doc in docs_iter:
             doc_id = str(getattr(doc, "doc_id"))

@@ -72,6 +72,7 @@ class StorageStats(BaseModel):
     index_provenance_valid: bool = False
     index_provenance_error: Optional[str] = None
     index_size: Optional[int] = None
+    active_doc_ids: List[str] = Field(default_factory=list)
     last_updated: Optional[datetime] = None
 
 def get_storage_service():

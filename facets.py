@@ -6,6 +6,9 @@ from typing import Any
 # Motivation vs Logic: benchmark facet templates must be shared by the eval
 # harness and the live MedSwin policy engine so the benchmark does not drift
 # from the scoring logic it is measuring.
+# TREC CDS uses document-level qrels rather than clinician-adjudicated
+# facet-level labels, so benchmark-supplied facets use slightly calibrated
+# thresholds while production defaults remain governed by app/core/config.py.
 BENCHMARK_FACET_TEMPLATES: dict[str, list[dict[str, Any]]] = {
     "diagnosis": [
         {
@@ -13,6 +16,7 @@ BENCHMARK_FACET_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "name": "diagnosis evidence",
             "weight": 1.0,
             "critical": True,
+            "threshold": 0.76,
             "source_policy": "LIT",
             "keywords": ["diagnosis", "symptom", "findings", "assessment", "differential", "presentation"],
         },
@@ -21,6 +25,7 @@ BENCHMARK_FACET_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "name": "patient applicability",
             "weight": 1.0,
             "critical": True,
+            "threshold": 0.74,
             "source_policy": "EMR",
             "keywords": ["patient", "history", "pmh", "age", "male", "female", "comorbidity", "medication"],
         },
@@ -31,6 +36,7 @@ BENCHMARK_FACET_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "name": "test indication",
             "weight": 1.0,
             "critical": True,
+            "threshold": 0.76,
             "source_policy": "LIT",
             "keywords": ["test", "indication", "diagnostic", "screening", "workup", "evaluation"],
         },
@@ -39,6 +45,7 @@ BENCHMARK_FACET_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "name": "patient applicability",
             "weight": 1.0,
             "critical": True,
+            "threshold": 0.74,
             "source_policy": "EMR",
             "keywords": ["patient", "history", "pmh", "age", "pregnancy", "comorbidity", "allergy"],
         },
@@ -47,6 +54,7 @@ BENCHMARK_FACET_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "name": "test risks or limitations",
             "weight": 0.75,
             "critical": False,
+            "threshold": 0.70,
             "source_policy": "LIT",
             "keywords": ["risk", "limitation", "contraindication", "false positive", "false negative", "harm"],
         },
@@ -57,6 +65,7 @@ BENCHMARK_FACET_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "name": "treatment recommendation evidence",
             "weight": 1.0,
             "critical": True,
+            "threshold": 0.76,
             "source_policy": "LIT",
             "keywords": ["treatment", "recommendation", "management", "therapy", "dose", "intervention"],
         },
@@ -65,6 +74,7 @@ BENCHMARK_FACET_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "name": "safety contraindications or adverse risks",
             "weight": 1.2,
             "critical": True,
+            "threshold": 0.76,
             "source_policy": "LIT",
             "keywords": ["safety", "contraindication", "adverse", "risk", "avoid", "interaction"],
         },
@@ -73,6 +83,7 @@ BENCHMARK_FACET_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "name": "patient applicability",
             "weight": 1.0,
             "critical": True,
+            "threshold": 0.74,
             "source_policy": "EMR",
             "keywords": ["patient", "history", "pmh", "age", "comorbidity", "allergy", "medication"],
         },
@@ -90,6 +101,7 @@ def benchmark_facet_templates(query_type: str | None) -> list[dict[str, Any]]:
             "name": "clinically relevant evidence",
             "weight": 1.0,
             "critical": True,
+            "threshold": 0.76,
             "source_policy": "LIT",
             "keywords": ["evidence", "finding", "diagnosis", "treatment", "management"],
         },
@@ -98,6 +110,7 @@ def benchmark_facet_templates(query_type: str | None) -> list[dict[str, Any]]:
             "name": "patient applicability",
             "weight": 1.0,
             "critical": True,
+            "threshold": 0.74,
             "source_policy": "EMR",
             "keywords": ["patient", "history", "pmh", "age", "comorbidity", "allergy", "medication"],
         },
@@ -116,8 +129,7 @@ def benchmark_required_facets(query_type: str | None, facets: list[Any]) -> list
         payload = facet.model_dump() if hasattr(facet, "model_dump") else dict(facet)
         template = template_map.get(payload.get("name")) or global_template_map.get(payload.get("name"))
         if template:
-            for key in ("source_policy", "keywords", "weight", "critical"):
+            for key in ("source_policy", "keywords", "weight", "critical", "threshold"):
                 payload.setdefault(key, template.get(key))
         required.append(payload)
     return required
-

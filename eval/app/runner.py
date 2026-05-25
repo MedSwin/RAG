@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,71 @@ from .config import Settings
 from .io import read_jsonl_cases, write_json
 from .client import MedSwinClient
 from .schemas import RunAudit, RunRequest
+
+
+def _gold_doc_ids(cases: list[Any]) -> set[str]:
+    doc_ids: set[str] = set()
+    for case in cases:
+        for doc_id in getattr(case, "gold_doc_ids", []) or []:
+            text = str(doc_id).strip()
+            if text:
+                doc_ids.add(text)
+    return doc_ids
+
+
+def _indexed_doc_ids(stats: dict[str, Any]) -> set[str]:
+    manifest = stats.get("index_manifest") or {}
+    doc_ids = manifest.get("doc_ids") or []
+    if not isinstance(doc_ids, list):
+        return set()
+    return {str(doc_id).strip() for doc_id in doc_ids if str(doc_id).strip()}
+
+
+def _qrel_corpus_diagnostics(cases: list[Any], stats: dict[str, Any]) -> dict[str, Any]:
+    """Summarize whether TREC qrels are actually present in the active corpus.
+
+    Root Cause vs Logic: prior 510-case runs could start with a valid-looking
+    index that contained few or no judged PMC documents. The benchmark then
+    measured safe abstention instead of end-to-end RAG. This preflight exposes
+    the qrel/corpus overlap before the run spends cloud quota.
+    """
+    gold_doc_ids = _gold_doc_ids(cases)
+    stats_gold = set(str(doc_id).strip() for doc_id in (stats.get("gold_doc_ids_present") or stats.get("active_doc_ids") or []) if str(doc_id).strip())
+    indexed = _indexed_doc_ids(stats)
+    corpus_overlap = gold_doc_ids & stats_gold if stats_gold else set()
+    index_overlap = gold_doc_ids & indexed if indexed else set()
+    return {
+        "gold_doc_count": len(gold_doc_ids),
+        "gold_docs_present_in_corpus": len(corpus_overlap) if stats_gold else None,
+        "gold_docs_present_in_index": len(index_overlap) if indexed else None,
+        "gold_corpus_recall": (len(corpus_overlap) / len(gold_doc_ids)) if gold_doc_ids and stats_gold else None,
+        "gold_index_recall": (len(index_overlap) / len(gold_doc_ids)) if gold_doc_ids and indexed else None,
+        "missing_gold_doc_ids_sample": sorted(gold_doc_ids - (stats_gold or indexed))[:20],
+    }
+
+
+def _validate_qrel_coverage(diagnostics: dict[str, Any], *, min_corpus_recall: float, min_index_recall: float) -> None:
+    gold_count = int(diagnostics.get("gold_doc_count") or 0)
+    if gold_count <= 0:
+        return
+    errors: list[str] = []
+    corpus_recall = diagnostics.get("gold_corpus_recall")
+    index_recall = diagnostics.get("gold_index_recall")
+    if corpus_recall is None:
+        errors.append("benchmark runtime did not report active corpus doc ids for qrel coverage")
+    elif float(corpus_recall) < min_corpus_recall:
+        errors.append(f"gold corpus recall {float(corpus_recall):.3f} is below required {min_corpus_recall:.3f}")
+    if index_recall is None:
+        errors.append("index manifest did not report doc ids for qrel coverage")
+    elif float(index_recall) < min_index_recall:
+        errors.append(f"gold index recall {float(index_recall):.3f} is below required {min_index_recall:.3f}")
+    if errors:
+        sample = diagnostics.get("missing_gold_doc_ids_sample") or []
+        raise RuntimeError(
+            "Benchmark qrel coverage validation failed: "
+            + "; ".join(errors)
+            + (f"; missing sample={sample}" if sample else "")
+        )
 
 
 def _validate_setup_stats(stats: dict[str, Any], benchmark_org_id: str) -> None:
@@ -37,6 +103,12 @@ def _validate_setup_stats(stats: dict[str, Any], benchmark_org_id: str) -> None:
         errors.append("index embedding model does not match the active embedding model")
     if manifest and int(manifest.get("embedding_dim") or 0) != int(stats.get("active_embedding_dim") or 0):
         errors.append("index embedding dimension does not match the active embedding dimension")
+    if manifest and stats.get("active_embeddings") is not None and int(manifest.get("total_vectors") or 0) != int(stats.get("active_embeddings") or 0):
+        errors.append("index vector count does not match active benchmark-org embeddings")
+    if manifest and "source_counts" in manifest:
+        manifest_sources = manifest.get("source_counts") or {}
+        if int(manifest_sources.get("LIT") or 0) <= 0 and int(source_counts.get("LIT") or 0) > 0:
+            errors.append("index manifest reports no LIT vectors despite benchmark LIT corpus")
     if stats.get("index_provenance_error"):
         errors.append(str(stats["index_provenance_error"]))
 
@@ -139,8 +211,14 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             raise RuntimeError(f"MedSwin runtime health check failed: {exc}") from exc
 
         setup_stats_before = await client.storage_stats(org_id=benchmark_org_id)
+        setup_qrel_before = _qrel_corpus_diagnostics(cases, setup_stats_before)
         if cases:
             _validate_setup_stats(setup_stats_before, benchmark_org_id)
+            _validate_qrel_coverage(
+                setup_qrel_before,
+                min_corpus_recall=settings.benchmark_min_gold_corpus_recall,
+                min_index_recall=settings.benchmark_min_gold_index_recall,
+            )
 
         case_context_ready = _case_context_already_materialized(setup_stats_before, benchmark_org_id, len(cases))
         preindexed_context = req.ingest_case_context and hasattr(client, "build_index") and not case_context_ready
@@ -165,6 +243,19 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
                 await client.build_index(force_rebuild=True, org_id=benchmark_org_id)
             setup_stats_after = await client.storage_stats(org_id=benchmark_org_id)
             _validate_setup_stats(setup_stats_after, benchmark_org_id)
+        setup_qrel_after = _qrel_corpus_diagnostics(cases, setup_stats_after)
+        if cases:
+            _validate_qrel_coverage(
+                setup_qrel_after,
+                min_corpus_recall=settings.benchmark_min_gold_corpus_recall,
+                min_index_recall=settings.benchmark_min_gold_index_recall,
+            )
+        available_doc_ids = {
+            str(doc_id).strip()
+            for doc_id in (setup_stats_after.get("active_doc_ids") or [])
+            if str(doc_id).strip()
+        }
+        indexed_doc_ids = _indexed_doc_ids(setup_stats_after)
 
         async def process_case(case: Any) -> tuple[int, Any]:
             errors: list[str] = []
@@ -190,7 +281,14 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"case_failed: {exc}")
                 response = {"answer": "", "policy_decision": {"passed": False}, "citations": [], "evidence_bundle": {}}
-            return 0, audit_case(case, response, trace_summary, errors=errors)
+            return 0, audit_case(
+                case,
+                response,
+                trace_summary,
+                errors=errors,
+                available_doc_ids=available_doc_ids or None,
+                indexed_doc_ids=indexed_doc_ids or None,
+            )
 
         if case_concurrency == 1:
             for case in cases:
@@ -220,11 +318,14 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
     run.diagnostics = {
         "setup_stats_before": setup_stats_before,
         "setup_stats_after": setup_stats_after,
+        "qrel_corpus_before": setup_qrel_before,
+        "qrel_corpus_after": setup_qrel_after,
         "case_context_ready": case_context_ready,
         "request_stats": dict(client.request_stats),
         "reranker_budget": reranker_budget,
         "case_concurrency": case_concurrency,
         "setup_concurrency": setup_concurrency,
+        "failure_buckets": dict(Counter(case.failure_bucket for case in run.cases if case.failure_bucket)),
         "trace_rate_limit_stats": _aggregate_rate_limit_stats(run.cases),
     }
     output_path = Path(settings.run_store_dir) / f"{run_id}.json"

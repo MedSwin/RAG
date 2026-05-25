@@ -53,7 +53,12 @@ class CaseAudit(BaseModel):
     selected_doc_ids: list[str] = Field(default_factory=list)
     cited_doc_ids: list[str] = Field(default_factory=list)
     selected_chunk_ids: list[str] = Field(default_factory=list)
+    selected_source_counts: dict[str, int] = Field(default_factory=dict)
     gold_doc_ids: list[str] = Field(default_factory=list)
+    gold_available_in_corpus: int | None = None
+    gold_available_in_index: int | None = None
+    gold_available_but_not_retrieved: bool | None = None
+    failure_bucket: str | None = None
     facet_recall: float = 0.0
     critical_facet_recall: float = 0.0
     evidence_doc_recall: float = 0.0

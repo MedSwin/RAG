@@ -329,8 +329,9 @@ class MedSwinOrchestrator:
         trace: AuditTrace
     ) -> EvidenceBundle:
         """Retrieve evidence with sufficiency loop."""
+        retrieval_query = await self._patient_aware_retrieval_query(query, org_id, patient_id, constraints, trace)
         # Generate query embedding
-        embeddings = await self.embedding_client.embed([query])
+        embeddings = await self.embedding_client.embed([retrieval_query])
         query_embedding = embeddings[0] if embeddings else None
         
         if query_embedding is None:
@@ -358,7 +359,7 @@ class MedSwinOrchestrator:
         while iteration < settings.MAX_RETRIEVE_LOOPS:
             # Retrieve candidates
             candidates = await self.retrieval_pipeline.retrieve(
-                query=query,
+                query=retrieval_query,
                 query_embedding=query_embedding,
                 org_id=org_id,
                 source_type_filter=source_type_filter,
@@ -368,7 +369,7 @@ class MedSwinOrchestrator:
             )
             
             # Rerank
-            candidates = await self.retrieval_pipeline.rerank(query, candidates)
+            candidates = await self.retrieval_pipeline.rerank(retrieval_query, candidates)
             
             # Compute fusion scores
             candidates = self.retrieval_pipeline.compute_fusion_scores(candidates)
@@ -447,6 +448,49 @@ class MedSwinOrchestrator:
         trace.evidence_bundle = evidence_bundle
         
         return evidence_bundle
+
+    async def _patient_aware_retrieval_query(
+        self,
+        query: str,
+        org_id: str,
+        patient_id: Optional[str],
+        constraints: Optional[Dict[str, Any]],
+        trace: AuditTrace,
+    ) -> str:
+        """Build retrieval-only patient context without changing the chat query.
+
+        Motivation vs Logic: TREC CDS relevance depends on the patient note, but
+        stuffing the note into `/medswin/chat` would blur prompt augmentation
+        with retrieval quality. This helper uses a short EMR synopsis only for
+        dense/BM25 retrieval, while the final answer still receives the original
+        clinician query and selected evidence.
+        """
+        if not patient_id or (constraints or {}).get("disable_patient_retrieval_context"):
+            return query
+        try:
+            chunks = await self.chunk_repo.get_by_patient_id(patient_id, org_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Patient retrieval-context lookup failed: %s", exc)
+            return query
+        emr_chunks = [
+            chunk for chunk in chunks
+            if str(chunk.get("source_type", "")).upper() == SourceType.EMR.value and (chunk.get("text") or chunk.get("content"))
+        ]
+        if not emr_chunks:
+            return query
+        text = " ".join(" ".join(str(chunk.get("text") or chunk.get("content") or "").split()) for chunk in emr_chunks[:3])
+        synopsis = " ".join(text.split()[:140])
+        if not synopsis:
+            return query
+        trace.messages.append(
+            AgentMessage(
+                role="system",
+                agent_id="retrieval",
+                model_endpoint="patient_context_lookup",
+                content=f"Built retrieval-only patient synopsis from {len(emr_chunks)} EMR chunks.",
+            )
+        )
+        return f"{query}\n\nPatient retrieval context:\n{redact_phi_text(synopsis)}"
     
     async def _summarize_emr(
         self,
@@ -482,6 +526,7 @@ class MedSwinOrchestrator:
             )
             
             summary_data = extract_json_object(response["content"])
+            summary_data = self._coerce_emr_summary_data(summary_data)
             emr_summary = EMRSummary(patient_id=patient_id, **summary_data)
             
             trace.messages.append(AgentMessage(
@@ -497,6 +542,26 @@ class MedSwinOrchestrator:
         except Exception as e:
             logger.warning(f"EMR summarization failed: {e}")
             return EMRSummary()
+
+    def _coerce_emr_summary_data(self, summary_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Coerce common LLM schema drift in EMR summaries.
+
+        Root Cause vs Logic: cloud chat models sometimes emit `timeline` as a
+        list of strings even when the schema requests objects. We preserve the
+        useful clinical text by wrapping each item in a small event dictionary
+        instead of discarding the whole EMR summary.
+        """
+        data = dict(summary_data or {})
+        timeline = data.get("timeline")
+        if isinstance(timeline, list):
+            coerced = []
+            for item in timeline:
+                if isinstance(item, dict):
+                    coerced.append(item)
+                elif item:
+                    coerced.append({"event": str(item)})
+            data["timeline"] = coerced
+        return data
     
     async def _synthesize_guidelines(
         self,

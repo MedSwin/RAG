@@ -224,13 +224,24 @@ class EvidenceSufficiencyPolicy:
         text = passage.text.lower()
         explicit_scores = passage.facet_scores or passage.metadata.get("facet_scores", {})
         scores: Dict[str, float] = {}
+        diagnostics: Dict[str, Dict[str, Any]] = {}
         for facet in facets:
             if facet.name in explicit_scores:
                 scores[facet.name] = clamp(explicit_scores[facet.name])
+                diagnostics[facet.name] = {
+                    "score": scores[facet.name],
+                    "source_policy": facet.source_policy,
+                    "source_type": passage.source_type.value,
+                    "source_policy_match": self._source_policy_score(passage.source_type, facet.source_policy) > 0.0,
+                    "keyword_hits": None,
+                    "matched_keywords": [],
+                    "scoring_path": "explicit",
+                }
                 continue
 
             source_bonus = self._source_policy_score(passage.source_type, facet.source_policy)
-            keyword_hits = sum(1 for keyword in facet.keywords if keyword.lower() in text)
+            matched_keywords = [keyword for keyword in facet.keywords if keyword.lower() in text]
+            keyword_hits = len(matched_keywords)
             keyword_score = min(0.65, keyword_hits * 0.18)
             section_score = passage.section_score if passage.section_score is not None else 0.5
             safety_bonus = 0.25 if facet.name == "safety_contraindications" and self._safety_score(passage) > 0.0 else 0.0
@@ -238,7 +249,19 @@ class EvidenceSufficiencyPolicy:
                 scores[facet.name] = 0.0
             else:
                 scores[facet.name] = clamp(0.20 + source_bonus + keyword_score + 0.15 * section_score + safety_bonus)
+            diagnostics[facet.name] = {
+                "score": scores[facet.name],
+                "source_policy": facet.source_policy,
+                "source_type": passage.source_type.value,
+                "source_policy_match": source_bonus > 0.0,
+                "keyword_hits": keyword_hits,
+                "matched_keywords": matched_keywords,
+                "section_score": section_score,
+                "safety_bonus": safety_bonus,
+                "scoring_path": "heuristic",
+            }
         passage.facet_scores = scores
+        passage.metadata["facet_diagnostics"] = diagnostics
         return scores
 
     def compute_facet_coverage(

@@ -91,3 +91,11 @@ def test_query_spec_coercion_recovers_malformed_llm_fields():
     assert spec.facets[0].threshold == 0.70
     assert spec.facets[0].weight == 1.25
     assert spec.facets[0].keywords == ["therapy"]
+
+
+def test_emr_summary_coercion_wraps_timeline_strings():
+    orchestrator = MedSwinOrchestrator(embedding_client=FakeEmbeddingClient(), reranker_client=None)
+
+    data = orchestrator._coerce_emr_summary_data({"timeline": ["Admitted for melena.", {"event": "CABG history"}]})
+
+    assert data["timeline"] == [{"event": "Admitted for melena."}, {"event": "CABG history"}]

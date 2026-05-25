@@ -156,6 +156,22 @@ class RetrievalPipeline:
         
         # Union candidates
         all_candidates = self._union_candidates(dense_candidates, lexical_candidates)
+
+        # Motivation vs Logic: clinician CDS requests often need both patient
+        # context and literature. A single mixed-source ANN query can be
+        # dominated by the patient note and starve the LIT facet, so ANY-source
+        # runs add bounded per-source probes before reranking/selection.
+        if self._should_source_balance(source_type_filter, constraints):
+            balanced_candidates = await self._source_balanced_retrieval(
+                query=query,
+                query_embedding=query_embedding,
+                org_id=org_id,
+                k=max(1, k // 2),
+                patient_id=patient_id,
+                hints=hints,
+                constraints=constraints,
+            )
+            all_candidates = self._union_candidates(all_candidates, balanced_candidates)
         
         # Normalize scores
         self._normalize_scores(all_candidates)
@@ -173,6 +189,37 @@ class RetrievalPipeline:
             reverse=True,
         )
         return all_candidates
+
+    def _should_source_balance(
+        self,
+        source_type_filter: Optional[SourceType],
+        constraints: Optional[Dict[str, Any]],
+    ) -> bool:
+        if source_type_filter is not None:
+            return False
+        constraints = constraints or {}
+        return str(constraints.get("source_policy") or "ANY").upper() == "ANY"
+
+    async def _source_balanced_retrieval(
+        self,
+        query: str,
+        query_embedding: np.ndarray,
+        org_id: str,
+        k: int,
+        patient_id: Optional[str],
+        hints: Optional[Dict[str, Any]],
+        constraints: Optional[Dict[str, Any]],
+    ) -> List[CandidatePassage]:
+        balanced: List[CandidatePassage] = []
+        for source_type in (SourceType.LIT, SourceType.EMR):
+            source_constraints = dict(constraints or {})
+            source_constraints["source_policy"] = f"{source_type.value}_ONLY"
+            dense = await self._dense_retrieval(query_embedding, org_id, k, source_type, patient_id, source_constraints)
+            lexical = []
+            if settings.ENABLE_BM25:
+                lexical = await self._lexical_retrieval(query, org_id, k, source_type, patient_id, source_constraints)
+            balanced.extend(self._union_candidates(dense, lexical))
+        return balanced
     
     async def _dense_retrieval(
         self,
@@ -716,7 +763,67 @@ class RetrievalPipeline:
                 break
 
         self._preserve_critical_safety_evidence(selected, remaining, token_budget)
+        self._preserve_required_source_evidence(selected, remaining, token_budget, facets)
         return selected
+
+    def _preserve_required_source_evidence(
+        self,
+        selected: List[CandidatePassage],
+        remaining: List[CandidatePassage],
+        token_budget: int,
+        facets: Optional[List[ClinicalFacet]],
+    ) -> None:
+        """Protect evidence for required source-specific facets.
+
+        Root Cause vs Logic: the benchmark showed selected bundles collapsing to
+        EMR-only even when LIT evidence existed. The selector now preserves the
+        strongest candidate for each required source policy represented by the
+        facet contract, while still obeying the token budget.
+        """
+        if not facets or not remaining:
+            return
+        required_sources = {
+            str(facet.source_policy).upper()
+            for facet in facets
+            if facet.required and facet.source_policy and str(facet.source_policy).upper() in {"LIT", "EMR", "CPG"}
+        }
+        if not required_sources:
+            return
+        selected_sources = {item.source_type.value for item in selected}
+        current_tokens = sum(self._token_count(item) for item in selected)
+        for source in sorted(required_sources - selected_sources):
+            candidates = [
+                item for item in remaining
+                if item.source_type.value == source and item.chunk_id not in {selected_item.chunk_id for selected_item in selected}
+            ]
+            if not candidates:
+                continue
+            item = max(candidates, key=lambda c: (max((c.facet_scores or {}).values(), default=0.0), c.fusion_score or 0.0))
+            tokens = self._token_count(item)
+            if current_tokens + tokens <= token_budget and len(selected) < settings.MMR_MAX_EVIDENCE_CHUNKS:
+                item.selected_reason = f"protected_required_source={source}"
+                selected.append(item)
+                current_tokens += tokens
+                continue
+            source_counts: Dict[str, int] = {}
+            for candidate in selected:
+                source_counts[candidate.source_type.value] = source_counts.get(candidate.source_type.value, 0) + 1
+            replaceable = [
+                candidate for candidate in selected
+                if candidate.source_type.value != source
+                and (
+                    candidate.source_type.value not in required_sources
+                    or source_counts.get(candidate.source_type.value, 0) > 1
+                )
+            ]
+            if replaceable:
+                victim = min(replaceable, key=lambda candidate: candidate.fusion_score or 0.0)
+                projected = current_tokens - self._token_count(victim) + tokens
+                if projected <= token_budget:
+                    selected.remove(victim)
+                    item.selected_reason = f"protected_required_source={source}"
+                    selected.append(item)
+                    current_tokens = projected
 
     def _preserve_critical_safety_evidence(
         self,

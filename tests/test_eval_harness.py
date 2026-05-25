@@ -1,9 +1,9 @@
 import pytest
 
 from app.core.config import Settings as RuntimeSettings
-from eval.app.audit import groundedness_proxy, trace_completeness
+from eval.app.audit import audit_case, groundedness_proxy, trace_completeness
 from eval.app.config import Settings
-from eval.app.runner import _validate_setup_stats, run_benchmark
+from eval.app.runner import _validate_qrel_coverage, _validate_setup_stats, run_benchmark
 from eval.app.schemas import BenchmarkCase, GoldFacet, RunRequest
 
 
@@ -233,4 +233,101 @@ def test_validate_setup_stats_rejects_foreign_or_stale_index():
                 "active_embedding_dim": RuntimeSettings().active_embedding_dimension(),
             },
             "bench-org",
+        )
+
+
+def test_validate_setup_stats_rejects_incomplete_lit_index():
+    active_settings = RuntimeSettings()
+    with pytest.raises(RuntimeError, match="LIT vectors|vector count"):
+        _validate_setup_stats(
+            {
+                "source_counts": {"CPG": 0, "EMR": 0, "LIT": 10},
+                "active_embeddings": 10,
+                "index_exists": True,
+                "index_manifest": {
+                    "org_id": "bench-org",
+                    "embedding_space": active_settings.active_embedding_space(),
+                    "embedding_model": active_settings.active_embedding_model(),
+                    "embedding_dim": active_settings.active_embedding_dimension(),
+                    "total_vectors": 2,
+                    "source_counts": {"CPG": 0, "EMR": 0, "LIT": 0},
+                },
+                "active_embedding_space": active_settings.active_embedding_space(),
+                "active_embedding_model": active_settings.active_embedding_model(),
+                "active_embedding_dim": active_settings.active_embedding_dimension(),
+            },
+            "bench-org",
+        )
+
+
+def test_audit_case_reports_qrel_availability_and_failure_bucket():
+    case = BenchmarkCase(
+        case_id="case-1",
+        dataset="sample",
+        query="Clinical question",
+        gold_doc_ids=["gold-1"],
+        gold_facets=[GoldFacet(facet_id="clinical", name="clinical", critical=True, gold_doc_ids=["gold-1"])],
+    )
+    audit = audit_case(
+        case,
+        {
+            "answer": "Insufficient evidence.",
+            "trace_id": "trace-1",
+            "policy_decision": {"passed": False},
+            "citations": [{"doc_id": "emr-1", "source_type": "EMR"}],
+            "evidence_bundle": {
+                "passages": [{"doc_id": "emr-1", "chunk_id": "emr-1_chunk_0", "source_type": "EMR"}],
+                "evidence_ledger": [],
+            },
+        },
+        {"messages_count": 1, "sufficiency_checks_count": 1},
+        available_doc_ids={"gold-1"},
+        indexed_doc_ids={"gold-1"},
+    )
+
+    assert audit.gold_available_in_corpus == 1
+    assert audit.gold_available_in_index == 1
+    assert audit.gold_available_but_not_retrieved is True
+    assert audit.selected_source_counts["EMR"] == 1
+    assert audit.failure_bucket == "no_literature_retrieved"
+
+
+def test_audit_case_uses_case_qrels_when_facet_qrels_are_stale():
+    case = BenchmarkCase(
+        case_id="case-1",
+        dataset="sample",
+        query="Clinical question",
+        gold_doc_ids=["gold-1"],
+        gold_facets=[GoldFacet(facet_id="clinical", name="clinical", critical=True, gold_doc_ids=["stale-1"])],
+    )
+    audit = audit_case(
+        case,
+        {
+            "answer": "Grounded answer.",
+            "trace_id": "trace-1",
+            "policy_decision": {"passed": True},
+            "citations": [{"doc_id": "gold-1", "source_type": "LIT"}],
+            "evidence_bundle": {
+                "passages": [{"doc_id": "gold-1", "chunk_id": "gold-1_chunk_0", "source_type": "LIT"}],
+                "evidence_ledger": [],
+            },
+        },
+        {"messages_count": 1, "sufficiency_checks_count": 1},
+    )
+
+    assert audit.facet_recall == 1.0
+    assert audit.critical_facet_recall == 1.0
+
+
+def test_validate_qrel_coverage_rejects_missing_judged_pool():
+    with pytest.raises(RuntimeError, match="qrel coverage"):
+        _validate_qrel_coverage(
+            {
+                "gold_doc_count": 10,
+                "gold_corpus_recall": 0.2,
+                "gold_index_recall": 0.0,
+                "missing_gold_doc_ids_sample": ["doc-1"],
+            },
+            min_corpus_recall=0.95,
+            min_index_recall=0.95,
         )

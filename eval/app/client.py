@@ -10,6 +10,10 @@ from facets import benchmark_required_facets
 from .schemas import BenchmarkCase
 
 
+def _truncate_words(text: str, max_words: int) -> str:
+    return " ".join(str(text or "").split()[:max_words]).strip()
+
+
 class MedSwinClient:
     def __init__(
         self,
@@ -60,6 +64,7 @@ class MedSwinClient:
         if not case.patient_context:
             return None
         patient_id = case.patient_id or f"patient-{case.case_id}"
+        note_excerpt = _truncate_words(case.patient_context, 900)
         payload = [
             {
                 "doc_id": f"{case.dataset}:{case.case_id}:note",
@@ -79,6 +84,22 @@ class MedSwinClient:
                     "query_type": case.query_type,
                 },
                 "text": case.patient_context,
+                # Root Cause vs Logic: raw TREC admission notes can exceed the
+                # evidence token budget as a single chunk, making patient
+                # applicability unselectable even after successful EMR
+                # retrieval. The benchmark keeps the full note on the document
+                # but materializes a compact retrieval chunk that can fit beside
+                # literature evidence.
+                "chunks": [
+                    {
+                        "chunk_id": f"{case.dataset}:{case.case_id}:note_chunk_0",
+                        "text": note_excerpt,
+                        "section": "patient_context_excerpt",
+                        "offset_start": 0,
+                        "offset_end": len(note_excerpt),
+                        "metadata": {"benchmark_patient_context_excerpt": True},
+                    }
+                ],
             }
         ]
         return await self._request_json(

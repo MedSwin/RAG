@@ -351,7 +351,7 @@ class StorageService:
             # Get all chunks with embeddings
             chunks = list(coll.find(
                 self._index_embedding_filter(org_id=org_id),
-                {"chunk_id": 1, "embedding": 1, "embedding_dim": 1, "metadata": 1}
+                {"chunk_id": 1, "doc_id": 1, "source_type": 1, "embedding": 1, "embedding_dim": 1, "metadata": 1}
             ))
             
             if not chunks:
@@ -447,6 +447,7 @@ class StorageService:
                     "EMR": sum(1 for chunk in chunks if chunk.get("source_type") == "EMR"),
                     "LIT": sum(1 for chunk in chunks if chunk.get("source_type") == "LIT"),
                 },
+                "doc_ids": sorted({str(chunk.get("doc_id")) for chunk in chunks if chunk.get("doc_id")}),
                 "corpus_signature": _corpus_signature(
                     chunk_ids,
                     org_id or "all",
@@ -515,12 +516,31 @@ class StorageService:
             index_exists = index_path.exists()
             manifest_path = _index_manifest_path(index_path)
             index_manifest = self._read_index_manifest(index_path) if index_exists else None
+            active_index_chunks = list(coll.find(
+                self._index_embedding_filter(org_id=org_id),
+                {"chunk_id": 1, "doc_id": 1},
+            ))
+            active_chunk_ids = [str(chunk.get("chunk_id")) for chunk in active_index_chunks if chunk.get("chunk_id")]
+            active_doc_ids = sorted({str(chunk.get("doc_id")) for chunk in active_index_chunks if chunk.get("doc_id")})
+            active_signature = _corpus_signature(active_chunk_ids, org_id or "all", settings.active_embedding_space())
             index_provenance_valid = self._manifest_matches_active_scope(index_manifest, org_id)
+            if index_manifest:
+                index_provenance_valid = (
+                    index_provenance_valid
+                    and int(index_manifest.get("total_vectors") or 0) == len(active_chunk_ids)
+                    and index_manifest.get("corpus_signature") == active_signature
+                )
             index_provenance_error = None
             if index_exists and not index_manifest:
                 index_provenance_error = "missing index provenance manifest"
             elif index_exists and not index_provenance_valid:
                 index_provenance_error = "index provenance does not match active org or embedding space"
+                if index_manifest and int(index_manifest.get("total_vectors") or 0) != len(active_chunk_ids):
+                    index_provenance_error = "index vector count does not match active benchmark corpus"
+                elif index_manifest and index_manifest.get("corpus_signature") != active_signature:
+                    index_provenance_error = "index corpus signature is stale"
+            if index_manifest:
+                index_manifest.setdefault("doc_ids", active_doc_ids if index_provenance_valid else index_manifest.get("doc_ids", []))
             index_size = index_path.stat().st_size if index_exists else None
             
             # Get last updated timestamp
@@ -550,6 +570,7 @@ class StorageService:
                 "index_provenance_valid": index_provenance_valid,
                 "index_provenance_error": index_provenance_error,
                 "index_size": index_size,
+                "active_doc_ids": active_doc_ids,
                 "last_updated": last_updated
             }
             

@@ -69,7 +69,58 @@ def extract_doc_ids(response: dict[str, Any]) -> tuple[list[str], list[str], lis
     return sorted(set(selected_doc_ids)), sorted(set(cited_doc_ids)), sorted(set(selected_chunk_ids))
 
 
-def facet_recall(gold_facets: list[GoldFacet], evidence_doc_ids: set[str], *, critical_only: bool = False) -> float:
+def selected_source_counts(response: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {"CPG": 0, "EMR": 0, "LIT": 0}
+    bundle = response.get("evidence_bundle") or {}
+    for key in ("passages", "evidence", "selected_passages", "chunks", "items"):
+        items = bundle.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source_type") or item.get("source") or "").upper()
+            if source in counts:
+                counts[source] += 1
+        if sum(counts.values()) > 0:
+            break
+    return counts
+
+
+def _failure_bucket(
+    *,
+    selected_counts: dict[str, int],
+    gold_available_in_corpus: int | None,
+    gold_available_in_index: int | None,
+    evidence_doc_recall: float,
+    critical_facet_recall: float,
+    policy_passed: bool | None,
+    errors: list[str],
+) -> str | None:
+    if errors:
+        return "trace_or_runtime_failure"
+    if (gold_available_in_corpus or 0) == 0:
+        return "qrel_doc_absent_from_corpus"
+    if gold_available_in_index is not None and gold_available_in_index == 0:
+        return "qrel_doc_absent_from_index"
+    if selected_counts.get("LIT", 0) == 0:
+        return "no_literature_retrieved"
+    if evidence_doc_recall <= 0.0:
+        return "literature_retrieved_but_no_qrel_overlap"
+    if critical_facet_recall <= 0.0:
+        return "selected_evidence_not_facet_supported"
+    if policy_passed is False:
+        return "policy_threshold_failure"
+    return None
+
+
+def facet_recall(
+    gold_facets: list[GoldFacet],
+    evidence_doc_ids: set[str],
+    *,
+    critical_only: bool = False,
+    fallback_gold_doc_ids: set[str] | None = None,
+) -> float:
     facets = [f for f in gold_facets if (f.critical or not critical_only)]
     if critical_only:
         facets = [f for f in gold_facets if f.critical]
@@ -81,6 +132,12 @@ def facet_recall(gold_facets: list[GoldFacet], evidence_doc_ids: set[str], *, cr
         weight = max(0.0, facet.weight)
         total += weight
         gold = set(facet.gold_doc_ids)
+        if fallback_gold_doc_ids and (not gold or gold.isdisjoint(fallback_gold_doc_ids)):
+            # Root Cause vs Logic: some generated 510-case shards carry
+            # case-level qrels that differ from auto-seeded facet qrels. When
+            # that happens, facet recall should use the case qrel bundle rather
+            # than scoring against stale facet labels.
+            gold = fallback_gold_doc_ids
         # If a facet has no doc-level labels, do not penalize it in this automatic pass.
         if not gold:
             earned += weight
@@ -150,16 +207,26 @@ def groundedness_proxy(response: dict[str, Any], cited_doc_ids: set[str]) -> tup
     return 0.25, 0.75
 
 
-def audit_case(case: BenchmarkCase, response: dict[str, Any], trace_summary: dict[str, Any] | None = None, errors: list[str] | None = None) -> CaseAudit:
+def audit_case(
+    case: BenchmarkCase,
+    response: dict[str, Any],
+    trace_summary: dict[str, Any] | None = None,
+    errors: list[str] | None = None,
+    available_doc_ids: set[str] | None = None,
+    indexed_doc_ids: set[str] | None = None,
+) -> CaseAudit:
     selected_doc_ids, cited_doc_ids, selected_chunk_ids = extract_doc_ids(response)
+    selected_counts = selected_source_counts(response)
     evidence_doc_ids = set(selected_doc_ids) | set(cited_doc_ids)
     gold_doc_ids = set(case.gold_doc_ids)
+    available_gold = len(gold_doc_ids & available_doc_ids) if available_doc_ids is not None else None
+    indexed_gold = len(gold_doc_ids & indexed_doc_ids) if indexed_doc_ids is not None else None
 
     evidence_doc_recall = len(gold_doc_ids & evidence_doc_ids) / len(gold_doc_ids) if gold_doc_ids else 1.0
     citation_precision = len(set(cited_doc_ids) & gold_doc_ids) / len(set(cited_doc_ids)) if cited_doc_ids and gold_doc_ids else (1.0 if cited_doc_ids else 0.0)
 
-    f_recall = facet_recall(case.gold_facets, evidence_doc_ids, critical_only=False)
-    cf_recall = facet_recall(case.gold_facets, evidence_doc_ids, critical_only=True)
+    f_recall = facet_recall(case.gold_facets, evidence_doc_ids, critical_only=False, fallback_gold_doc_ids=gold_doc_ids)
+    cf_recall = facet_recall(case.gold_facets, evidence_doc_ids, critical_only=True, fallback_gold_doc_ids=gold_doc_ids)
 
     policy_decision = response.get("policy_decision") or {}
     policy_passed = _as_bool(policy_decision)
@@ -202,7 +269,22 @@ def audit_case(case: BenchmarkCase, response: dict[str, Any], trace_summary: dic
         selected_doc_ids=selected_doc_ids,
         cited_doc_ids=cited_doc_ids,
         selected_chunk_ids=selected_chunk_ids,
+        selected_source_counts=selected_counts,
         gold_doc_ids=sorted(gold_doc_ids),
+        gold_available_in_corpus=available_gold,
+        gold_available_in_index=indexed_gold,
+        gold_available_but_not_retrieved=(
+            available_gold is not None and available_gold > 0 and evidence_doc_recall <= 0.0
+        ),
+        failure_bucket=_failure_bucket(
+            selected_counts=selected_counts,
+            gold_available_in_corpus=available_gold,
+            gold_available_in_index=indexed_gold,
+            evidence_doc_recall=evidence_doc_recall,
+            critical_facet_recall=cf_recall,
+            policy_passed=policy_passed,
+            errors=errors or [],
+        ),
         facet_recall=f_recall,
         critical_facet_recall=cf_recall,
         evidence_doc_recall=evidence_doc_recall,
@@ -243,6 +325,8 @@ def aggregate_run(run: RunAudit) -> RunAudit:
     agg["policy_pass_rate"] = passed.get(True, 0) / len(run.cases)
     agg["degraded_rate"] = sum(1 for c in run.cases if c.degraded_mode) / len(run.cases)
     agg["error_rate"] = sum(1 for c in run.cases if c.errors) / len(run.cases)
+    buckets = Counter(c.failure_bucket for c in run.cases if c.failure_bucket)
+    run.diagnostics["failure_buckets"] = dict(buckets)
     run.aggregate = agg
     run.num_cases = len(run.cases)
     return run

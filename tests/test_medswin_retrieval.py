@@ -56,3 +56,38 @@ def test_budgeted_selection_protects_safety_and_limits_redundancy():
 
     assert "safety" in selected_ids
     assert len(selected_ids) == 2
+
+
+def test_budgeted_selection_preserves_required_literature_source():
+    pipeline = RetrievalPipeline()
+    facets = [
+        ClinicalFacet(
+            name="treatment recommendation evidence",
+            required=True,
+            source_policy="LIT",
+            keywords=["treatment", "therapy"],
+        ),
+        ClinicalFacet(
+            name="patient applicability",
+            required=True,
+            source_policy="EMR",
+            keywords=["patient", "history"],
+        ),
+    ]
+    candidates = [
+        _candidate("emr", "Patient history and medication context.", source_type=SourceType.EMR, rerank=0.92),
+        _candidate("lit", "Treatment therapy evidence from literature.", source_type=SourceType.LIT, rerank=0.64),
+        _candidate("background", "Generic background.", source_type=SourceType.CPG, rerank=0.90),
+    ]
+    scored = pipeline.compute_fusion_scores(candidates)
+    for candidate in scored:
+        candidate.facet_scores = {
+            facet.name: (0.9 if candidate.source_type.value == facet.source_policy else 0.0)
+            for facet in facets
+        }
+
+    selected = pipeline.select_with_mmr(scored, np.array([1.0]), max_chunks=2, token_budget=200, facets=facets)
+    selected_sources = {item.source_type for item in selected}
+
+    assert SourceType.LIT in selected_sources
+    assert SourceType.EMR in selected_sources
