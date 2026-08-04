@@ -50,5 +50,3 @@ docs/MedSwin.tex
 __pycache__*
 .pytest_cache*
 .venv*
-# Local paper source (not published to GitHub)
-docs/MedSwin.tex
