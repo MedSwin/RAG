@@ -1,0 +1,9 @@
+{
+  "emr": {"a": 8, "b": 2},
+  "guideline": {"a": 8, "b": 2},
+  "safety": {"a": 10, "b": 2},
+  "quality": {"a": 6, "b": 2},
+  "critic": {"a": 7, "b": 2},
+  "synthesis": {"a": 8, "b": 2},
+  "retrieval": {"a": 9, "b": 2}
+}

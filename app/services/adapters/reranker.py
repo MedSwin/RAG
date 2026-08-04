@@ -4,7 +4,7 @@ import httpx
 import logging
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
-from app.services.adapters.rate_limit import request_with_model_rate_limit
+from app.services.adapters.limiter import request_with_model_rate_limit
 
 logger = logging.getLogger(__name__)
 

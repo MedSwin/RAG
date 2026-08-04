@@ -5,14 +5,15 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from datetime import timezone
+import asyncio
 import logging
 import uuid
 
-from app.services.medswin.orchestrator import MedSwinOrchestrator
+from app.medswin.orchestrator import MedSwinOrchestrator
 from app.services.adapters.embedding import EmbeddingClient
 from app.services.adapters.reranker import RerankerClient
 from app.core.config import settings
-from app.models.medswin import ChatResponse, AuditTrace
+from app.schemas import ChatResponse, AuditTrace
 from app.services.medswin.governance import redacted_trace_summary
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,17 @@ class TraceResponse(BaseModel):
     policy_decisions: Optional[List[Dict[str, Any]]] = None
     facet_coverage: Optional[List[Dict[str, Any]]] = None
     contradictions: Optional[List[Dict[str, Any]]] = None
+    facet_matrix: Optional[Dict[str, Any]] = None
+    contradiction_ledger: Optional[Dict[str, Any]] = None
+    sufficiency_decision: Optional[Dict[str, Any]] = None
+    answer_provenance: Optional[Dict[str, Any]] = None
+    retrieval_traces: Optional[List[Dict[str, Any]]] = None
+    rerank_traces: Optional[List[Dict[str, Any]]] = None
+    evidence_ledger: Optional[List[Dict[str, Any]]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    final_answer: Optional[str] = None
+    citations: Optional[List[Dict[str, Any]]] = None
+    degraded_mode: Optional[Dict[str, Any]] = None
 
 
 # Global orchestrator instance (can be dependency-injected in production)
@@ -163,6 +175,17 @@ async def get_trace(
             policy_decisions=summary.get("policy_decisions"),
             facet_coverage=summary.get("facet_coverage"),
             contradictions=summary.get("contradictions"),
+            facet_matrix=summary.get("facet_matrix"),
+            contradiction_ledger=summary.get("contradiction_ledger"),
+            sufficiency_decision=summary.get("sufficiency_decision"),
+            answer_provenance=summary.get("answer_provenance"),
+            retrieval_traces=summary.get("retrieval_traces"),
+            rerank_traces=summary.get("rerank_traces"),
+            evidence_ledger=summary.get("evidence_ledger"),
+            tool_calls=summary.get("tool_calls"),
+            final_answer=summary.get("final_answer"),
+            citations=summary.get("citations"),
+            degraded_mode=summary.get("degraded_mode"),
         )
     except HTTPException:
         raise

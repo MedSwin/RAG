@@ -1,12 +1,3 @@
-"""MedSwin services."""
+"""MedSwin service helpers (import concrete modules to avoid circular imports)."""
 
-from app.services.medswin.policy import EvidenceSufficiencyPolicy
-from app.services.medswin.retrieval import RetrievalPipeline
-from app.services.medswin.orchestrator import MedSwinOrchestrator
-
-__all__ = [
-    "EvidenceSufficiencyPolicy",
-    "RetrievalPipeline",
-    "MedSwinOrchestrator",
-]
-
+__all__: list[str] = []

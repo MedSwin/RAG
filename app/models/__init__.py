@@ -4,7 +4,7 @@ Model manager utilities should be imported from their concrete modules to avoid
 pulling optional ML/runtime dependencies into lightweight app tests.
 """
 
-from app.models.medswin import (
+from app.schemas import (
     QuerySpec,
     CandidatePassage,
     RerankScore,
@@ -17,6 +17,9 @@ from app.models.medswin import (
     Session,
     Document,
     Chunk,
+    SourceType,
+    PolicyAction,
+    ClinicalFacet,
 )
 
 __all__ = [
@@ -32,4 +35,7 @@ __all__ = [
     "Session",
     "Document",
     "Chunk",
+    "SourceType",
+    "PolicyAction",
+    "ClinicalFacet",
 ]

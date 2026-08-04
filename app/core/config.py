@@ -99,7 +99,12 @@ class Settings(BaseSettings):
     SUFF_MAX_ENTROPY: float = 0.88
     SUFF_MAX_CONTRADICTIONS: int = 0
     SUFF_MIN_MARGINAL_UTILITY: float = 0.0002
+    SUFF_BOOTSTRAP_N: int = 64
     DEFAULT_CLINICAL_SCOPE: str = "clinician_cds"
+    RERANK_CALIBRATION_PATH: str = "./data/calibration/rerank.json"
+    AGENT_RELIABILITY_PATH: str = "./data/calibration/agents.json"
+    AUTH_JWT_SECRET: Optional[str] = None
+    AUTH_JWT_ALGORITHM: str = "HS256"
     
     # Fusion score weights (must sum to 1.0)
     W_RERANK: float = 0.45

@@ -5,8 +5,9 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List
 
-from app.models.medswin import CandidatePassage, EvidenceGrade, SourceType
-from app.services.adapters.rate_limit import rate_limit_snapshot
+from app.schemas.evidence import CandidatePassage, EvidenceGrade
+from app.scoring.hierarchy import evidence_grade_from_metadata as _hierarchy_grade
+from app.services.adapters.limiter import rate_limit_snapshot
 
 
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
@@ -44,43 +45,7 @@ def redact_phi_payload(payload: Any) -> Any:
 
 def evidence_grade_from_metadata(candidate: CandidatePassage) -> EvidenceGrade:
     """Derive an evidence grade from explicit metadata and source type."""
-    metadata = candidate.metadata or {}
-    raw_grade = metadata.get("evidence_grade")
-    if isinstance(raw_grade, dict):
-        return EvidenceGrade(**raw_grade)
-    if isinstance(candidate.evidence_grade_score, (int, float)):
-        return EvidenceGrade(
-            label=str(raw_grade or "metadata_score"),
-            score=clamp(candidate.evidence_grade_score),
-            source_reliability=clamp(metadata.get("source_reliability", 0.5)),
-        )
-
-    label = str(raw_grade or metadata.get("study_design") or candidate.source_type.value).lower()
-    score_map = {
-        "cpg": 0.95,
-        "guideline": 0.95,
-        "systematic_review": 0.90,
-        "sr": 0.90,
-        "rct": 0.86,
-        "trial": 0.80,
-        "observational": 0.62,
-        "obs": 0.62,
-        "case": 0.38,
-        "emr": 0.70,
-        "safety": 0.88,
-    }
-    fallback = {
-        SourceType.CPG: 0.95,
-        SourceType.EMR: 0.70,
-        SourceType.LIT: 0.75,
-    }.get(candidate.source_type, 0.50)
-    score = next((value for key, value in score_map.items() if key in label), fallback)
-    return EvidenceGrade(
-        label=label or "ungraded",
-        score=clamp(score),
-        source_reliability=clamp(metadata.get("source_reliability", score)),
-        rationale=metadata.get("evidence_rationale"),
-    )
+    return _hierarchy_grade(candidate)
 
 
 def build_citation(candidate: CandidatePassage, facets: Iterable[str] = ()) -> Dict[str, Any]:
@@ -128,6 +93,17 @@ def redacted_trace_summary(trace: Dict[str, Any], include_policy_details: bool =
         summary["policy_decisions"] = redact_phi_payload(trace.get("policy_decisions", []))
         summary["facet_coverage"] = redact_phi_payload(trace.get("facet_coverage", []))
         summary["contradictions"] = redact_phi_payload(trace.get("contradictions", []))
+        summary["facet_matrix"] = redact_phi_payload(trace.get("facet_matrix"))
+        summary["contradiction_ledger"] = redact_phi_payload(trace.get("contradiction_ledger"))
+        summary["sufficiency_decision"] = redact_phi_payload(trace.get("sufficiency_decision"))
+        summary["answer_provenance"] = redact_phi_payload(trace.get("answer_provenance"))
+        summary["retrieval_traces"] = redact_phi_payload(trace.get("retrieval_traces", []))
+        summary["rerank_traces"] = redact_phi_payload(trace.get("rerank_traces", []))
+        summary["evidence_ledger"] = redact_phi_payload(trace.get("evidence_ledger", []))
+        summary["tool_calls"] = redact_phi_payload(trace.get("tool_calls", []))
+        summary["final_answer"] = redact_phi_text(trace.get("final_answer") or "")
+        summary["citations"] = redact_phi_payload(trace.get("citations", []))
+        summary["degraded_mode"] = trace.get("degraded_mode") or {}
     return summary
 
 

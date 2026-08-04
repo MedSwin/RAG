@@ -5,10 +5,15 @@ import logging
 import uvicorn
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
+from fastapi.staticfiles import StaticFiles
+
 from app.core.config import settings
 from app.core.database import init_database
 from app.core.state import initialize_services, get_model_manager, get_model_download_service, cleanup_services
 from app.api.v1.router import api_router
+from app.api.auth import AuthMiddleware
 from app.services.dataset import HuggingFaceDatasetService
 from app.services.storage import StorageService
 import asyncio
@@ -105,11 +110,14 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI application
 app = FastAPI(
-    title="Medical RAG System",
-    description="A comprehensive RAG system for medical document retrieval and question answering",
-    version="1.0.0",
+    title="MedSwin Clinical Decision Support",
+    description="Evidence-gated multi-agent clinical RAG with sufficiency audit",
+    version=settings.VERSION,
     lifespan=lifespan
 )
+
+# Auth scaffold (no-op unless ENABLE_AUTH)
+app.add_middleware(AuthMiddleware)
 
 # Add CORS middleware
 app.add_middleware(
@@ -123,10 +131,19 @@ app.add_middleware(
 # Include API router
 app.include_router(api_router, prefix="/api/v1")
 
+_WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
+_WEB_PUBLIC = Path(__file__).resolve().parent.parent / "web" / "public"
+if _WEB_DIST.is_dir():
+    app.mount("/app", StaticFiles(directory=str(_WEB_DIST), html=True), name="clinician")
+elif _WEB_PUBLIC.is_dir():
+    app.mount("/app", StaticFiles(directory=str(_WEB_PUBLIC), html=True), name="clinician")
+
 @app.get("/")
 async def root():
-    """Root endpoint - redirects to dashboard."""
+    """Root endpoint - clinician CDSS UI when present, else dashboard."""
     from fastapi.responses import RedirectResponse
+    if _WEB_DIST.is_dir() or _WEB_PUBLIC.is_dir():
+        return RedirectResponse(url="/app/")
     return RedirectResponse(url="/api/v1/dashboard/")
 
 @app.get("/health")
