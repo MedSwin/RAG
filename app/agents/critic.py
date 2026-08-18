@@ -27,4 +27,4 @@ class ContradictionAgent:
             f"Query: {query}\nTarget facets: {facet_names}\n"
             f"Identify unresolved conflicts across these passages.\n\n{passage_context(passages)}"
         )
-        return await call_claim_agent(self.client, "critic", claim_prompts.CRITIC, user, passages)
+        return await call_claim_agent(self.client, "critic", claim_prompts.CRITIC, user, passages, facets=facets)

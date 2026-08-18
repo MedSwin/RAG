@@ -134,11 +134,11 @@ class LexicalRetriever:
                 chunk = chunk_map.get(chunk_ids[idx])
                 if not chunk:
                     continue
-                    try:
-                        source_type = SourceType(chunk.get("source_type", "CPG"))
-                    except ValueError:
-                        source_type = SourceType.LIT
-                    candidates.append(
+                try:
+                    source_type = SourceType(chunk.get("source_type", "CPG"))
+                except ValueError:
+                    source_type = SourceType.LIT
+                candidates.append(
                     CandidatePassage(
                         chunk_id=chunk["chunk_id"],
                         doc_id=chunk.get("doc_id", ""),

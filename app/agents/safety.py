@@ -28,4 +28,4 @@ class SafetyAgent:
         ] or passages
         facet_names = ", ".join(f.name for f in (facets or []))
         user = f"Query: {query}\nTarget facets: {facet_names}\n\nPassages:\n{passage_context(safety)}"
-        return await call_claim_agent(self.client, "safety", claim_prompts.SAFETY, user, safety)
+        return await call_claim_agent(self.client, "safety", claim_prompts.SAFETY, user, safety, facets=facets)

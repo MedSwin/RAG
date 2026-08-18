@@ -25,4 +25,4 @@ class GuidelineAgent:
         cpg = [p for p in passages if p.source_type.value in {"CPG", "LIT"}] or passages
         facet_names = ", ".join(f.name for f in (facets or []))
         user = f"Query: {query}\nTarget facets: {facet_names}\n\nPassages:\n{passage_context(cpg)}"
-        return await call_claim_agent(self.client, "guideline", claim_prompts.GUIDELINE, user, cpg)
+        return await call_claim_agent(self.client, "guideline", claim_prompts.GUIDELINE, user, cpg, facets=facets)

@@ -24,4 +24,4 @@ class QualityAgent:
     ) -> AgentClaimBatch:
         facet_names = ", ".join(f.name for f in (facets or []))
         user = f"Query: {query}\nTarget facets: {facet_names}\n\nPassages:\n{passage_context(passages)}"
-        return await call_claim_agent(self.client, "quality", claim_prompts.QUALITY, user, passages)
+        return await call_claim_agent(self.client, "quality", claim_prompts.QUALITY, user, passages, facets=facets)

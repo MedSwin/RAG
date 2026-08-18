@@ -17,7 +17,15 @@ from app.agents.weights import ReliabilityWeights
 from app.core.config import settings
 from app.medswin.abstain import insufficient_answer
 from app.medswin.gate import EvidenceGate
-from app.medswin.ledger import build_retrieval_ledger, detect_contradictions, merge_agent_claims
+from app.medswin.ledger import (
+    adjudicate_contradictions,
+    apply_claim_alignment,
+    build_retrieval_ledger,
+    detect_contradictions,
+    filter_ledger,
+    merge_agent_claims,
+)
+from app.retrieval.hints import expand_query
 from app.medswin.normalize import QueryNormalizer
 from app.medswin.packing import pack_bundle
 from app.repositories.chunks import ChunkRepository
@@ -25,7 +33,7 @@ from app.repositories.sessions import SessionRepository
 from app.repositories.traces import TraceRepository
 from app.retrieval.hybrid import HybridRetriever
 from app.schemas.enums import ClinicalScope, PolicyAction, SourceType
-from app.schemas.evidence import ContradictionLedger, EvidenceBundle, QuerySpec
+from app.schemas.evidence import ContradictionLedger, EvidenceBundle, PolicyDecision, QuerySpec
 from app.schemas.facets import FacetMatrix
 from app.schemas.sessions import Session
 from app.schemas.traces import AgentMessage, AuditTrace, ChatResponse, ToolCall
@@ -132,7 +140,16 @@ class MedSwinOrchestrator:
                     1 for p in evidence_bundle.contradictions if p.severity == "high" and not p.resolved
                 ),
             )
-            sufficiency_decision = self.gate.to_sufficiency_decision(decision) if decision else None
+            # P0: never synthesize without a passing gate or on an empty accepted bundle
+            if decision is None or (decision.passed and not evidence_bundle.passages):
+                decision = PolicyDecision(
+                    passed=False,
+                    action=PolicyAction.INSUFFICIENT_EVIDENCE,
+                    reason="Evidence state is empty or missing a sufficiency decision.",
+                    missing_facets=[facet.name for facet in query_spec.facets if facet.required],
+                )
+                evidence_bundle.policy_decision = decision
+            sufficiency_decision = self.gate.to_sufficiency_decision(decision)
             trace.facet_matrix = facet_matrix
             trace.contradiction_ledger = contradiction_ledger
             trace.sufficiency_decision = sufficiency_decision
@@ -142,14 +159,7 @@ class MedSwinOrchestrator:
             trace.evidence_ledger = evidence_bundle.evidence_ledger
             trace.degraded_mode = degraded
 
-            # P0: never synthesize on an empty accepted bundle
-            if decision and decision.passed and not evidence_bundle.passages:
-                decision.passed = False
-                decision.action = PolicyAction.INSUFFICIENT_EVIDENCE
-                decision.reason = "Gate passed without selectable passages; treating as insufficient evidence."
-                evidence_bundle.policy_decision = decision
-
-            if decision and not decision.passed:
+            if not decision.passed:
                 answer = insufficient_answer(query, decision, evidence_bundle.facet_coverage)
                 citations = self._citations(evidence_bundle)
                 trace.completed_at = datetime.utcnow()
@@ -173,6 +183,7 @@ class MedSwinOrchestrator:
                     contradiction_ledger=contradiction_ledger,
                     retrieval_traces=trace.retrieval_traces,
                     rerank_traces=trace.rerank_traces,
+                    pipeline="medswin",
                 )
 
             answer, provenance = await self.synthesis_agent.synthesize(
@@ -205,6 +216,7 @@ class MedSwinOrchestrator:
                 answer_provenance=provenance,
                 retrieval_traces=trace.retrieval_traces,
                 rerank_traces=trace.rerank_traces,
+                pipeline="medswin",
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("Orchestration failed: %s", exc, exc_info=True)
@@ -221,6 +233,7 @@ class MedSwinOrchestrator:
                 degraded_mode=degraded,
                 citations=[],
                 uncertainty_level="high",
+                pipeline="medswin",
             )
 
     async def _patient_query(
@@ -274,19 +287,20 @@ class MedSwinOrchestrator:
         # Always run quality on candidates; route specialists by missing facets / hints
         always = {"quality"}
         targets = set(always)
-        if routed:
+        if isinstance(routed, list):
+            targets.update(routed)
+        elif routed:
             targets.add(routed)
-        if "patient_applicability" in missing or routed == "emr":
+        if "patient_applicability" in missing:
             targets.add("emr")
-        if "guideline_concordance" in missing or routed == "guideline":
+        if "guideline_concordance" in missing:
             targets.add("guideline")
-        if "safety_contraindications" in missing or routed == "safety":
+        if "safety_contraindications" in missing:
             targets.add("safety")
-        if "evidence_quality" in missing or routed == "quality":
+        if "evidence_quality" in missing:
             targets.add("quality")
-        if contradiction_review or routed == "critic":
+        if contradiction_review:
             targets.add("critic")
-        # First iteration: explore all specialists lightly when no route yet
         if not routed and not missing:
             targets.update({"emr", "guideline", "safety", "quality", "critic"})
 
@@ -339,17 +353,29 @@ class MedSwinOrchestrator:
             return empty, None
 
         source_type_filter = SourceType.CPG if constraints.get("guideline_only") else None
-        facets = query_spec.facets
+        facets = query_spec.facets or QueryNormalizer.build_facets(
+            query, query_spec, constraints, patient_id
+        )
+        if not query_spec.facets:
+            query_spec.facets = facets
         iteration = 0
         all_candidates = []
         hints = None
         selected = []
+        selected_ledger = []
         agent_weights = self.weights.weights()
         final_check = None
+        last_embedded = retrieval_query
 
         while iteration < settings.MAX_RETRIEVE_LOOPS:
+            loop_query = expand_query(retrieval_query, hints)
+            if loop_query != last_embedded:
+                expanded_embeddings = await self.embedding_client.embed([loop_query])
+                if expanded_embeddings:
+                    query_embedding = expanded_embeddings[0]
+                    last_embedded = loop_query
             candidates, retrieval_trace = await self.retriever.retrieve(
-                query=retrieval_query,
+                query=loop_query,
                 query_embedding=query_embedding,
                 org_id=org_id,
                 source_type_filter=source_type_filter,
@@ -367,7 +393,7 @@ class MedSwinOrchestrator:
                 )
             )
 
-            candidates, rerank_trace = await self.retriever.rerank(retrieval_query, candidates)
+            candidates, rerank_trace = await self.retriever.rerank(loop_query, candidates)
             rerank_trace.iteration = iteration
             trace.rerank_traces.append(rerank_trace)
             trace.tool_calls.append(
@@ -391,8 +417,7 @@ class MedSwinOrchestrator:
                     existing.calibrated_score = c.calibrated_score or existing.calibrated_score
             all_candidates = list(by_id.values())
 
-            # Agent exploration inside the loop (paper MAC)
-            routed = (hints or {}).get("routed_agent")
+            routed = (hints or {}).get("routed_agents") or (hints or {}).get("routed_agent")
             missing = (hints or {}).get("missing_facets") or []
             batches = await self._dispatch_agents(
                 query=query,
@@ -407,26 +432,24 @@ class MedSwinOrchestrator:
 
             ledger = build_retrieval_ledger(all_candidates, facets)
             ledger = merge_agent_claims(ledger, batches, all_candidates)
+            apply_claim_alignment(all_candidates, batches, facets)
             selected = self.retriever.fuse_and_select(all_candidates, facets=facets, agent_weights=agent_weights)
             selected = pack_bundle(selected, facets=facets)
-            selected_ledger = [e for e in ledger if e.chunk_id in {p.chunk_id for p in selected}]
-            # Keep full ledger claims for gate but evaluate selected bundle coverage
+            selected_ids = {p.chunk_id for p in selected}
+            selected_ledger = filter_ledger(ledger, selected_ids)
+            contradictions = adjudicate_contradictions(
+                detect_contradictions(selected_ledger),
+                batches,
+            )
             check = self.gate.check(
-                selected_ledger or ledger,
+                selected_ledger,
                 facets,
                 selected,
                 iteration=iteration,
                 constraints=constraints,
                 query_spec=query_spec,
+                contradictions=contradictions,
             )
-            # Prefer contradictions from full ledger
-            contradictions = detect_contradictions(ledger)
-            if check.policy_decision:
-                check.policy_decision.contradictions = contradictions
-                check.contradiction_count = len(contradictions)
-                check.policy_decision.unresolved_critical_conflicts = any(
-                    not p.resolved and p.severity == "high" for p in contradictions
-                )
             final_check = check
             trace.sufficiency_checks.append(check)
             if check.policy_decision:
@@ -442,9 +465,6 @@ class MedSwinOrchestrator:
         decision = self.gate.last_decision
         coverage = self.gate.last_coverage
         contradictions = self.gate.last_contradictions
-        selected_ledger = build_retrieval_ledger(selected, facets)
-        # Re-merge agent claims that belong to selected
-        # (agent claims already on passages via agent_scores; rebuild from last ledger entries)
         if final_check and final_check.policy_decision:
             decision = final_check.policy_decision
             coverage = decision.facet_coverage

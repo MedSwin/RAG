@@ -249,12 +249,9 @@ class StorageService:
         retrieval. Refresh runs in the background and marks readiness only after
         chunks are re-embedded and the active index is rebuilt.
         """
-        if not settings.CLOUD_MODE:
-            EMBEDDING_REFRESH_STATUS.update({"running": False, "ready": True, "error": None})
-            return EMBEDDING_REFRESH_STATUS.copy()
-
         batch_size = batch_size or settings.BATCH_SIZE
-        batch_size = max(1, min(int(batch_size), int(settings.CLOUD_EMBED_BATCH_SIZE)))
+        batch_cap = settings.CLOUD_EMBED_BATCH_SIZE if settings.CLOUD_MODE else settings.BATCH_SIZE
+        batch_size = max(1, min(int(batch_size), int(batch_cap)))
         EMBEDDING_REFRESH_STATUS.update({
             "running": True,
             "ready": False,
@@ -286,14 +283,14 @@ class StorageService:
                             {"_id": chunk["_id"]},
                             {"$set": {
                                 "embedding": embedding.tolist(),
-                                "embedding_model": settings.CLOUD_EMBEDDING,
+                                "embedding_model": settings.active_embedding_model(),
                                 "embedding_dim": int(len(embedding)),
                                 "embedding_space": settings.active_embedding_space(),
                                 "embedding_updated_at": datetime.now(timezone.utc),
                             }},
                         )
                         EMBEDDING_REFRESH_STATUS["updated"] += 1
-                    if batch_size > 0 and settings.CLOUD_EMBED_BATCH_DELAY_S > 0:
+                    if settings.CLOUD_MODE and batch_size > 0 and settings.CLOUD_EMBED_BATCH_DELAY_S > 0:
                         await asyncio.sleep(settings.CLOUD_EMBED_BATCH_DELAY_S)
             finally:
                 await client.close()
@@ -325,7 +322,7 @@ class StorageService:
                 {"embedding": []},
                 {"embedding_space": {"$ne": settings.active_embedding_space()}},
                 {"embedding_space": {"$exists": False}},
-                {"embedding_model": {"$ne": settings.CLOUD_EMBEDDING}},
+                {"embedding_model": {"$ne": settings.active_embedding_model()}},
                 {"embedding_model": {"$exists": False}},
                 {"embedding_dim": {"$ne": expected_dim}},
                 {"embedding_dim": {"$exists": False}},

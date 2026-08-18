@@ -29,4 +29,4 @@ class EMRAgent:
             f"Query: {query}\nPatient ID: {patient_id or 'unknown'}\n"
             f"Target facets: {facet_names}\n\nPassages:\n{passage_context(emr)}"
         )
-        return await call_claim_agent(self.client, "emr", claim_prompts.EMR, user, emr)
+        return await call_claim_agent(self.client, "emr", claim_prompts.EMR, user, emr, facets=facets)

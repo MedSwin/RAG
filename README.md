@@ -5,7 +5,8 @@ Evidence-gated multi-agent clinical decision support (CDSS) runtime.
 MedSwin does not treat top-K retrieval as automatically usable. For every clinician query it: decomposes clinical evidence facets, hybrid-retrieves EMR / CPG / literature / drug-safety passages, calibrates reranker scores, runs specialist agents that emit structured claims, applies an evidence-sufficiency gate, and only then synthesizes a grounded answer — or returns a bounded insufficient-evidence response with a full audit trail.
 
 Paper source of truth: [`docs/MedSwin.tex`](docs/MedSwin.tex)  
-API contract: [`docs/ENDPOINTS.md`](docs/ENDPOINTS.md)
+API contract: [`docs/ENDPOINTS.md`](docs/ENDPOINTS.md)  
+Naive-RAG baseline (local prompt + eval): [`docs/NAIVE_RAG.md`](docs/NAIVE_RAG.md)
 
 ---
 
@@ -25,6 +26,7 @@ API contract: [`docs/ENDPOINTS.md`](docs/ENDPOINTS.md)
 | Six audit artefacts | Implemented | [`app/schemas/traces.py`](app/schemas/traces.py), chat/trace APIs |
 | Source types CPG / EMR / LIT / SAFETY | Implemented | [`app/schemas/enums.py`](app/schemas/enums.py) |
 | Clinician CDSS UI | Implemented | [`web/`](web/) → served at `/app/` |
+| Naive-RAG control (embed → dense top-K → generate) | Implemented | [`app/medswin/naive.py`](app/medswin/naive.py), `POST /api/v1/naive/chat` |
 | Optional auth scaffold | Implemented | [`app/api/auth.py`](app/api/auth.py) (`ENABLE_AUTH`) |
 | Offline SFT / KD / merge / reranker LoRA training | Out of scope (runtime-only) | — |
 | Full IdP JWT verification / RBAC / OTEL | Scaffold / flags only | config + middleware |
@@ -369,6 +371,17 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp env.example .env
 
+# Mongo + venv + API on :8100
+./scripts/start-local.sh
+
+# In another terminal: prompt full MedSwin, naive-RAG, or both
+./scripts/start-local.sh --prompt
+./scripts/start-local.sh --mode both --question "Can this patient continue metformin after the latest renal-function result?"
+```
+
+Equivalent manual API start:
+
+```bash
 # MongoDB
 docker run -d -p 27017:27017 --name mongodb mongo:6.0
 
@@ -400,6 +413,8 @@ npm run dev      # Vite on :5173, proxies /api → :8100
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/api/v1/medswin/chat` | Full MAC + gate pipeline |
+| `POST` | `/api/v1/naive/chat` | Naive-RAG control (dense top-K only) |
+| `POST` | `/api/v1/naive/compare` | Same query through naive and full MedSwin |
 | `GET` | `/api/v1/medswin/sessions/{session_id}` | Session summary |
 | `GET` | `/api/v1/medswin/traces/{trace_id}` | PHI-safe audit (optional details) |
 | `POST` | `/api/v1/medswin/ingest` | Ingest CPG / EMR / LIT / SAFETY docs |
@@ -431,6 +446,7 @@ curl -s http://localhost:8100/api/v1/medswin/chat \
 | `SUPERVISOR_URL`, `AGENT1_URL`…`AGENT3_URL` | LLM endpoints | localhost OpenAI-compatible |
 | `EMBEDDING_URL` / `RERANKER_URL` | Embedding & rerank | local or cloud |
 | `CLOUD_MODE` | Azure AI Foundry path | `false` |
+| `NAIVE_TOP_K` | Dense hits for the naive-RAG control | `5` |
 | `CANDIDATE_K` / `CANDIDATE_K_PRIME` | Candidate pools | `80` / `120` |
 | `MAX_RETRIEVE_LOOPS` | Retrieve-more budget | `3` |
 | `TOKEN_BUDGET_B` | Evidence token budget | `1800` |
@@ -480,7 +496,7 @@ python3 -m pytest
 python3 -m pytest tests/test_medswin_policy.py tests/test_medswin_governance.py tests/test_medswin_retrieval.py -q
 ```
 
-System-level TREC CDS audit lives under [`eval/`](eval/) and calls the production `/medswin/chat` + `/traces/{id}` contract (see `eval/README.md`).
+System-level TREC CDS audit lives under [`eval/`](eval/) and calls `/medswin/chat` or `/naive/chat` via `pipeline=medswin|naive_rag|both` (see `eval/README.md` and [`docs/NAIVE_RAG.md`](docs/NAIVE_RAG.md)).
 
 ---
 
@@ -489,6 +505,7 @@ System-level TREC CDS audit lives under [`eval/`](eval/) and calls the productio
 | Path | Responsibility |
 | --- | --- |
 | [`app/medswin/orchestrator.py`](app/medswin/orchestrator.py) | MAC loop, gate, synthesis / abstain |
+| [`app/medswin/naive.py`](app/medswin/naive.py) | Naive-RAG control used for design evaluation |
 | [`app/medswin/gate.py`](app/medswin/gate.py) | Sufficiency decision |
 | [`app/retrieval/hybrid.py`](app/retrieval/hybrid.py) | Two-stage retrieve + rerank glue |
 | [`app/scoring/`](app/scoring/) | Fusion, utility, coverage, calibration, EBM |

@@ -177,6 +177,15 @@ class AdaptiveModelRateLimiter:
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_error = exc
                 self._retry_events += 1
+                # Connection refused / connect timeout is not a provider 429.
+                # The 600s rate-limit backoff would freeze naive-RAG and local
+                # chat for tens of minutes when EMBEDDING_URL / SUPERVISOR_URL
+                # are simply down.
+                if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+                    if attempt >= 2:
+                        raise
+                    await asyncio.sleep(0.4 * attempt)
+                    continue
                 if attempt == settings.MODEL_RATE_LIMIT_MAX_ATTEMPTS:
                     raise
                 await asyncio.sleep(_retry_backoff_seconds(attempt))

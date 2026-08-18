@@ -150,6 +150,28 @@ export function App() {
               </div>
 
               <div style={{ marginTop: 22 }}>
+                <h2>Citations</h2>
+                <div className="evidence">
+                  {(response.citations || []).length === 0 ? (
+                    <div className="meta">No citations attached.</div>
+                  ) : (
+                    (response.citations || []).map((c: any) => (
+                      <div className="row" key={c.chunk_id}>
+                        <strong>
+                          {c.source_type} · {c.chunk_id}
+                        </strong>
+                        <span className="meta">
+                          doc {c.doc_id}
+                          {c.section ? ` · ${c.section}` : ""}
+                          {c.guideline_version ? ` · v${c.guideline_version}` : ""}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div style={{ marginTop: 22 }}>
                 <h2>Evidence bundle</h2>
                 <div className="evidence">
                   {passages.map((p) => (

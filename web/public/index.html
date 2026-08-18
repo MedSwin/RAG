@@ -98,6 +98,8 @@
           <p class="answer">${escapeHtml(data.answer || '')}</p>
           <h2 style="margin-top:22px">Facet coverage</h2>
           ${facets.map(r => `<div class="row"><strong>${escapeHtml(r.facet)} · ${escapeHtml(r.status)}</strong><div class="meta">LCB ${(r.lower_confidence_bound||0).toFixed(2)}</div></div>`).join('') || '<p class="meta">None</p>'}
+          <h2 style="margin-top:22px">Citations</h2>
+          ${(data.citations||[]).map(c => `<div class="row"><strong>${escapeHtml(c.source_type||'')} · ${escapeHtml(c.chunk_id||'')}</strong><div class="meta">doc ${escapeHtml(c.doc_id||'')}</div></div>`).join('') || '<p class="meta">None</p>'}
           <h2 style="margin-top:22px">Evidence bundle</h2>
           ${passages.map(p => `<div class="row"><strong>${escapeHtml(p.source_type)} · ${escapeHtml(p.chunk_id)}</strong><div class="meta">p̂ ${(p.calibrated_score||0).toFixed(2)}</div><p>${escapeHtml((p.text||'').slice(0,320))}</p></div>`).join('') || '<p class="meta">None</p>'}
           <h2 style="margin-top:22px">Contradiction ledger</h2>

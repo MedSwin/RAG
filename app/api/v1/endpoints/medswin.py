@@ -264,7 +264,8 @@ async def ingest_documents(
             
             # Chunk document while preserving existing section/offset metadata when provided.
             text = doc_data.get("text", doc_data.get("content", ""))
-            chunks_data = doc_data.get("chunks") or _section_aware_chunks(doc_id, text, doc_data.get("section"))
+            from app.medswin.chunking import section_chunks
+            chunks_data = doc_data.get("chunks") or section_chunks(doc_id, text, doc_data.get("section"))
             
             # Create chunks
             chunks = []
@@ -302,8 +303,17 @@ async def ingest_documents(
             staged_documents.append((document, chunks))
             staged_chunks.extend(chunks)
 
-        if staged_chunks and settings.CLOUD_MODE:
-            await _attach_active_embeddings(staged_chunks)
+        if staged_chunks:
+            # Root Cause vs Logic: embeddings were attached only in CLOUD_MODE,
+            # so local ingest stored text-only chunks. Index build then found
+            # zero vectors and naive-RAG silently became LLM-only. Attach in
+            # every mode; local HTTP failures can fall back to ModelManager.
+            try:
+                await _attach_active_embeddings(staged_chunks)
+            except Exception as exc:
+                if settings.CLOUD_MODE:
+                    raise
+                logger.warning("Ingest stored chunks without embeddings: %s", exc)
 
         for document, chunks in staged_documents:
             await doc_repo.create(document, org_id)
@@ -345,6 +355,7 @@ def _coerce_evidence_grade(raw: Any, source_type) -> Any:
         SourceType.CPG: ("guideline", settings.EBM_CPG_WEIGHT, settings.SOURCE_CPG_SCORE),
         SourceType.EMR: ("emr", settings.EBM_EMR_WEIGHT, settings.SOURCE_EMR_SCORE),
         SourceType.LIT: ("literature", settings.SOURCE_LIT_SCORE, settings.SOURCE_LIT_SCORE),
+        SourceType.SAFETY: ("safety", settings.EBM_SAFETY_WEIGHT, settings.EBM_SAFETY_WEIGHT),
     }
     label, score, reliability = defaults.get(source_type, ("ungraded", 0.5, 0.5))
     return EvidenceGrade(label=str(raw or label), score=score, source_reliability=reliability)
@@ -380,65 +391,14 @@ async def _attach_active_embeddings(chunks: List[Any]) -> None:
         raise RuntimeError(f"Embedding service returned {len(embeddings)} vectors for {len(chunks)} chunks")
     for chunk, embedding in zip(chunks, embeddings):
         chunk.embedding = embedding.tolist()
-        chunk.embedding_model = settings.CLOUD_EMBEDDING
+        chunk.embedding_model = settings.active_embedding_model()
         chunk.embedding_dim = int(len(embedding))
         chunk.embedding_space = settings.active_embedding_space()
         chunk.embedding_updated_at = datetime.now(timezone.utc)
 
 
 def _section_aware_chunks(doc_id: str, text: str, default_section: Optional[str]) -> List[Dict[str, Any]]:
-    """Split text into chunks while keeping section headings and offsets.
+    """Section-aware 350–450 token passages with heading/offset provenance."""
+    from app.medswin.chunking import section_chunks
 
-    Motivation vs Logic: Clinical chunks need section provenance for guideline
-    recommendations and contraindications. This fallback preserves headings and
-    offsets instead of flattening every document into anonymous paragraphs.
-    """
-    chunks: List[Dict[str, Any]] = []
-    if not text:
-        return chunks
-    offset = 0
-    section = default_section
-    buffer: List[str] = []
-    buffer_start = 0
-    chunk_idx = 0
-
-    for paragraph in [part for part in text.split("\n\n") if part.strip()]:
-        stripped = paragraph.strip()
-        start = text.find(paragraph, offset)
-        if start < 0:
-            start = offset
-        offset = start + len(paragraph)
-        is_heading = len(stripped) <= 120 and not stripped.endswith(".") and len(stripped.split()) <= 12
-        if is_heading and buffer:
-            body = "\n\n".join(buffer).strip()
-            chunks.append({
-                "chunk_id": f"{doc_id}_chunk_{chunk_idx}",
-                "text": body,
-                "content": body,
-                "section": section,
-                "offset_start": buffer_start,
-                "offset_end": start,
-                "metadata": {},
-            })
-            chunk_idx += 1
-            buffer = []
-        if is_heading:
-            section = stripped
-            buffer_start = offset
-            continue
-        if not buffer:
-            buffer_start = start
-        buffer.append(stripped)
-
-    if buffer:
-        body = "\n\n".join(buffer).strip()
-        chunks.append({
-            "chunk_id": f"{doc_id}_chunk_{chunk_idx}",
-            "text": body,
-            "content": body,
-            "section": section,
-            "offset_start": buffer_start,
-            "offset_end": len(text),
-            "metadata": {},
-        })
-    return chunks
+    return section_chunks(doc_id, text, default_section)

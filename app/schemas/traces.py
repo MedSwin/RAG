@@ -97,6 +97,9 @@ class ChatResponse(BaseModel):
     answer_provenance: Optional[AnswerProvenance] = None
     retrieval_traces: List[RetrievalTrace] = Field(default_factory=list)
     rerank_traces: List[RerankTrace] = Field(default_factory=list)
+    pipeline: str = "medswin"
+    retrieval_backend: Optional[str] = None
+    timing_ms: Dict[str, float] = Field(default_factory=dict)
 
 
 class AuditTrace(BaseModel):
@@ -126,6 +129,9 @@ class AuditTrace(BaseModel):
     contradiction_ledger: Optional[ContradictionLedger] = None
     sufficiency_decision: Optional[SufficiencyDecision] = None
     answer_provenance: Optional[AnswerProvenance] = None
+    pipeline: str = "medswin"
+    retrieval_backend: Optional[str] = None
+    timing_ms: Dict[str, float] = Field(default_factory=dict)
     emr_summary: Optional[EMRSummary] = None
     guideline_summary: Optional[GuidelineSummary] = None
     safety_report: Optional[SafetyReport] = None

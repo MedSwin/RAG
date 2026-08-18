@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .audit import aggregate_run, audit_case
+from .compare import compare_audits
 from .config import Settings
 from .io import read_jsonl_cases, write_json
 from .client import MedSwinClient
@@ -158,6 +159,22 @@ def _case_context_already_materialized(stats: dict[str, Any], benchmark_org_id: 
 
 
 async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
+    if req.pipeline == "both":
+        naive_run = await _run_single(req.model_copy(update={"pipeline": "naive_rag"}), settings)
+        medswin_run = await _run_single(req.model_copy(update={"pipeline": "medswin"}), settings)
+        comparison = compare_audits(naive_run, medswin_run)
+        medswin_run.diagnostics["pipeline_comparison"] = comparison
+        medswin_run.diagnostics["naive_run_id"] = naive_run.run_id
+        medswin_run.config["pipeline"] = "both"
+        medswin_run.config["naive_run_id"] = naive_run.run_id
+        output_path = Path(settings.run_store_dir) / f"{medswin_run.run_id}.json"
+        write_json(output_path, medswin_run.model_dump())
+        write_json(Path(settings.run_store_dir) / f"{medswin_run.run_id}.comparison.json", comparison)
+        return medswin_run
+    return await _run_single(req, settings)
+
+
+async def _run_single(req: RunRequest, settings: Settings) -> RunAudit:
     cases = read_jsonl_cases(req.cases_path)
     if req.max_cases is not None:
         cases = cases[: req.max_cases]
@@ -195,6 +212,7 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
             "ingest_case_context": req.ingest_case_context,
             "fetch_trace_summary": req.fetch_trace_summary,
             "include_patient_context_in_query": req.include_patient_context_in_query,
+            "pipeline": req.pipeline,
         },
     )
 
@@ -270,6 +288,7 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
                     guideline_only=req.guideline_only,
                     min_evidence_grade=req.min_evidence_grade,
                     clinical_scope=req.clinical_scope,
+                    pipeline=req.pipeline,
                 )
                 trace_id = response.get("trace_id") or (response.get("trace") or {}).get("trace_id")
                 if trace_id and req.fetch_trace_summary:
@@ -277,7 +296,8 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
                         trace_summary = await client.trace(trace_id, include_details=True)
                     except Exception as exc:  # noqa: BLE001
                         errors.append(f"trace_fetch_failed: {exc}")
-                errors.extend(_architecture_errors(response, trace_summary))
+                if req.pipeline != "naive_rag":
+                    errors.extend(_architecture_errors(response, trace_summary))
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"case_failed: {exc}")
                 response = {"answer": "", "policy_decision": {"passed": False}, "citations": [], "evidence_bundle": {}}
@@ -327,6 +347,7 @@ async def run_benchmark(req: RunRequest, settings: Settings) -> RunAudit:
         "setup_concurrency": setup_concurrency,
         "failure_buckets": dict(Counter(case.failure_bucket for case in run.cases if case.failure_bucket)),
         "trace_rate_limit_stats": _aggregate_rate_limit_stats(run.cases),
+        "pipeline": req.pipeline,
     }
     output_path = Path(settings.run_store_dir) / f"{run_id}.json"
     write_json(output_path, run.model_dump())

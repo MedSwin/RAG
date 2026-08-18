@@ -46,24 +46,37 @@ class EvidenceGate:
             "relax_filters": False,
             "expand_synonyms": bool(missing),
             "missing_facets": missing,
+            "exclusive_source": False,
         }
-        routed = None
-        if "guideline_concordance" in missing or "evidence_quality" in missing:
-            hints["focus_source"] = SourceType.CPG.value
-            routed = "guideline" if "guideline_concordance" in missing else "quality"
-        elif "patient_applicability" in missing:
-            hints["focus_source"] = SourceType.EMR.value
-            routed = "emr"
+        routed: List[str] = []
+        sources: List[str] = []
+        if "guideline_concordance" in missing:
+            routed.append("guideline")
+            sources.append(SourceType.CPG.value)
+        if "evidence_quality" in missing:
+            routed.append("quality")
+            sources.append(SourceType.CPG.value)
+        if "patient_applicability" in missing:
+            routed.append("emr")
+            sources.append(SourceType.EMR.value)
         if "safety_contraindications" in missing:
             hints["safety_search"] = True
             hints["relax_filters"] = True
-            hints["focus_source"] = SourceType.SAFETY.value
-            routed = "safety"
-        if contradictions:
+            routed.append("safety")
+            sources.append(SourceType.SAFETY.value)
+        if any(not item.resolved for item in contradictions):
             hints["contradiction_review"] = True
             hints["relax_filters"] = True
-            routed = "critic"
-        hints["routed_agent"] = routed
+            routed.append("critic")
+        unique_sources = list(dict.fromkeys(sources))
+        if len(unique_sources) == 1:
+            hints["focus_source"] = unique_sources[0]
+            hints["exclusive_source"] = True
+        elif unique_sources:
+            hints["focus_source"] = unique_sources[0]
+            hints["exclusive_source"] = False
+        hints["routed_agent"] = routed[0] if routed else None
+        hints["routed_agents"] = routed
         return hints
 
     def decide(
@@ -86,18 +99,32 @@ class EvidenceGate:
                 or item.entropy > settings.SUFF_MAX_ENTROPY
             )
         ]
-        unresolved_critical = any(not item.resolved and item.severity == "high" for item in contradictions)
+        unresolved = [item for item in contradictions if not item.resolved]
+        unresolved_critical = any(item.severity == "high" for item in unresolved)
         marginal = estimate_marginal_utility_per_token(passages, coverage)
         can_retrieve_more = iteration < self.max_loops - 1
-        contradiction_overflow = len(contradictions) > settings.SUFF_MAX_CONTRADICTIONS
+        contradiction_overflow = len(unresolved) > settings.SUFF_MAX_CONTRADICTIONS
+        provenance_ok = bool(passages) and all(
+            bool(p.chunk_id)
+            and bool(p.doc_id)
+            and bool(p.source_type)
+            and not (p.metadata or {}).get("weak_provenance")
+            for p in passages
+        )
 
-        if not missing and not unresolved_critical and not contradiction_overflow:
+        if (
+            not missing
+            and not unresolved_critical
+            and not contradiction_overflow
+            and provenance_ok
+        ):
             action = PolicyAction.ACCEPT
             reason = "All required clinical facets passed LCB, entropy, and contradiction gates."
             passed = True
         elif can_retrieve_more and (
             missing
             or unresolved_critical
+            or contradiction_overflow
             or marginal > settings.SUFF_MIN_MARGINAL_UTILITY
         ):
             action = PolicyAction.RETRIEVE_MORE
@@ -136,12 +163,15 @@ class EvidenceGate:
         iteration: int = 0,
         constraints: Optional[Dict[str, Any]] = None,
         query_spec: Optional[QuerySpec] = None,
+        contradictions: Optional[List[ContradictionPair]] = None,
     ) -> SufficiencyCheck:
         constraints = constraints or {}
         scope = self._clinical_scope(constraints)
         if query_spec and query_spec.clinical_scope:
             scope = query_spec.clinical_scope
-        decision = self.decide(ledger, facets, passages, iteration, scope)
+        decision = self.decide(
+            ledger, facets, passages, iteration, scope, contradictions=contradictions
+        )
         cpg = [p for p in passages if p.source_type == SourceType.CPG]
         emr = [p for p in passages if p.source_type == SourceType.EMR]
         confidences = [

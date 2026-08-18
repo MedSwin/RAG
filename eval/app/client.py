@@ -109,7 +109,7 @@ class MedSwinClient:
             json=payload,
         )
 
-    async def chat(self, case: BenchmarkCase, *, source_policy: str, guideline_only: bool, min_evidence_grade: float, clinical_scope: str) -> dict[str, Any]:
+    async def chat(self, case: BenchmarkCase, *, source_policy: str, guideline_only: bool, min_evidence_grade: float, clinical_scope: str, pipeline: str = "medswin") -> dict[str, Any]:
         patient_id = case.patient_id or f"patient-{case.case_id}"
         required_facets = benchmark_required_facets(case.query_type, case.gold_facets)
 
@@ -135,7 +135,10 @@ class MedSwinClient:
             "patient_id": patient_id,
             "constraints": constraints,
         }
-        return await self._request_json("POST", "/api/v1/medswin/chat", json=payload)
+        path = "/api/v1/naive/chat" if pipeline == "naive_rag" else "/api/v1/medswin/chat"
+        if pipeline == "naive_rag" and case.constraints.get("top_k") is not None:
+            payload["top_k"] = case.constraints.get("top_k")
+        return await self._request_json("POST", path, json=payload)
 
     async def build_index(self, *, force_rebuild: bool = True, org_id: str | None = None) -> dict[str, Any]:
         return await self._request_json(

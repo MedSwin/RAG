@@ -1,0 +1,2716 @@
+{
+  "title": "MedSwin runtime audit artefacts",
+  "chat_response": {
+    "$defs": {
+      "AnswerProvenance": {
+        "description": "Audit artefact: links answer statements to accepted passages.",
+        "properties": {
+          "statements": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Statements",
+            "type": "array"
+          },
+          "cited_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cited Chunk Ids",
+            "type": "array"
+          },
+          "rejected_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rejected Chunk Ids",
+            "type": "array"
+          }
+        },
+        "title": "AnswerProvenance",
+        "type": "object"
+      },
+      "CandidatePassage": {
+        "description": "Candidate passage from retrieval.",
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "doc_id": {
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "source_type": {
+            "$ref": "#/$defs/SourceType"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Section"
+          },
+          "offset_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Offset Start"
+          },
+          "offset_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Offset End"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "dense_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dense Score"
+          },
+          "lexical_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lexical Score"
+          },
+          "rerank_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rerank Score"
+          },
+          "fusion_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fusion Score"
+          },
+          "token_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Token Count"
+          },
+          "calibrated_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Calibrated Score"
+          },
+          "recency_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Recency Score"
+          },
+          "section_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Section Score"
+          },
+          "source_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Score"
+          },
+          "evidence_grade_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evidence Grade Score"
+          },
+          "noise_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Noise Score"
+          },
+          "safety_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Safety Score"
+          },
+          "contradiction_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contradiction Score"
+          },
+          "facet_scores": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Facet Scores",
+            "type": "object"
+          },
+          "selected_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Selected Reason"
+          },
+          "agent_scores": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Agent Scores",
+            "type": "object"
+          },
+          "retrieved_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Retrieved By",
+            "type": "array"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "doc_id",
+          "source_type",
+          "text"
+        ],
+        "title": "CandidatePassage",
+        "type": "object"
+      },
+      "ClinicalScope": {
+        "description": "Clinical output boundary enforced by the runtime.",
+        "enum": [
+          "clinician_cds",
+          "differential_dx",
+          "patient_advice"
+        ],
+        "title": "ClinicalScope",
+        "type": "string"
+      },
+      "ContradictionLedger": {
+        "description": "Audit artefact: contradiction ledger.",
+        "properties": {
+          "pairs": {
+            "items": {
+              "$ref": "#/$defs/ContradictionPair"
+            },
+            "title": "Pairs",
+            "type": "array"
+          },
+          "unresolved_high": {
+            "default": 0,
+            "title": "Unresolved High",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "title": "ContradictionLedger",
+        "type": "object"
+      },
+      "ContradictionPair": {
+        "description": "High-grade incompatible evidence that must not be averaged away.",
+        "properties": {
+          "facet": {
+            "title": "Facet",
+            "type": "string"
+          },
+          "chunk_id_a": {
+            "title": "Chunk Id A",
+            "type": "string"
+          },
+          "chunk_id_b": {
+            "title": "Chunk Id B",
+            "type": "string"
+          },
+          "severity": {
+            "default": "medium",
+            "title": "Severity",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "resolved": {
+            "default": false,
+            "title": "Resolved",
+            "type": "boolean"
+          },
+          "adjudication": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Adjudication"
+          },
+          "grade_a": {
+            "default": 0.0,
+            "title": "Grade A",
+            "type": "number"
+          },
+          "grade_b": {
+            "default": 0.0,
+            "title": "Grade B",
+            "type": "number"
+          }
+        },
+        "required": [
+          "facet",
+          "chunk_id_a",
+          "chunk_id_b",
+          "reason"
+        ],
+        "title": "ContradictionPair",
+        "type": "object"
+      },
+      "EvidenceBundle": {
+        "description": "Selected evidence bundle under token budget.",
+        "properties": {
+          "passages": {
+            "items": {
+              "$ref": "#/$defs/CandidatePassage"
+            },
+            "title": "Passages",
+            "type": "array"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          },
+          "cpg_count": {
+            "title": "Cpg Count",
+            "type": "integer"
+          },
+          "emr_count": {
+            "title": "Emr Count",
+            "type": "integer"
+          },
+          "lit_count": {
+            "title": "Lit Count",
+            "type": "integer"
+          },
+          "safety_count": {
+            "default": 0,
+            "title": "Safety Count",
+            "type": "integer"
+          },
+          "coverage_ratios": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Coverage Ratios",
+            "type": "object"
+          },
+          "facet_coverage": {
+            "items": {
+              "$ref": "#/$defs/FacetCoverage"
+            },
+            "title": "Facet Coverage",
+            "type": "array"
+          },
+          "evidence_ledger": {
+            "items": {
+              "$ref": "#/$defs/EvidenceLedgerEntry"
+            },
+            "title": "Evidence Ledger",
+            "type": "array"
+          },
+          "contradictions": {
+            "items": {
+              "$ref": "#/$defs/ContradictionPair"
+            },
+            "title": "Contradictions",
+            "type": "array"
+          },
+          "policy_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PolicyDecision"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "passages",
+          "total_tokens",
+          "cpg_count",
+          "emr_count",
+          "lit_count"
+        ],
+        "title": "EvidenceBundle",
+        "type": "object"
+      },
+      "EvidenceClaim": {
+        "description": "Claim-level evidence emitted by retrieval or specialist agents.",
+        "properties": {
+          "facet": {
+            "title": "Facet",
+            "type": "string"
+          },
+          "claim": {
+            "title": "Claim",
+            "type": "string"
+          },
+          "polarity": {
+            "$ref": "#/$defs/EvidencePolarity",
+            "default": "supports"
+          },
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "confidence": {
+            "default": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "evidence_grade": {
+            "$ref": "#/$defs/EvidenceGrade"
+          },
+          "calibrated_relevance": {
+            "default": 0.0,
+            "title": "Calibrated Relevance",
+            "type": "number"
+          },
+          "agent_id": {
+            "default": "retrieval",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          }
+        },
+        "required": [
+          "facet",
+          "claim",
+          "chunk_id"
+        ],
+        "title": "EvidenceClaim",
+        "type": "object"
+      },
+      "EvidenceGrade": {
+        "description": "Evidence hierarchy metadata used by policy-aware selection.",
+        "properties": {
+          "label": {
+            "default": "ungraded",
+            "title": "Label",
+            "type": "string"
+          },
+          "score": {
+            "default": 0.5,
+            "title": "Score",
+            "type": "number"
+          },
+          "source_reliability": {
+            "default": 0.5,
+            "title": "Source Reliability",
+            "type": "number"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rationale"
+          },
+          "vector": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Vector",
+            "type": "object"
+          }
+        },
+        "title": "EvidenceGrade",
+        "type": "object"
+      },
+      "EvidenceLedgerEntry": {
+        "description": "Auditable passage-level evidence ledger entry.",
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "doc_id": {
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "source_type": {
+            "$ref": "#/$defs/SourceType"
+          },
+          "agent_id": {
+            "default": "retrieval",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "facets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Facets",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/$defs/EvidenceClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "calibrated_relevance": {
+            "default": 0.0,
+            "title": "Calibrated Relevance",
+            "type": "number"
+          },
+          "fusion_score": {
+            "default": 0.0,
+            "title": "Fusion Score",
+            "type": "number"
+          },
+          "evidence_grade": {
+            "$ref": "#/$defs/EvidenceGrade"
+          },
+          "safety_relevance": {
+            "default": 0.0,
+            "title": "Safety Relevance",
+            "type": "number"
+          },
+          "contradiction_risk": {
+            "default": 0.0,
+            "title": "Contradiction Risk",
+            "type": "number"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "doc_id",
+          "source_type"
+        ],
+        "title": "EvidenceLedgerEntry",
+        "type": "object"
+      },
+      "EvidencePolarity": {
+        "description": "How a passage or claim relates to a clinical facet.",
+        "enum": [
+          "supports",
+          "contradicts",
+          "qualifies",
+          "safety",
+          "irrelevant"
+        ],
+        "title": "EvidencePolarity",
+        "type": "string"
+      },
+      "FacetCoverage": {
+        "description": "Noisy-OR facet coverage and uncertainty estimate.",
+        "properties": {
+          "facet": {
+            "title": "Facet",
+            "type": "string"
+          },
+          "required": {
+            "default": true,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "threshold": {
+            "default": 0.7,
+            "title": "Threshold",
+            "type": "number"
+          },
+          "coverage_probability": {
+            "default": 0.0,
+            "title": "Coverage Probability",
+            "type": "number"
+          },
+          "lower_confidence_bound": {
+            "default": 0.0,
+            "title": "Lower Confidence Bound",
+            "type": "number"
+          },
+          "entropy": {
+            "default": 0.0,
+            "title": "Entropy",
+            "type": "number"
+          },
+          "status": {
+            "default": "missing",
+            "title": "Status",
+            "type": "string"
+          },
+          "supporting_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supporting Chunk Ids",
+            "type": "array"
+          },
+          "contradicting_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Contradicting Chunk Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "facet"
+        ],
+        "title": "FacetCoverage",
+        "type": "object"
+      },
+      "FacetMatrix": {
+        "description": "Audit artefact: facet-coverage matrix for a query.",
+        "properties": {
+          "query": {
+            "default": "",
+            "title": "Query",
+            "type": "string"
+          },
+          "iteration": {
+            "default": 0,
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/FacetCoverage"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "title": "FacetMatrix",
+        "type": "object"
+      },
+      "PolicyAction": {
+        "description": "Deterministic policy action chosen after evidence review.",
+        "enum": [
+          "accept",
+          "retrieve_more",
+          "insufficient_evidence",
+          "require_clarification"
+        ],
+        "title": "PolicyAction",
+        "type": "string"
+      },
+      "PolicyDecision": {
+        "description": "Enterprise evidence policy decision for a retrieval iteration.",
+        "properties": {
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "action": {
+            "$ref": "#/$defs/PolicyAction"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "iteration": {
+            "default": 0,
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "clinical_scope": {
+            "$ref": "#/$defs/ClinicalScope",
+            "default": "clinician_cds"
+          },
+          "facet_coverage": {
+            "items": {
+              "$ref": "#/$defs/FacetCoverage"
+            },
+            "title": "Facet Coverage",
+            "type": "array"
+          },
+          "contradictions": {
+            "items": {
+              "$ref": "#/$defs/ContradictionPair"
+            },
+            "title": "Contradictions",
+            "type": "array"
+          },
+          "marginal_utility_per_token": {
+            "default": 0.0,
+            "title": "Marginal Utility Per Token",
+            "type": "number"
+          },
+          "unresolved_critical_conflicts": {
+            "default": false,
+            "title": "Unresolved Critical Conflicts",
+            "type": "boolean"
+          },
+          "missing_facets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Facets",
+            "type": "array"
+          },
+          "retrieval_hints": {
+            "additionalProperties": true,
+            "title": "Retrieval Hints",
+            "type": "object"
+          },
+          "routed_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Routed Agent"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "passed",
+          "action",
+          "reason"
+        ],
+        "title": "PolicyDecision",
+        "type": "object"
+      },
+      "RerankTrace": {
+        "description": "Audit artefact: calibrated relevance and select/reject.",
+        "properties": {
+          "iteration": {
+            "default": 0,
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "scores": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Scores",
+            "type": "array"
+          },
+          "calibration_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Calibration Version"
+          },
+          "selected_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Selected Chunk Ids",
+            "type": "array"
+          },
+          "rejected_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rejected Chunk Ids",
+            "type": "array"
+          }
+        },
+        "title": "RerankTrace",
+        "type": "object"
+      },
+      "RetrievalTrace": {
+        "description": "Audit artefact: which agent retrieved each passage.",
+        "properties": {
+          "iteration": {
+            "default": 0,
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "candidates": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "dense_count": {
+            "default": 0,
+            "title": "Dense Count",
+            "type": "integer"
+          },
+          "lexical_count": {
+            "default": 0,
+            "title": "Lexical Count",
+            "type": "integer"
+          },
+          "union_count": {
+            "default": 0,
+            "title": "Union Count",
+            "type": "integer"
+          },
+          "hints": {
+            "additionalProperties": true,
+            "title": "Hints",
+            "type": "object"
+          }
+        },
+        "title": "RetrievalTrace",
+        "type": "object"
+      },
+      "SourceType": {
+        "description": "Source type for documents and passages.",
+        "enum": [
+          "CPG",
+          "EMR",
+          "LIT",
+          "SAFETY"
+        ],
+        "title": "SourceType",
+        "type": "string"
+      },
+      "SufficiencyDecision": {
+        "description": "Audit artefact: final sufficiency decision.",
+        "properties": {
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "action": {
+            "$ref": "#/$defs/PolicyAction"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "iteration": {
+            "default": 0,
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "missing_facets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Facets",
+            "type": "array"
+          },
+          "unresolved_critical_conflicts": {
+            "default": false,
+            "title": "Unresolved Critical Conflicts",
+            "type": "boolean"
+          },
+          "marginal_utility_per_token": {
+            "default": 0.0,
+            "title": "Marginal Utility Per Token",
+            "type": "number"
+          },
+          "routed_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Routed Agent"
+          }
+        },
+        "required": [
+          "passed",
+          "action",
+          "reason"
+        ],
+        "title": "SufficiencyDecision",
+        "type": "object"
+      }
+    },
+    "description": "Final chat response with provenance.",
+    "properties": {
+      "answer": {
+        "title": "Answer",
+        "type": "string"
+      },
+      "evidence_bundle": {
+        "$ref": "#/$defs/EvidenceBundle"
+      },
+      "safety_notes": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Safety Notes"
+      },
+      "trace_id": {
+        "title": "Trace Id",
+        "type": "string"
+      },
+      "degraded_mode": {
+        "additionalProperties": {
+          "type": "boolean"
+        },
+        "title": "Degraded Mode",
+        "type": "object"
+      },
+      "uncertainty_level": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Uncertainty Level"
+      },
+      "citations": {
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "title": "Citations",
+        "type": "array"
+      },
+      "policy_decision": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PolicyDecision"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "facet_coverage": {
+        "items": {
+          "$ref": "#/$defs/FacetCoverage"
+        },
+        "title": "Facet Coverage",
+        "type": "array"
+      },
+      "contradictions": {
+        "items": {
+          "$ref": "#/$defs/ContradictionPair"
+        },
+        "title": "Contradictions",
+        "type": "array"
+      },
+      "evidence_ledger": {
+        "items": {
+          "$ref": "#/$defs/EvidenceLedgerEntry"
+        },
+        "title": "Evidence Ledger",
+        "type": "array"
+      },
+      "sufficiency_decision": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/SufficiencyDecision"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "facet_matrix": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/FacetMatrix"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "contradiction_ledger": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ContradictionLedger"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "answer_provenance": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AnswerProvenance"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "retrieval_traces": {
+        "items": {
+          "$ref": "#/$defs/RetrievalTrace"
+        },
+        "title": "Retrieval Traces",
+        "type": "array"
+      },
+      "rerank_traces": {
+        "items": {
+          "$ref": "#/$defs/RerankTrace"
+        },
+        "title": "Rerank Traces",
+        "type": "array"
+      }
+    },
+    "required": [
+      "answer",
+      "evidence_bundle",
+      "trace_id"
+    ],
+    "title": "ChatResponse",
+    "type": "object"
+  },
+  "audit_trace": {
+    "$defs": {
+      "AgentMessage": {
+        "description": "Agent message in trace.",
+        "properties": {
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Agent Id"
+          },
+          "model_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Model Endpoint"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "token_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Token Count"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "AgentMessage",
+        "type": "object"
+      },
+      "AnswerProvenance": {
+        "description": "Audit artefact: links answer statements to accepted passages.",
+        "properties": {
+          "statements": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Statements",
+            "type": "array"
+          },
+          "cited_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cited Chunk Ids",
+            "type": "array"
+          },
+          "rejected_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rejected Chunk Ids",
+            "type": "array"
+          }
+        },
+        "title": "AnswerProvenance",
+        "type": "object"
+      },
+      "CandidatePassage": {
+        "description": "Candidate passage from retrieval.",
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "doc_id": {
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "source_type": {
+            "$ref": "#/$defs/SourceType"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Section"
+          },
+          "offset_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Offset Start"
+          },
+          "offset_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Offset End"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "dense_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dense Score"
+          },
+          "lexical_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lexical Score"
+          },
+          "rerank_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rerank Score"
+          },
+          "fusion_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fusion Score"
+          },
+          "token_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Token Count"
+          },
+          "calibrated_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Calibrated Score"
+          },
+          "recency_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Recency Score"
+          },
+          "section_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Section Score"
+          },
+          "source_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Score"
+          },
+          "evidence_grade_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evidence Grade Score"
+          },
+          "noise_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Noise Score"
+          },
+          "safety_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Safety Score"
+          },
+          "contradiction_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contradiction Score"
+          },
+          "facet_scores": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Facet Scores",
+            "type": "object"
+          },
+          "selected_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Selected Reason"
+          },
+          "agent_scores": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Agent Scores",
+            "type": "object"
+          },
+          "retrieved_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Retrieved By",
+            "type": "array"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "doc_id",
+          "source_type",
+          "text"
+        ],
+        "title": "CandidatePassage",
+        "type": "object"
+      },
+      "ClinicalScope": {
+        "description": "Clinical output boundary enforced by the runtime.",
+        "enum": [
+          "clinician_cds",
+          "differential_dx",
+          "patient_advice"
+        ],
+        "title": "ClinicalScope",
+        "type": "string"
+      },
+      "ContradictionLedger": {
+        "description": "Audit artefact: contradiction ledger.",
+        "properties": {
+          "pairs": {
+            "items": {
+              "$ref": "#/$defs/ContradictionPair"
+            },
+            "title": "Pairs",
+            "type": "array"
+          },
+          "unresolved_high": {
+            "default": 0,
+            "title": "Unresolved High",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "title": "ContradictionLedger",
+        "type": "object"
+      },
+      "ContradictionPair": {
+        "description": "High-grade incompatible evidence that must not be averaged away.",
+        "properties": {
+          "facet": {
+            "title": "Facet",
+            "type": "string"
+          },
+          "chunk_id_a": {
+            "title": "Chunk Id A",
+            "type": "string"
+          },
+          "chunk_id_b": {
+            "title": "Chunk Id B",
+            "type": "string"
+          },
+          "severity": {
+            "default": "medium",
+            "title": "Severity",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "resolved": {
+            "default": false,
+            "title": "Resolved",
+            "type": "boolean"
+          },
+          "adjudication": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Adjudication"
+          },
+          "grade_a": {
+            "default": 0.0,
+            "title": "Grade A",
+            "type": "number"
+          },
+          "grade_b": {
+            "default": 0.0,
+            "title": "Grade B",
+            "type": "number"
+          }
+        },
+        "required": [
+          "facet",
+          "chunk_id_a",
+          "chunk_id_b",
+          "reason"
+        ],
+        "title": "ContradictionPair",
+        "type": "object"
+      },
+      "EMRSummary": {
+        "description": "Structured patient state summary (legacy-compatible).",
+        "properties": {
+          "patient_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Patient Id"
+          },
+          "timeline": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Timeline",
+            "type": "array"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "medications": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Medications",
+            "type": "array"
+          },
+          "allergies": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allergies",
+            "type": "array"
+          },
+          "vitals": {
+            "additionalProperties": true,
+            "title": "Vitals",
+            "type": "object"
+          },
+          "labs": {
+            "additionalProperties": true,
+            "title": "Labs",
+            "type": "object"
+          },
+          "contraindications_flags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Contraindications Flags",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/$defs/EvidenceClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          }
+        },
+        "title": "EMRSummary",
+        "type": "object"
+      },
+      "EvidenceBundle": {
+        "description": "Selected evidence bundle under token budget.",
+        "properties": {
+          "passages": {
+            "items": {
+              "$ref": "#/$defs/CandidatePassage"
+            },
+            "title": "Passages",
+            "type": "array"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          },
+          "cpg_count": {
+            "title": "Cpg Count",
+            "type": "integer"
+          },
+          "emr_count": {
+            "title": "Emr Count",
+            "type": "integer"
+          },
+          "lit_count": {
+            "title": "Lit Count",
+            "type": "integer"
+          },
+          "safety_count": {
+            "default": 0,
+            "title": "Safety Count",
+            "type": "integer"
+          },
+          "coverage_ratios": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Coverage Ratios",
+            "type": "object"
+          },
+          "facet_coverage": {
+            "items": {
+              "$ref": "#/$defs/FacetCoverage"
+            },
+            "title": "Facet Coverage",
+            "type": "array"
+          },
+          "evidence_ledger": {
+            "items": {
+              "$ref": "#/$defs/EvidenceLedgerEntry"
+            },
+            "title": "Evidence Ledger",
+            "type": "array"
+          },
+          "contradictions": {
+            "items": {
+              "$ref": "#/$defs/ContradictionPair"
+            },
+            "title": "Contradictions",
+            "type": "array"
+          },
+          "policy_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PolicyDecision"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "passages",
+          "total_tokens",
+          "cpg_count",
+          "emr_count",
+          "lit_count"
+        ],
+        "title": "EvidenceBundle",
+        "type": "object"
+      },
+      "EvidenceClaim": {
+        "description": "Claim-level evidence emitted by retrieval or specialist agents.",
+        "properties": {
+          "facet": {
+            "title": "Facet",
+            "type": "string"
+          },
+          "claim": {
+            "title": "Claim",
+            "type": "string"
+          },
+          "polarity": {
+            "$ref": "#/$defs/EvidencePolarity",
+            "default": "supports"
+          },
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "confidence": {
+            "default": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "evidence_grade": {
+            "$ref": "#/$defs/EvidenceGrade"
+          },
+          "calibrated_relevance": {
+            "default": 0.0,
+            "title": "Calibrated Relevance",
+            "type": "number"
+          },
+          "agent_id": {
+            "default": "retrieval",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          }
+        },
+        "required": [
+          "facet",
+          "claim",
+          "chunk_id"
+        ],
+        "title": "EvidenceClaim",
+        "type": "object"
+      },
+      "EvidenceGrade": {
+        "description": "Evidence hierarchy metadata used by policy-aware selection.",
+        "properties": {
+          "label": {
+            "default": "ungraded",
+            "title": "Label",
+            "type": "string"
+          },
+          "score": {
+            "default": 0.5,
+            "title": "Score",
+            "type": "number"
+          },
+          "source_reliability": {
+            "default": 0.5,
+            "title": "Source Reliability",
+            "type": "number"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rationale"
+          },
+          "vector": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Vector",
+            "type": "object"
+          }
+        },
+        "title": "EvidenceGrade",
+        "type": "object"
+      },
+      "EvidenceLedgerEntry": {
+        "description": "Auditable passage-level evidence ledger entry.",
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "doc_id": {
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "source_type": {
+            "$ref": "#/$defs/SourceType"
+          },
+          "agent_id": {
+            "default": "retrieval",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "facets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Facets",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/$defs/EvidenceClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "calibrated_relevance": {
+            "default": 0.0,
+            "title": "Calibrated Relevance",
+            "type": "number"
+          },
+          "fusion_score": {
+            "default": 0.0,
+            "title": "Fusion Score",
+            "type": "number"
+          },
+          "evidence_grade": {
+            "$ref": "#/$defs/EvidenceGrade"
+          },
+          "safety_relevance": {
+            "default": 0.0,
+            "title": "Safety Relevance",
+            "type": "number"
+          },
+          "contradiction_risk": {
+            "default": 0.0,
+            "title": "Contradiction Risk",
+            "type": "number"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "doc_id",
+          "source_type"
+        ],
+        "title": "EvidenceLedgerEntry",
+        "type": "object"
+      },
+      "EvidencePolarity": {
+        "description": "How a passage or claim relates to a clinical facet.",
+        "enum": [
+          "supports",
+          "contradicts",
+          "qualifies",
+          "safety",
+          "irrelevant"
+        ],
+        "title": "EvidencePolarity",
+        "type": "string"
+      },
+      "FacetCoverage": {
+        "description": "Noisy-OR facet coverage and uncertainty estimate.",
+        "properties": {
+          "facet": {
+            "title": "Facet",
+            "type": "string"
+          },
+          "required": {
+            "default": true,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "threshold": {
+            "default": 0.7,
+            "title": "Threshold",
+            "type": "number"
+          },
+          "coverage_probability": {
+            "default": 0.0,
+            "title": "Coverage Probability",
+            "type": "number"
+          },
+          "lower_confidence_bound": {
+            "default": 0.0,
+            "title": "Lower Confidence Bound",
+            "type": "number"
+          },
+          "entropy": {
+            "default": 0.0,
+            "title": "Entropy",
+            "type": "number"
+          },
+          "status": {
+            "default": "missing",
+            "title": "Status",
+            "type": "string"
+          },
+          "supporting_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supporting Chunk Ids",
+            "type": "array"
+          },
+          "contradicting_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Contradicting Chunk Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "facet"
+        ],
+        "title": "FacetCoverage",
+        "type": "object"
+      },
+      "FacetMatrix": {
+        "description": "Audit artefact: facet-coverage matrix for a query.",
+        "properties": {
+          "query": {
+            "default": "",
+            "title": "Query",
+            "type": "string"
+          },
+          "iteration": {
+            "default": 0,
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/FacetCoverage"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "title": "FacetMatrix",
+        "type": "object"
+      },
+      "GuidelineSummary": {
+        "description": "Guideline synthesis with recommendations (legacy-compatible).",
+        "properties": {
+          "recommendations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recommendations",
+            "type": "array"
+          },
+          "contraindications": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Contraindications",
+            "type": "array"
+          },
+          "guideline_strength": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Guideline Strength"
+          },
+          "guideline_grade": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Guideline Grade"
+          },
+          "source_guidelines": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Guidelines",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/$defs/EvidenceClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          }
+        },
+        "title": "GuidelineSummary",
+        "type": "object"
+      },
+      "PolicyAction": {
+        "description": "Deterministic policy action chosen after evidence review.",
+        "enum": [
+          "accept",
+          "retrieve_more",
+          "insufficient_evidence",
+          "require_clarification"
+        ],
+        "title": "PolicyAction",
+        "type": "string"
+      },
+      "PolicyDecision": {
+        "description": "Enterprise evidence policy decision for a retrieval iteration.",
+        "properties": {
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "action": {
+            "$ref": "#/$defs/PolicyAction"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "iteration": {
+            "default": 0,
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "clinical_scope": {
+            "$ref": "#/$defs/ClinicalScope",
+            "default": "clinician_cds"
+          },
+          "facet_coverage": {
+            "items": {
+              "$ref": "#/$defs/FacetCoverage"
+            },
+            "title": "Facet Coverage",
+            "type": "array"
+          },
+          "contradictions": {
+            "items": {
+              "$ref": "#/$defs/ContradictionPair"
+            },
+            "title": "Contradictions",
+            "type": "array"
+          },
+          "marginal_utility_per_token": {
+            "default": 0.0,
+            "title": "Marginal Utility Per Token",
+            "type": "number"
+          },
+          "unresolved_critical_conflicts": {
+            "default": false,
+            "title": "Unresolved Critical Conflicts",
+            "type": "boolean"
+          },
+          "missing_facets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Facets",
+            "type": "array"
+          },
+          "retrieval_hints": {
+            "additionalProperties": true,
+            "title": "Retrieval Hints",
+            "type": "object"
+          },
+          "routed_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Routed Agent"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "passed",
+          "action",
+          "reason"
+        ],
+        "title": "PolicyDecision",
+        "type": "object"
+      },
+      "RerankTrace": {
+        "description": "Audit artefact: calibrated relevance and select/reject.",
+        "properties": {
+          "iteration": {
+            "default": 0,
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "scores": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Scores",
+            "type": "array"
+          },
+          "calibration_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Calibration Version"
+          },
+          "selected_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Selected Chunk Ids",
+            "type": "array"
+          },
+          "rejected_chunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rejected Chunk Ids",
+            "type": "array"
+          }
+        },
+        "title": "RerankTrace",
+        "type": "object"
+      },
+      "RetrievalTrace": {
+        "description": "Audit artefact: which agent retrieved each passage.",
+        "properties": {
+          "iteration": {
+            "default": 0,
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "candidates": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "dense_count": {
+            "default": 0,
+            "title": "Dense Count",
+            "type": "integer"
+          },
+          "lexical_count": {
+            "default": 0,
+            "title": "Lexical Count",
+            "type": "integer"
+          },
+          "union_count": {
+            "default": 0,
+            "title": "Union Count",
+            "type": "integer"
+          },
+          "hints": {
+            "additionalProperties": true,
+            "title": "Hints",
+            "type": "object"
+          }
+        },
+        "title": "RetrievalTrace",
+        "type": "object"
+      },
+      "SafetyReport": {
+        "description": "Safety critique report (legacy-compatible).",
+        "properties": {
+          "missing_evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Evidence",
+            "type": "array"
+          },
+          "conflicts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "unsafe_suggestions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unsafe Suggestions",
+            "type": "array"
+          },
+          "insufficient_evidence": {
+            "default": false,
+            "title": "Insufficient Evidence",
+            "type": "boolean"
+          },
+          "requires_clarification": {
+            "default": false,
+            "title": "Requires Clarification",
+            "type": "boolean"
+          },
+          "clarification_questions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Clarification Questions",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/$defs/EvidenceClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          }
+        },
+        "title": "SafetyReport",
+        "type": "object"
+      },
+      "SourceType": {
+        "description": "Source type for documents and passages.",
+        "enum": [
+          "CPG",
+          "EMR",
+          "LIT",
+          "SAFETY"
+        ],
+        "title": "SourceType",
+        "type": "string"
+      },
+      "SufficiencyCheck": {
+        "description": "Evidence sufficiency check result.",
+        "properties": {
+          "iteration": {
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "kappa_cpg": {
+            "title": "Kappa Cpg",
+            "type": "number"
+          },
+          "kappa_emr": {
+            "title": "Kappa Emr",
+            "type": "number"
+          },
+          "mean_confidence": {
+            "title": "Mean Confidence",
+            "type": "number"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "action_taken": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Action Taken"
+          },
+          "facet_coverage": {
+            "items": {
+              "$ref": "#/$defs/FacetCoverage"
+            },
+            "title": "Facet Coverage",
+            "type": "array"
+          },
+          "contradiction_count": {
+            "default": 0,
+            "title": "Contradiction Count",
+            "type": "integer"
+          },
+          "missing_facets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Facets",
+            "type": "array"
+          },
+          "marginal_utility_per_token": {
+            "default": 0.0,
+            "title": "Marginal Utility Per Token",
+            "type": "number"
+          },
+          "policy_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PolicyDecision"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "iteration",
+          "kappa_cpg",
+          "kappa_emr",
+          "mean_confidence",
+          "passed"
+        ],
+        "title": "SufficiencyCheck",
+        "type": "object"
+      },
+      "SufficiencyDecision": {
+        "description": "Audit artefact: final sufficiency decision.",
+        "properties": {
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "action": {
+            "$ref": "#/$defs/PolicyAction"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "iteration": {
+            "default": 0,
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "missing_facets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Facets",
+            "type": "array"
+          },
+          "unresolved_critical_conflicts": {
+            "default": false,
+            "title": "Unresolved Critical Conflicts",
+            "type": "boolean"
+          },
+          "marginal_utility_per_token": {
+            "default": 0.0,
+            "title": "Marginal Utility Per Token",
+            "type": "number"
+          },
+          "routed_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Routed Agent"
+          }
+        },
+        "required": [
+          "passed",
+          "action",
+          "reason"
+        ],
+        "title": "SufficiencyDecision",
+        "type": "object"
+      },
+      "ToolCall": {
+        "description": "Tool call in trace.",
+        "properties": {
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Result"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_name",
+          "parameters"
+        ],
+        "title": "ToolCall",
+        "type": "object"
+      }
+    },
+    "description": "Full audit trace for a request.",
+    "properties": {
+      "trace_id": {
+        "title": "Trace Id",
+        "type": "string"
+      },
+      "session_id": {
+        "title": "Session Id",
+        "type": "string"
+      },
+      "user_id": {
+        "title": "User Id",
+        "type": "string"
+      },
+      "org_id": {
+        "title": "Org Id",
+        "type": "string"
+      },
+      "query": {
+        "title": "Query",
+        "type": "string"
+      },
+      "patient_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Patient Id"
+      },
+      "created_at": {
+        "format": "date-time",
+        "title": "Created At",
+        "type": "string"
+      },
+      "completed_at": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Completed At"
+      },
+      "messages": {
+        "items": {
+          "$ref": "#/$defs/AgentMessage"
+        },
+        "title": "Messages",
+        "type": "array"
+      },
+      "tool_calls": {
+        "items": {
+          "$ref": "#/$defs/ToolCall"
+        },
+        "title": "Tool Calls",
+        "type": "array"
+      },
+      "evidence_bundle": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/EvidenceBundle"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "sufficiency_checks": {
+        "items": {
+          "$ref": "#/$defs/SufficiencyCheck"
+        },
+        "title": "Sufficiency Checks",
+        "type": "array"
+      },
+      "policy_decisions": {
+        "items": {
+          "$ref": "#/$defs/PolicyDecision"
+        },
+        "title": "Policy Decisions",
+        "type": "array"
+      },
+      "evidence_ledger": {
+        "items": {
+          "$ref": "#/$defs/EvidenceLedgerEntry"
+        },
+        "title": "Evidence Ledger",
+        "type": "array"
+      },
+      "facet_coverage": {
+        "items": {
+          "$ref": "#/$defs/FacetCoverage"
+        },
+        "title": "Facet Coverage",
+        "type": "array"
+      },
+      "contradictions": {
+        "items": {
+          "$ref": "#/$defs/ContradictionPair"
+        },
+        "title": "Contradictions",
+        "type": "array"
+      },
+      "final_answer": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Final Answer"
+      },
+      "citations": {
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "title": "Citations",
+        "type": "array"
+      },
+      "retrieval_traces": {
+        "items": {
+          "$ref": "#/$defs/RetrievalTrace"
+        },
+        "title": "Retrieval Traces",
+        "type": "array"
+      },
+      "rerank_traces": {
+        "items": {
+          "$ref": "#/$defs/RerankTrace"
+        },
+        "title": "Rerank Traces",
+        "type": "array"
+      },
+      "facet_matrix": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/FacetMatrix"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "contradiction_ledger": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ContradictionLedger"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "sufficiency_decision": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/SufficiencyDecision"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "answer_provenance": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AnswerProvenance"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "emr_summary": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/EMRSummary"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "guideline_summary": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/GuidelineSummary"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "safety_report": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/SafetyReport"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "degraded_mode": {
+        "additionalProperties": {
+          "type": "boolean"
+        },
+        "title": "Degraded Mode",
+        "type": "object"
+      }
+    },
+    "required": [
+      "trace_id",
+      "session_id",
+      "user_id",
+      "org_id",
+      "query"
+    ],
+    "title": "AuditTrace",
+    "type": "object"
+  }
+}

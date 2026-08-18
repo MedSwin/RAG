@@ -166,14 +166,36 @@ MSAS = 0.25 critical_facet_recall
 
 > For publication, replace `groundedness_proxy` and `clinical_quality_proxy` with blinded clinician or rubric-based claim adjudication. Keep the automatic metrics as reproducible system diagnostics.
 
-## Comparision
+## Comparison
+
+The runtime now exposes a first-class naive-RAG control (`POST /api/v1/naive/chat`) that reuses the same embeddings, ANN index, Mongo corpus, and LLM as `/medswin/chat`. Operator manual: [`docs/NAIVE_RAG.md`](../docs/NAIVE_RAG.md).
 
 Evaluate the same cases under these configurations:
 
-1. LLM-only best model, no retrieval.
-2. Naive RAG top-K.
-3. RAG + MedSwin-Rerank.
-4. Full MedSwin without MAC.
-5. Full MedSwin.
+1. LLM-only best model, no retrieval (not implemented in this harness).
+2. Naive RAG top-K — **implemented**: set `"pipeline": "naive_rag"` on `POST /api/run`.
+3. RAG + MedSwin-Rerank (not a separate route; disable MAC/gate only by changing runtime code).
+4. Full MedSwin without MAC (not a separate route).
+5. Full MedSwin — **implemented**: `"pipeline": "medswin"` (default).
 
-This isolates whether the whole system improves evidence coverage, safety, provenance, and sufficiency behavior beyond model-level generation and reranking.
+To run 2 and 5 back-to-back and write a delta file:
+
+```bash
+curl -X POST http://localhost:8200/api/run \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "cases_path": "data/sample/cases.jsonl",
+    "max_cases": 2,
+    "pipeline": "both"
+  }'
+```
+
+Or from the repo root, with MedSwin already healthy:
+
+```bash
+python3 eval/scripts/run_pipeline_compare.py \
+  --cases-path eval/data/sample/cases.jsonl \
+  --max-cases 2
+```
+
+This isolates whether the whole system improves evidence coverage, safety, provenance, and sufficiency behavior beyond model-level generation and naive top-K stuffing.

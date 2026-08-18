@@ -174,6 +174,8 @@ def select_bundle(
                 best_idx = idx
         if best_idx < 0:
             break
+        if selected and best_score <= settings.SUFF_MIN_MARGINAL_UTILITY:
+            break
         chosen = remaining.pop(best_idx)
         chosen.selected_reason = f"marginal_utility_per_token={best_score:.6f}"
         used_tokens += token_count(chosen)

@@ -54,13 +54,18 @@ def apply_hints(
     expanded = expand_query(query, hints)
 
     source_filter: Optional[SourceType] = None
+    # Exclusive source focus only when a single source is requested.
+    # Multiple missing facets must not starve CPG while searching SAFETY (or vice versa).
     focus = hints.get("focus_source")
-    if focus:
+    exclusive = bool(hints.get("exclusive_source", True))
+    if focus and exclusive:
         try:
             source_filter = SourceType(str(focus).upper())
             constraints["source_policy"] = f"{source_filter.value}_ONLY"
         except ValueError:
             pass
+    elif focus and not exclusive:
+        constraints["preferred_source"] = str(focus).upper()
 
     if hints.get("safety_search"):
         constraints["safety_search"] = True

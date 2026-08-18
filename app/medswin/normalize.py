@@ -77,10 +77,9 @@ class QueryNormalizer:
                 ClinicalFacet(**item) if isinstance(item, dict) else ClinicalFacet(name=str(item))
                 for item in benchmark_required_facets(None, explicit)
             ]
-        if query_spec and query_spec.facets:
-            return query_spec.facets
         threshold = settings.SUFF_CRITICAL_FACET_THRESHOLD
-        facets = [
+        patient_required = bool(patient_id) or "patient" in query.lower() or "elderly" in query.lower()
+        fallback = [
             ClinicalFacet(
                 name="guideline_concordance",
                 required=True,
@@ -97,9 +96,6 @@ class QueryNormalizer:
                 source_policy="SAFETY",
                 keywords=["contraindication", "avoid", "adverse", "risk", "allergy", "interaction"],
             ),
-        ]
-        patient_required = bool(patient_id) or "patient" in query.lower() or "elderly" in query.lower()
-        facets.append(
             ClinicalFacet(
                 name="patient_applicability",
                 required=patient_required,
@@ -107,9 +103,7 @@ class QueryNormalizer:
                 weight=1.05,
                 source_policy="EMR" if patient_required else "ANY",
                 keywords=["patient", "history", "medication", "lab", "allergy", "comorbidity", "age"],
-            )
-        )
-        facets.append(
+            ),
             ClinicalFacet(
                 name="evidence_quality",
                 required=True,
@@ -117,9 +111,27 @@ class QueryNormalizer:
                 weight=0.95,
                 source_policy="ANY",
                 keywords=["grade", "evidence", "trial", "review", "recommendation", "version"],
+            ),
+        ]
+        if not query_spec or not query_spec.facets:
+            return fallback
+        # Paper: LLM facets enrich F(q); they must not drop the critical fallback set.
+        merged = {facet.name: facet for facet in fallback}
+        for facet in query_spec.facets:
+            current = merged.get(facet.name)
+            if current is None:
+                merged[facet.name] = facet
+                continue
+            merged[facet.name] = current.model_copy(
+                update={
+                    "required": current.required or facet.required,
+                    "threshold": max(current.threshold, facet.threshold) if facet.threshold else current.threshold,
+                    "weight": max(current.weight, facet.weight),
+                    "keywords": list(dict.fromkeys(list(current.keywords) + list(facet.keywords))),
+                    "source_policy": facet.source_policy or current.source_policy,
+                }
             )
-        )
-        return facets
+        return list(merged.values())
 
     async def normalize(self, query: str, trace: Optional[AuditTrace] = None) -> QuerySpec:
         try:

@@ -42,6 +42,24 @@ Response includes:
 
 If evidence is insufficient, the endpoint returns `200` with a bounded insufficient-evidence CDS answer and `policy_decision.passed=false`.
 
+Response also includes `pipeline` (`medswin` by default).
+
+## `POST /naive/chat`
+
+Naive-RAG control used to benchmark the full pipeline. Same request fields as `/medswin/chat`, plus optional `top_k`.
+
+Pipeline: embed query → dense ANN top-K → one generation call. No BM25, reranker, MAC, or sufficiency gate. Generation always proceeds.
+
+Response is a `ChatResponse` with `pipeline=naive_rag`, `retrieval_backend` (`ann` / `mongo_cosine` / `empty`), and `timing_ms`.
+
+## `POST /naive/compare`
+
+Runs `/naive/chat` and `/medswin/chat` on the same body and returns `{query, naive, medswin, diff}`.
+
+`diff` includes chunk-id overlap, Jaccard, whether MedSwin abstained, and wall-clock timings.
+
+See [`docs/NAIVE_RAG.md`](NAIVE_RAG.md) for the fairness contract and terminal workflow.
+
 ## `GET /medswin/sessions/{session_id}`
 
 Returns a scoped session summary.

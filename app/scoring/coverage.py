@@ -51,7 +51,8 @@ def score_passage_facets(
         keyword_score = min(0.65, len(matched) * 0.18)
         section_score = passage.section_score if passage.section_score is not None else 0.5
         safety_bonus = 0.25 if facet.name == "safety_contraindications" and _safety_score(passage) > 0 else 0.0
-        if source_bonus == 0.0 and not matched and safety_bonus == 0.0:
+        if not matched and safety_bonus == 0.0 and source_bonus < 0.45:
+            # Source-policy affinity alone must not mark an unrelated facet as covered.
             scores[facet.name] = 0.0
         else:
             scores[facet.name] = clamp(0.20 + source_bonus + keyword_score + 0.15 * section_score + safety_bonus)
@@ -65,11 +66,11 @@ def _binary_entropy(probability: float) -> float:
 
 
 def _contribution(claim: EvidenceClaim, entry: EvidenceLedgerEntry) -> float:
-    """Paper coverage term: a_dj * p_hat * g_EBM."""
+    """Paper coverage term: a_dj * p_hat * g_EBM. No floors that inflate π_j."""
     a_dj = clamp(claim.confidence)
     p_hat = clamp(entry.calibrated_relevance or claim.calibrated_relevance or 0.0)
     g_ebm = clamp(entry.evidence_grade.score if entry.evidence_grade else claim.evidence_grade.score)
-    contribution = clamp(a_dj * max(p_hat, 0.35) * max(g_ebm, 0.35))
+    contribution = clamp(a_dj * p_hat * g_ebm)
     if claim.polarity == EvidencePolarity.CONTRADICTS:
         contribution *= 0.35
     return contribution
@@ -105,16 +106,30 @@ def compute_facet_coverage(
         contributions: List[float] = []
         supporting: List[str] = []
         contradicting: List[str] = []
+        # One contribution per passage, then one per parent document.
+        # Heuristic+agent claims on the same chunk must not inflate π_j.
+        best_by_chunk: Dict[str, float] = {}
+        doc_of_chunk: Dict[str, str] = {}
         for entry in ledger:
             for claim in entry.claims:
                 if claim.facet != facet.name:
                     continue
                 contrib = _contribution(claim, entry)
-                contributions.append(contrib)
+                prev = best_by_chunk.get(entry.chunk_id)
+                if prev is None or contrib > prev:
+                    best_by_chunk[entry.chunk_id] = contrib
+                    doc_of_chunk[entry.chunk_id] = entry.doc_id or entry.chunk_id
                 if claim.polarity == EvidencePolarity.CONTRADICTS:
                     contradicting.append(entry.chunk_id)
-                else:
+                elif claim.polarity != EvidencePolarity.IRRELEVANT:
                     supporting.append(entry.chunk_id)
+        best_by_doc: Dict[str, float] = {}
+        for chunk_id, contrib in best_by_chunk.items():
+            doc_id = doc_of_chunk.get(chunk_id, chunk_id)
+            prev = best_by_doc.get(doc_id)
+            if prev is None or contrib > prev:
+                best_by_doc[doc_id] = contrib
+        contributions = list(best_by_doc.values())
         no_support = 1.0
         for c in contributions:
             no_support *= 1.0 - clamp(c)

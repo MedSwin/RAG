@@ -40,6 +40,7 @@ class RunRequest(BaseModel):
     guideline_only: bool = False
     min_evidence_grade: float = 0.3
     clinical_scope: str = "clinician_cds"
+    pipeline: Literal["medswin", "naive_rag", "both"] = "medswin"
 
 
 class CaseAudit(BaseModel):

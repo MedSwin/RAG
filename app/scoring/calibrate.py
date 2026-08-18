@@ -40,7 +40,12 @@ class CalibrationStore:
             temp = float(data.get("T", data.get("temperature", 1.0)))
             self.temperature = temp if temp > 1e-6 else 1.0
             self.version = str(data.get("version", "platt:loaded"))
-            self.loaded = True
+            # Identity / default artifacts are loadable hooks, not fitted policy calibration.
+            identity = (
+                "identity" in self.version.lower()
+                or (abs(self.bias) < 1e-12 and abs(self.temperature - 1.0) < 1e-12)
+            )
+            self.loaded = not identity
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to load calibration artifact: %s", exc)
             self.version = "identity:error"

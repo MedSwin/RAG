@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     
     # Retrieval settings
     DEFAULT_TOP_K: int = 5
+    # Naive-RAG baseline: dense top-K only (no BM25, rerank, MAC, or gate)
+    NAIVE_TOP_K: int = 5
+    NAIVE_MAX_CONTEXT_CHARS: int = 8000
+    NAIVE_ENABLE_MONGO_FALLBACK: bool = True
+    NAIVE_MONGO_SCAN_LIMIT: int = 4000
     CANDIDATE_K: int = 80
     CANDIDATE_K_PRIME: int = 120
     MAX_RETRIEVE_LOOPS: int = 3
