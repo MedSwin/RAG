@@ -27,8 +27,10 @@ import ir_datasets
 # from either the `eval/` directory or the repo root, so `eval/` is not always
 # on `sys.path`. We add the package root explicitly before importing `app`.
 EVAL_ROOT = Path(__file__).resolve().parents[1]
-if str(EVAL_ROOT) not in sys.path:
-    sys.path.insert(0, str(EVAL_ROOT))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+for root in (EVAL_ROOT, REPO_ROOT):
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
 
 from app.io import write_jsonl
 from facets import benchmark_facet_templates

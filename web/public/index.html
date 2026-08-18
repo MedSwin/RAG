@@ -15,13 +15,15 @@
     *{box-sizing:border-box} body{margin:0}
     .shell{max-width:1280px;margin:0 auto;padding:28px 20px 48px;display:grid;gap:22px}
     h1{font-family:Fraunces,Georgia,serif;font-size:clamp(2.4rem,5vw,3.6rem);color:var(--sea-deep);margin:0}
-    .brand p{max-width:52ch;color:rgba(20,32,28,.72);line-height:1.5}
+    .brand p{max-width:64ch;color:rgba(20,32,28,.72);line-height:1.5}
+    .nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    .nav a{display:inline-flex;padding:6px 10px;border-radius:999px;border:1px solid var(--line);background:rgba(255,252,246,.8);color:var(--sea-deep);text-decoration:none;font-size:.82rem;font-weight:700}
     .workspace{display:grid;grid-template-columns:minmax(280px,.95fr) minmax(320px,1.2fr);gap:18px}
     @media(max-width:960px){.workspace{grid-template-columns:1fr}}
     .panel{background:rgba(255,252,246,.88);border:1px solid var(--line);border-radius:22px;box-shadow:0 18px 50px rgba(18,40,32,.08);padding:18px}
     h2{margin:0 0 12px;font-size:.95rem;letter-spacing:.04em;text-transform:uppercase;color:var(--sea-deep)}
     label{display:block;margin-top:12px;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:rgba(20,32,28,.62)}
-    input,textarea{width:100%;margin-top:6px;border:1px solid var(--line);border-radius:12px;padding:11px 12px;background:#fffdf8;font:inherit}
+    input,textarea,select{width:100%;margin-top:6px;border:1px solid var(--line);border-radius:12px;padding:11px 12px;background:#fffdf8;font:inherit}
     textarea{min-height:120px}
     button{margin-top:16px;border:0;border-radius:999px;padding:12px 18px;background:var(--sea);color:#f7fff9;font-weight:700;cursor:pointer}
     button:disabled{opacity:.55}
@@ -33,17 +35,31 @@
     .meta{color:rgba(20,32,28,.62);font-size:.86rem}
     pre{overflow:auto;max-height:280px;background:#13241f;color:#d7f3ea;border-radius:12px;padding:12px;font-size:12px}
     .error{color:var(--bad);font-weight:600;margin-top:12px}
+    .compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media(max-width:1100px){.compare{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
   <div class="shell">
     <header class="brand">
       <h1>MedSwin</h1>
-      <p>Evidence-gated clinician decision support — retrieve enough, know when evidence is insufficient, and expose a reviewable audit trace.</p>
+      <p>Evidence-gated clinician decision support. Run the full system, the naive-RAG control, or both, then inspect the audit on this page.</p>
+      <nav class="nav">
+        <a href="/app/">Clinician CDS</a>
+        <a href="/api/v1/dashboard/">Ops dashboard</a>
+        <a href="/docs">OpenAPI</a>
+        <a id="evalLink" href="http://127.0.0.1:8200/">Eval portal</a>
+      </nav>
     </header>
     <div class="workspace">
       <form class="panel" id="form">
         <h2>Clinical query</h2>
+        <label>Pipeline</label>
+        <select id="pipeline">
+          <option value="full">Full MedSwin</option>
+          <option value="naive">Naive RAG</option>
+          <option value="both">Compare both</option>
+        </select>
         <label>Question</label>
         <textarea id="query" required placeholder="Can this patient continue metformin after the latest renal-function result?"></textarea>
         <label>Patient ID</label>
@@ -52,6 +68,8 @@
         <input id="org" value="demo-org" />
         <label>User</label>
         <input id="user" value="clinician-1" />
+        <label>Naive top-K</label>
+        <input id="topk" type="number" min="1" max="20" value="5" />
         <button id="btn" type="submit">Ask MedSwin</button>
         <div class="error" id="error"></div>
       </form>
@@ -66,11 +84,49 @@
     const out = document.getElementById('out');
     const err = document.getElementById('error');
     const btn = document.getElementById('btn');
+    const pipelineEl = document.getElementById('pipeline');
+    document.getElementById('evalLink').href =
+      `${location.protocol}//${location.hostname}:8200/`;
+
+    function pathFor(pipeline) {
+      if (pipeline === 'naive') return '/api/v1/naive/chat';
+      if (pipeline === 'both') return '/api/v1/naive/compare';
+      return '/api/v1/medswin/chat';
+    }
+    function buttonLabel(pipeline) {
+      if (pipeline === 'naive') return 'Ask naive-RAG';
+      if (pipeline === 'both') return 'Compare both';
+      return 'Ask MedSwin';
+    }
+    pipelineEl.onchange = () => { btn.textContent = buttonLabel(pipelineEl.value); };
+
+    function renderOne(data, title) {
+      const action = (data.policy_decision || data.sufficiency_decision || {}).action || 'pending';
+      const facets = data.facet_coverage || [];
+      const passages = (data.evidence_bundle || {}).passages || [];
+      const contradictions = data.contradictions || [];
+      return `
+        ${title ? `<h2>${title}</h2>` : ''}
+        <div class="chip ${action}">${escapeHtml(String(action).replaceAll('_',' '))}</div>
+        <p class="meta">${escapeHtml(data.pipeline || 'medswin')} · ${escapeHtml(data.retrieval_backend || 'n/a')} · trace ${escapeHtml(data.trace_id || '')} · ${(data.citations||[]).length} citations</p>
+        <p class="answer">${escapeHtml(data.answer || '')}</p>
+        <h2 style="margin-top:22px">Facet coverage</h2>
+        ${facets.map(r => `<div class="row"><strong>${escapeHtml(r.facet)} · ${escapeHtml(r.status)}</strong><div class="meta">LCB ${(r.lower_confidence_bound||0).toFixed(2)}</div></div>`).join('') || '<p class="meta">None — expected for naive-RAG.</p>'}
+        <h2 style="margin-top:22px">Citations</h2>
+        ${(data.citations||[]).map(c => `<div class="row"><strong>${escapeHtml(c.source_type||'')} · ${escapeHtml(c.chunk_id||'')}</strong><div class="meta">doc ${escapeHtml(c.doc_id||'')}</div></div>`).join('') || '<p class="meta">None</p>'}
+        <h2 style="margin-top:22px">Evidence bundle</h2>
+        ${passages.map(p => `<div class="row"><strong>${escapeHtml(p.source_type)} · ${escapeHtml(p.chunk_id)}</strong><div class="meta">dense ${(p.dense_score||0).toFixed(2)}</div><p>${escapeHtml((p.text||'').slice(0,320))}</p></div>`).join('') || '<p class="meta">None</p>'}
+        <h2 style="margin-top:22px">Contradiction ledger</h2>
+        ${contradictions.map(c => `<div class="row"><strong>${escapeHtml(c.facet)} · ${escapeHtml(c.severity)}</strong><p>${escapeHtml(c.reason||'')}</p></div>`).join('') || '<p class="meta">No contradictions</p>'}
+      `;
+    }
+
     form.onsubmit = async (e) => {
       e.preventDefault();
       err.textContent = '';
+      const pipeline = pipelineEl.value;
       btn.disabled = true;
-      btn.textContent = 'Running MedSwin…';
+      btn.textContent = 'Running…';
       try {
         const payload = {
           query: document.getElementById('query').value,
@@ -78,40 +134,37 @@
           org_id: document.getElementById('org').value,
           user_id: document.getElementById('user').value,
         };
-        const res = await fetch('/api/v1/medswin/chat', {
+        if (pipeline !== 'full') payload.top_k = Number(document.getElementById('topk').value) || 5;
+        const res = await fetch(pathFor(pipeline), {
           method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
         });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        let trace = null;
-        try {
-          const tr = await fetch(`/api/v1/medswin/traces/${data.trace_id}?org_id=${encodeURIComponent(payload.org_id)}&include_details=true`);
-          if (tr.ok) trace = await tr.json();
-        } catch (_) {}
-        const action = (data.policy_decision || data.sufficiency_decision || {}).action || 'pending';
-        const facets = data.facet_coverage || [];
-        const passages = (data.evidence_bundle || {}).passages || [];
-        const contradictions = data.contradictions || [];
-        out.innerHTML = `
-          <div class="chip ${action}">${String(action).replaceAll('_',' ')}</div>
-          <p class="meta">Trace ${data.trace_id} · ${(data.citations||[]).length} citations</p>
-          <p class="answer">${escapeHtml(data.answer || '')}</p>
-          <h2 style="margin-top:22px">Facet coverage</h2>
-          ${facets.map(r => `<div class="row"><strong>${escapeHtml(r.facet)} · ${escapeHtml(r.status)}</strong><div class="meta">LCB ${(r.lower_confidence_bound||0).toFixed(2)}</div></div>`).join('') || '<p class="meta">None</p>'}
-          <h2 style="margin-top:22px">Citations</h2>
-          ${(data.citations||[]).map(c => `<div class="row"><strong>${escapeHtml(c.source_type||'')} · ${escapeHtml(c.chunk_id||'')}</strong><div class="meta">doc ${escapeHtml(c.doc_id||'')}</div></div>`).join('') || '<p class="meta">None</p>'}
-          <h2 style="margin-top:22px">Evidence bundle</h2>
-          ${passages.map(p => `<div class="row"><strong>${escapeHtml(p.source_type)} · ${escapeHtml(p.chunk_id)}</strong><div class="meta">p̂ ${(p.calibrated_score||0).toFixed(2)}</div><p>${escapeHtml((p.text||'').slice(0,320))}</p></div>`).join('') || '<p class="meta">None</p>'}
-          <h2 style="margin-top:22px">Contradiction ledger</h2>
-          ${contradictions.map(c => `<div class="row"><strong>${escapeHtml(c.facet)} · ${escapeHtml(c.severity)}</strong><p>${escapeHtml(c.reason||'')}</p></div>`).join('') || '<p class="meta">No contradictions</p>'}
-          <h2 style="margin-top:22px">Audit trace</h2>
-          <pre>${escapeHtml(JSON.stringify(trace || data, null, 2))}</pre>
-        `;
+        if (pipeline === 'both') {
+          out.innerHTML = `
+            <div class="compare">
+              <div>${renderOne(data.naive || {}, 'Naive RAG')}</div>
+              <div>${renderOne(data.medswin || {}, 'Full MedSwin')}</div>
+            </div>
+            <h2 style="margin-top:22px">Diff</h2>
+            <pre>${escapeHtml(JSON.stringify(data.diff || {}, null, 2))}</pre>
+          `;
+        } else {
+          let trace = null;
+          try {
+            const tr = await fetch(`/api/v1/medswin/traces/${data.trace_id}?org_id=${encodeURIComponent(payload.org_id)}&include_details=true`);
+            if (tr.ok) trace = await tr.json();
+          } catch (_) {}
+          out.innerHTML = renderOne(data) + `
+            <h2 style="margin-top:22px">Audit trace</h2>
+            <pre>${escapeHtml(JSON.stringify(trace || data, null, 2))}</pre>
+          `;
+        }
       } catch (ex) {
         err.textContent = ex.message || String(ex);
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Ask MedSwin';
+        btn.textContent = buttonLabel(pipelineEl.value);
       }
     };
     function escapeHtml(s) {

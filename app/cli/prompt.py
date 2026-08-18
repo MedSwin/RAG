@@ -32,10 +32,12 @@ def _parser() -> argparse.ArgumentParser:
               naive   POST /api/v1/naive/chat     (embed → dense top-K → generate)
               both    POST /api/v1/naive/compare  (same query, side-by-side)
 
-            The CLI talks to a running API. Start it with:
+            Preferred local entry point:
               ./scripts/start-local.sh
-            or combine setup + this prompt:
-              ./scripts/start-local.sh --prompt
+            That opens the operator console (ask, eval, portals).
+            This module is the ask engine used by that console:
+              ./scripts/start-local.sh ask --mode both --question "..."
+              python -m app.cli.prompt --mode naive --question "..."
             """
         ),
     )

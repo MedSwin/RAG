@@ -29,7 +29,7 @@ class BenchmarkCase(BaseModel):
 
 
 class RunRequest(BaseModel):
-    cases_path: str = "data/sample/cases.jsonl"
+    cases_path: str = "eval/data/sample/cases.jsonl"
     max_cases: int | None = None
     max_concurrency: int = 1
     reranker_budget: int | None = None
@@ -41,11 +41,14 @@ class RunRequest(BaseModel):
     min_evidence_grade: float = 0.3
     clinical_scope: str = "clinician_cds"
     pipeline: Literal["medswin", "naive_rag", "both"] = "medswin"
+    top_k: int | None = 5
 
 
 class CaseAudit(BaseModel):
     case_id: str
     dataset: str
+    pipeline: str | None = None
+    retrieval_backend: str | None = None
     trace_id: str | None = None
     session_id: str | None = None
     policy_passed: bool | None = None

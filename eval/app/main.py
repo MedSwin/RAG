@@ -62,12 +62,19 @@ async def list_runs() -> dict:
     for path in files:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            if path.name.endswith(".comparison.json"):
+                continue
+            config = data.get("config") or {}
+            comparison = (data.get("diagnostics") or {}).get("pipeline_comparison") or {}
+            naive_agg = comparison.get("naive_aggregate") or {}
             runs.append({
                 "run_id": data.get("run_id", path.stem),
                 "created_at": data.get("created_at"),
                 "dataset": data.get("dataset"),
                 "num_cases": data.get("num_cases"),
+                "pipeline": config.get("pipeline"),
                 "mean_msas": (data.get("aggregate") or {}).get("mean_msas"),
+                "naive_mean_msas": naive_agg.get("mean_msas"),
             })
         except Exception:  # noqa: BLE001
             continue

@@ -28,6 +28,7 @@ class _FakeClient:
         self.ingest_calls = []
         self.chat_queries = []
         self.chat_pipelines = []
+        self.chat_top_ks = []
         self.trace_calls = []
         self.request_stats = {"retries": 0, "rate_limits": 0, "timeouts": 0, "network_errors": 0}
         type(self).instances.append(self)
@@ -40,6 +41,15 @@ class _FakeClient:
 
     async def health(self):
         return {"status": "ok"}
+
+    async def naive_ready(self):
+        return {
+            "pipeline": "naive_rag",
+            "mongo": True,
+            "ready": True,
+            "chunk_count": 1,
+            "embedded_count": 1,
+        }
 
     async def storage_stats(self, org_id=None):
         active_settings = RuntimeSettings()
@@ -65,9 +75,10 @@ class _FakeClient:
         self.ingest_calls.append(case.case_id)
         return {"ingested": case.case_id}
 
-    async def chat(self, case, *, source_policy, guideline_only, min_evidence_grade, clinical_scope, pipeline="medswin"):
+    async def chat(self, case, *, source_policy, guideline_only, min_evidence_grade, clinical_scope, pipeline="medswin", top_k=None):
         self.chat_queries.append(case.query)
         self.chat_pipelines.append(pipeline)
+        self.chat_top_ks.append(top_k)
         return {
             "trace_id": f"trace-{case.case_id}",
             "answer": "Clinical decision support only.",
@@ -331,13 +342,15 @@ async def test_run_benchmark_naive_skips_medswin_architecture_errors(monkeypatch
     )
 
     class _NaiveClient(_FakeClient):
-        async def chat(self, case, *, source_policy, guideline_only, min_evidence_grade, clinical_scope, pipeline="medswin"):
+        async def chat(self, case, *, source_policy, guideline_only, min_evidence_grade, clinical_scope, pipeline="medswin", top_k=None):
             self.chat_queries.append(case.query)
             self.chat_pipelines.append(pipeline)
+            self.chat_top_ks.append(top_k)
             return {
                 "trace_id": f"trace-{case.case_id}",
                 "answer": "Naive answer.",
                 "pipeline": "naive_rag",
+                "retrieval_backend": "ann",
                 "citations": [{"doc_id": "doc-1"}],
                 "evidence_bundle": {"passages": [{"doc_id": "doc-1", "chunk_id": "c1", "source_type": "LIT"}]},
             }
@@ -354,10 +367,15 @@ async def test_run_benchmark_naive_skips_medswin_architecture_errors(monkeypatch
         run_store_dir=str(tmp_path),
         max_cases_default=25,
     )
-    run = await run_benchmark(RunRequest(cases_path="ignored.jsonl", pipeline="naive_rag"), settings)
+    run = await run_benchmark(RunRequest(cases_path="ignored.jsonl", pipeline="naive_rag", top_k=7), settings)
     assert run.config["pipeline"] == "naive_rag"
+    assert run.config["top_k"] == 7
+    assert run.config["reranker_budget"] == 0
     assert _NaiveClient.instances[0].chat_pipelines == ["naive_rag"]
+    assert _NaiveClient.instances[0].chat_top_ks == [7]
     assert run.cases[0].errors == []
+    assert run.cases[0].pipeline == "naive_rag"
+    assert run.cases[0].retrieval_backend == "ann"
 
 
 @pytest.mark.asyncio
@@ -384,7 +402,16 @@ async def test_run_benchmark_both_writes_comparison(monkeypatch, tmp_path):
     comparison = run.diagnostics["pipeline_comparison"]
     assert comparison["naive_run_id"]
     assert comparison["medswin_run_id"] == run.run_id
+    assert "mean_msas" in comparison["delta_medswin_minus_naive"]
+    assert "error_rate" in comparison["delta_medswin_minus_naive"]
+    assert comparison["naive_aggregate"]
+    assert comparison["medswin_aggregate"]
+    assert comparison["naive_config"]["pipeline"] == "naive_rag"
+    assert comparison["medswin_config"]["pipeline"] == "medswin"
     assert (tmp_path / f"{run.run_id}.comparison.json").exists()
+    pipelines = [client.chat_pipelines for client in _FakeClient.instances]
+    assert ["naive_rag"] in pipelines
+    assert ["medswin"] in pipelines
 
 
 def test_validate_qrel_coverage_rejects_missing_judged_pool():
@@ -399,3 +426,123 @@ def test_validate_qrel_coverage_rejects_missing_judged_pool():
             min_corpus_recall=0.95,
             min_index_recall=0.95,
         )
+
+
+def test_groundedness_proxy_reads_nested_ledger_claims():
+    score, penalty = groundedness_proxy(
+        {
+            "answer": "Clinical decision support only.",
+            "evidence_ledger": [
+                {
+                    "doc_id": "doc-1",
+                    "claims": [
+                        {
+                            "claim": "Metformin is usually continued when eGFR is stable.",
+                            "polarity": "supports",
+                            "chunk_id": "c1",
+                        }
+                    ],
+                }
+            ],
+            "citations": [{"doc_id": "doc-1"}],
+        },
+        {"doc-1"},
+    )
+
+    assert score == 1.0
+    assert penalty == 0.0
+
+
+@pytest.mark.asyncio
+async def test_run_benchmark_naive_flags_infrastructure_errors(monkeypatch, tmp_path):
+    case = BenchmarkCase(
+        case_id="case-1",
+        dataset="sample",
+        query="What therapy is safest?",
+        gold_facets=[GoldFacet(facet_id="treatment", name="treatment", critical=True)],
+    )
+
+    class _BrokenNaive(_FakeClient):
+        async def chat(self, case, *, source_policy, guideline_only, min_evidence_grade, clinical_scope, pipeline="medswin", top_k=None):
+            self.chat_pipelines.append(pipeline)
+            return {
+                "trace_id": f"trace-{case.case_id}",
+                "answer": "Naive RAG did not retrieve any passages.",
+                "pipeline": "naive_rag",
+                "retrieval_backend": "empty",
+                "degraded_mode": {"no_embeddings": True},
+                "citations": [],
+                "evidence_bundle": {"passages": []},
+            }
+
+    _BrokenNaive.instances = []
+    monkeypatch.setattr("eval.app.runner.read_jsonl_cases", lambda path: [case])
+    monkeypatch.setattr("eval.app.runner.MedSwinClient", _BrokenNaive)
+    settings = Settings(
+        medswin_base_url="http://medswin.test",
+        benchmark_org_id="bench-org",
+        benchmark_user_id="bench-user",
+        request_timeout_s=5.0,
+        run_store_dir=str(tmp_path),
+        max_cases_default=25,
+    )
+    run = await run_benchmark(RunRequest(cases_path="ignored.jsonl", pipeline="naive_rag"), settings)
+    assert "naive_no_embeddings" in run.cases[0].errors
+    assert run.aggregate["error_rate"] == 1.0
+    assert run.cases[0].failure_bucket == "trace_or_runtime_failure"
+
+
+@pytest.mark.asyncio
+async def test_run_benchmark_naive_concurrency_ignores_reranker_budget(monkeypatch, tmp_path):
+    _FakeClient.instances = []
+    case = BenchmarkCase(
+        case_id="case-1",
+        dataset="sample",
+        query="What therapy is safest?",
+        gold_facets=[GoldFacet(facet_id="treatment", name="treatment", critical=True)],
+    )
+    monkeypatch.setattr("eval.app.runner.read_jsonl_cases", lambda path: [case])
+    monkeypatch.setattr("eval.app.runner.MedSwinClient", _FakeClient)
+    settings = Settings(
+        medswin_base_url="http://medswin.test",
+        benchmark_org_id="bench-org",
+        benchmark_user_id="bench-user",
+        request_timeout_s=5.0,
+        run_store_dir=str(tmp_path),
+        max_cases_default=25,
+    )
+    run = await run_benchmark(
+        RunRequest(cases_path="ignored.jsonl", pipeline="naive_rag", max_concurrency=4, reranker_budget=1),
+        settings,
+    )
+    assert run.config["case_concurrency"] == 4
+    assert run.config["reranker_budget"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_benchmark_naive_preflight_rejects_missing_embeddings(monkeypatch, tmp_path):
+    class _Unready(_FakeClient):
+        async def naive_ready(self):
+            return {
+                "pipeline": "naive_rag",
+                "mongo": True,
+                "ready": True,
+                "chunk_count": 12,
+                "embedded_count": 0,
+            }
+
+    monkeypatch.setattr(
+        "eval.app.runner.read_jsonl_cases",
+        lambda path: [BenchmarkCase(case_id="case-1", dataset="sample", query="q")],
+    )
+    monkeypatch.setattr("eval.app.runner.MedSwinClient", _Unready)
+    settings = Settings(
+        medswin_base_url="http://medswin.test",
+        benchmark_org_id="bench-org",
+        benchmark_user_id="bench-user",
+        request_timeout_s=5.0,
+        run_store_dir=str(tmp_path),
+        max_cases_default=25,
+    )
+    with pytest.raises(RuntimeError, match="0 embeddings"):
+        await run_benchmark(RunRequest(cases_path="ignored.jsonl", pipeline="naive_rag"), settings)

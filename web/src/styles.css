@@ -46,9 +46,69 @@ body { min-height: 100vh; }
 
 .brand p {
   margin: 0;
-  max-width: 52ch;
+  max-width: 64ch;
   color: rgba(20, 32, 28, 0.72);
   line-height: 1.5;
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.nav a {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 252, 246, 0.8);
+  color: var(--sea-deep);
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.nav a:hover { background: #fff; }
+
+.pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pipeline label {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.pipeline label.on {
+  background: rgba(31, 106, 90, 0.12);
+  border-color: rgba(31, 106, 90, 0.35);
+}
+
+.pipeline input { width: auto; margin: 0; }
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 1100px) {
+  .compare-grid { grid-template-columns: 1fr; }
 }
 
 .workspace {
@@ -131,6 +191,7 @@ button:disabled { opacity: 0.55; cursor: wait; transform: none; }
 .chip.accept { background: rgba(31, 106, 90, 0.12); color: var(--ok); }
 .chip.retrieve_more { background: rgba(154, 107, 18, 0.14); color: var(--warn); }
 .chip.insufficient_evidence { background: rgba(155, 44, 44, 0.12); color: var(--bad); }
+.chip.pending, .chip.ungated { background: rgba(20, 32, 28, 0.08); color: var(--ink); }
 
 .answer {
   white-space: pre-wrap;

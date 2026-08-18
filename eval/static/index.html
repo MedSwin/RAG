@@ -22,22 +22,35 @@
 <body>
   <header>
     <h1>MedSwin End-to-End System Benchmark</h1>
-    <p>Facet, provenance, sufficiency, safety, and audit-trace evaluation for the full MedSwin pipeline.</p>
+    <p>Same cases, corpus, and audit metrics for full MedSwin and the naive-RAG control.</p>
+    <p style="margin:12px 0 0;font-size:14px;">
+      <a href="http://127.0.0.1:8100/app/" style="color:#dbeafe;margin-right:16px;">Clinician CDS</a>
+      <a href="http://127.0.0.1:8100/api/v1/dashboard/" style="color:#dbeafe;margin-right:16px;">Ops dashboard</a>
+      <a href="http://127.0.0.1:8100/docs" style="color:#dbeafe;">OpenAPI</a>
+    </p>
   </header>
   <main>
     <section class="card">
       <h2>Run benchmark</h2>
       <label>Cases JSONL path</label>
-      <input id="casesPath" value="data/sample/cases.jsonl" />
+      <input id="casesPath" value="eval/data/sample/cases.jsonl" />
       <p style="margin-top:8px;color:#5c6370;font-size:13px;">
         Patient context is ingested separately by default so the clinical question stays pure.
       </p>
+      <label>Pipeline</label>
+      <select id="pipeline">
+        <option value="medswin">Full MedSwin</option>
+        <option value="naive_rag">Naive RAG control</option>
+        <option value="both">Both (write comparison)</option>
+      </select>
       <label>Max cases</label>
       <input id="maxCases" type="number" value="2" min="1" />
       <label>Max concurrency</label>
       <input id="maxConcurrency" type="number" value="2" min="1" />
-      <label>Reranker budget</label>
+      <label>Reranker budget (MedSwin only)</label>
       <input id="rerankerBudget" type="number" value="1" min="1" />
+      <label>Naive dense top-K</label>
+      <input id="topK" type="number" value="5" min="1" />
       <label>Source policy</label>
       <select id="sourcePolicy">
         <option>ANY</option>
@@ -85,6 +98,8 @@
         reranker_budget: Number(document.getElementById('rerankerBudget').value),
         source_policy: document.getElementById('sourcePolicy').value,
         min_evidence_grade: Number(document.getElementById('minEvidenceGrade').value),
+        pipeline: document.getElementById('pipeline').value,
+        top_k: Number(document.getElementById('topK').value),
         ingest_case_context: true,
         include_patient_context_in_query: document.getElementById('includePatientContextInQuery').checked,
         guideline_only: false,
@@ -97,14 +112,29 @@
         const data = await resp.json();
         output.textContent = JSON.stringify(data, null, 2);
         const agg = data.aggregate || {};
-        metrics.innerHTML = [
+        const comparison = (data.diagnostics || {}).pipeline_comparison || {};
+        const naiveAgg = comparison.naive_aggregate || {};
+        const delta = comparison.delta_medswin_minus_naive || {};
+        const cards = [
+          metricCard('Pipeline', (data.config || {}).pipeline || 'medswin'),
           metricCard('Mean MSAS', agg.mean_msas),
           metricCard('Critical facet recall', agg.mean_critical_facet_recall),
           metricCard('Evidence doc recall', agg.mean_evidence_doc_recall),
           metricCard('Trace completeness', agg.mean_trace_completeness),
           metricCard('Unsafe omission penalty', agg.mean_unsafe_omission_penalty),
           metricCard('Error rate', agg.error_rate)
-        ].join('');
+        ];
+        if (comparison.naive_run_id) {
+          cards.push(
+            metricCard('Naive MSAS', naiveAgg.mean_msas),
+            metricCard('Naive evidence recall', naiveAgg.mean_evidence_doc_recall),
+            metricCard('Naive error rate', naiveAgg.error_rate),
+            metricCard('Δ MSAS (full − naive)', delta.mean_msas),
+            metricCard('Δ evidence recall', delta.mean_evidence_doc_recall),
+            metricCard('Δ error rate', delta.error_rate)
+          );
+        }
+        metrics.innerHTML = cards.join('');
       } catch (err) {
         output.textContent = String(err);
       } finally {

@@ -4,9 +4,17 @@ Evidence-gated multi-agent clinical decision support (CDSS) runtime.
 
 MedSwin does not treat top-K retrieval as automatically usable. For every clinician query it: decomposes clinical evidence facets, hybrid-retrieves EMR / CPG / literature / drug-safety passages, calibrates reranker scores, runs specialist agents that emit structured claims, applies an evidence-sufficiency gate, and only then synthesizes a grounded answer — or returns a bounded insufficient-evidence response with a full audit trail.
 
-Paper source of truth: [`docs/MedSwin.tex`](docs/MedSwin.tex)  
-API contract: [`docs/ENDPOINTS.md`](docs/ENDPOINTS.md)  
-Naive-RAG baseline (local prompt + eval): [`docs/NAIVE_RAG.md`](docs/NAIVE_RAG.md)
+Documentation index: [`docs/README.md`](docs/README.md)
+
+| Manual | Use it when |
+| --- | --- |
+| [`docs/OPERATOR.md`](docs/OPERATOR.md) | Starting the stack, asking, comparing, opening portals, running eval |
+| [`docs/NAIVE_RAG.md`](docs/NAIVE_RAG.md) | Fairness contract for the textbook RAG control |
+| [`docs/ENDPOINTS.md`](docs/ENDPOINTS.md) | HTTP routes for MedSwin, naive-RAG, storage, eval |
+| [`docs/MEDSWIN.md`](docs/MEDSWIN.md) | MAC, gate, scoring, traces (current runtime, not the old 3-agent sketch) |
+| [`docs/INDEXING.md`](docs/INDEXING.md) | Embeddings, HNSW ∪ IVF, refresh / rebuild |
+| [`eval/README.md`](eval/README.md) | TREC CDS 2016 harness and MSAS |
+| [`env.example`](env.example) | Environment keys. Copy to `.env`; never commit secrets |
 
 ---
 
@@ -39,8 +47,14 @@ Naive-RAG baseline (local prompt + eval): [`docs/NAIVE_RAG.md`](docs/NAIVE_RAG.m
 
 ```mermaid
 flowchart TD
-  UI["Clinician UI /app"] --> API["POST /api/v1/medswin/chat"]
-  API --> Orch["MedSwinOrchestrator"]
+  Op["Operator CLI / start-local.sh"] --> UI["Clinician UI /app"]
+  Op --> EvalUI["Eval portal :8200"]
+  UI --> Full["POST /api/v1/medswin/chat"]
+  UI --> Naive["POST /api/v1/naive/chat"]
+  EvalUI --> Full
+  EvalUI --> Naive
+  Full --> Orch["MedSwinOrchestrator"]
+  Naive --> Control["NaiveRAGOrchestrator"]
   Orch --> Norm["QueryNormalizer"]
   Norm --> Facets["ClinicalFacet set Fq"]
   Orch --> Loop["Retrieve-more loop"]
@@ -147,12 +161,13 @@ app/
   indexes/          # hybrid ANN query (HNSW ∪ IVF)
   prompts/          # role claim prompts
   api/              # auth scaffold + v1 endpoints
+  cli/              # local operator: ask, eval, portals
   services/         # adapters (llm, embedding, reranker, limiter), governance shims
   core/             # config, database, indexing builders
 web/                # clinician SPA (Vite/React + static public fallback)
 data/calibration/   # rerank.json, agents.json
-eval/               # TREC system audit harness (consumer of /medswin/chat)
-docs/               # MedSwin.tex, ENDPOINTS.md
+eval/               # TREC system audit harness (consumer of /medswin/chat and /naive/chat)
+docs/               # operator, architecture, API, naive-RAG, indexing manuals
 ```
 
 Legacy imports under `app/services/medswin/*` and `app/models/medswin.py` re-export the new packages so `eval/` and tests keep working.
@@ -371,13 +386,26 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp env.example .env
 
-# Mongo + venv + API on :8100
+# Terminal session: operator console (starts API, then a command menu)
 ./scripts/start-local.sh
 
-# In another terminal: prompt full MedSwin, naive-RAG, or both
-./scripts/start-local.sh --prompt
-./scripts/start-local.sh --mode both --question "Can this patient continue metformin after the latest renal-function result?"
+# API only, foreground (scripts / CI)
+./scripts/start-local.sh serve
+
+# Start API + eval portal and open the web UIs
+./scripts/start-local.sh up --with-eval --open
 ```
+
+From the console, or as one-shot commands:
+
+```bash
+./scripts/start-local.sh ask --mode both --question "Can this patient continue metformin after the latest renal-function result?"
+./scripts/start-local.sh open clinician
+./scripts/start-local.sh eval --run --pipeline both --max-cases 2
+./scripts/start-local.sh status
+```
+
+`--prompt` / `--question` still work as aliases for `ask`.
 
 Equivalent manual API start:
 
@@ -391,7 +419,9 @@ python3 -m uvicorn app.main:app --reload --port 8100
 
 | Surface | URL |
 | --- | --- |
-| Clinician UI | [http://localhost:8100/app/](http://localhost:8100/app/) |
+| Clinician UI (full / naive / both) | [http://localhost:8100/app/](http://localhost:8100/app/) |
+| Ops dashboard | [http://localhost:8100/api/v1/dashboard/](http://localhost:8100/api/v1/dashboard/) |
+| Eval harness | [http://localhost:8200/](http://localhost:8200/) (`./scripts/start-local.sh eval`) |
 | OpenAPI | [http://localhost:8100/docs](http://localhost:8100/docs) |
 | Health | `GET /health` |
 
@@ -447,6 +477,9 @@ curl -s http://localhost:8100/api/v1/medswin/chat \
 | `EMBEDDING_URL` / `RERANKER_URL` | Embedding & rerank | local or cloud |
 | `CLOUD_MODE` | Azure AI Foundry path | `false` |
 | `NAIVE_TOP_K` | Dense hits for the naive-RAG control | `5` |
+| `NAIVE_MAX_CONTEXT_CHARS` | Naive prompt cap | `8000` |
+| `NAIVE_ENABLE_MONGO_FALLBACK` | Cosine scan if ANN is empty (not for publication) | `true` |
+| `BENCHMARK_ORG_ID` | Eval tenant (eval service / operator `eval --run`) | `bench-org` |
 | `CANDIDATE_K` / `CANDIDATE_K_PRIME` | Candidate pools | `80` / `120` |
 | `MAX_RETRIEVE_LOOPS` | Retrieve-more budget | `3` |
 | `TOKEN_BUDGET_B` | Evidence token budget | `1800` |
@@ -494,9 +527,10 @@ If the file is missing or identity, chat sets `degraded_mode.calibration=true` a
 python3 -m pytest
 # focused
 python3 -m pytest tests/test_medswin_policy.py tests/test_medswin_governance.py tests/test_medswin_retrieval.py -q
+python3 -m pytest tests/test_naive_rag.py tests/test_eval_harness.py tests/test_operator_cli.py -q
 ```
 
-System-level TREC CDS audit lives under [`eval/`](eval/) and calls `/medswin/chat` or `/naive/chat` via `pipeline=medswin|naive_rag|both` (see `eval/README.md` and [`docs/NAIVE_RAG.md`](docs/NAIVE_RAG.md)).
+System-level TREC CDS audit lives under [`eval/`](eval/) and calls `/medswin/chat` or `/naive/chat` via `pipeline=medswin|naive_rag|both`. Start it with `./scripts/start-local.sh eval --open` or see [`eval/README.md`](eval/README.md).
 
 ---
 
@@ -512,10 +546,13 @@ System-level TREC CDS audit lives under [`eval/`](eval/) and calls `/medswin/cha
 | [`app/agents/`](app/agents/) | Structured claim specialists |
 | [`app/schemas/`](app/schemas/) | Pydantic artefacts |
 | [`app/api/v1/endpoints/medswin.py`](app/api/v1/endpoints/medswin.py) | Chat / session / trace / ingest |
-| [`web/`](web/) | Clinician CDSS UI |
+| [`app/api/v1/endpoints/naive.py`](app/api/v1/endpoints/naive.py) | Naive chat, compare, ready |
+| [`app/cli/operator.py`](app/cli/operator.py) | Local operator console |
+| [`scripts/start-local.sh`](scripts/start-local.sh) | Bootstrap + command dispatcher |
+| [`web/`](web/) | Clinician CDSS UI (full / naive / both) |
+| [`eval/`](eval/) | TREC / smoke system audit |
 | [`data/calibration/`](data/calibration/) | Fitted score & agent reliability artefacts |
-| [`docs/MedSwin.tex`](docs/MedSwin.tex) | Architecture paper |
-| [`docs/ENDPOINTS.md`](docs/ENDPOINTS.md) | API contracts |
+| [`docs/README.md`](docs/README.md) | Documentation index |
 
 ---
 

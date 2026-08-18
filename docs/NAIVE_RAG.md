@@ -2,8 +2,10 @@
 
 This document is the operator manual for comparing the production MedSwin pipeline against a deliberately minimal **naive-RAG** control. It is written so a person who has never seen the repo can reproduce the setup, run both pipelines on the same question or the same case file, and interpret the difference.
 
-Paper / architecture source: [`docs/MedSwin.tex`](MedSwin.tex)  
-API contract: [`docs/ENDPOINTS.md`](ENDPOINTS.md)  
+Documentation index: [`docs/README.md`](README.md)  
+Architecture: [`MEDSWIN.md`](MEDSWIN.md)  
+Local operator: [`OPERATOR.md`](OPERATOR.md)  
+API contract: [`ENDPOINTS.md`](ENDPOINTS.md)  
 System-level TREC harness: [`eval/README.md`](../eval/README.md)
 
 ---
@@ -150,19 +152,21 @@ cp env.example .env
 ### 4.3 Start the runtime
 
 ```bash
-./scripts/start-local.sh
+./scripts/start-local.sh                 # operator console (starts API if needed)
+./scripts/start-local.sh serve           # API only, foreground
 ```
 
-This script:
+In a terminal the script opens the operator (see [`OPERATOR.md`](OPERATOR.md)):
 
 1. Reuses `.venv` or `venv`, or creates `.venv`
 2. Loads `.env` if present
-3. Installs `requirements.txt`
+3. Installs `requirements.txt` only when FastAPI / uvicorn / httpx / pymongo are missing
 4. Pings Mongo; if down, starts `mongo:6.0` as `rag_mongodb`
 5. Exports MedSwin paths (`MONGODB_DB=medswin`, index files under `./data`)
-6. Starts `uvicorn app.main:app` on **port 8100** (not 8000 — 8000 is the supervisor LLM in `env.example`)
+6. Starts `uvicorn app.main:app` on **port 8100** in the background (not 8000 — 8000 is the supervisor LLM in `env.example`)
+7. Prints portal URLs and waits for ask / eval / index commands
 
-Leave this terminal running. Confirm:
+`serve` keeps uvicorn in the foreground. Confirm:
 
 ```bash
 curl -s http://127.0.0.1:8100/health
@@ -207,29 +211,30 @@ You want `index_exists=true` and a non-zero chunk count for `demo-org`.
 
 ## 5. Prompting from the terminal
 
-`scripts/start-local.sh` can either start the server **or** attach a prompt client.
-
-### 5.1 Interactive REPL (choose full / naive / both each turn)
-
-With the server already running in another terminal:
+`scripts/start-local.sh` is the local operator. In a terminal it opens a console that can start the API, ask full / naive / both, run eval, and open the web portals. The clinician UI at `/app/` has the same pipeline switch.
 
 ```bash
-./scripts/start-local.sh --prompt
+./scripts/start-local.sh                  # console (starts API if needed)
+./scripts/start-local.sh up --open        # start + open clinician + dashboard
+./scripts/start-local.sh ask --mode both  # REPL or --question
+./scripts/start-local.sh eval --open      # benchmark UI on :8200
+./scripts/start-local.sh serve            # API only, foreground
 ```
 
-If the API is down, `--prompt` starts it in the background, waits for `/health`, then opens the REPL. On exit it stops only the server **it** started.
+The console leaves servers running when you quit so you can keep watching `/app/`, `/api/v1/dashboard/`, and `:8200`. `./scripts/start-local.sh stop` shuts down processes this operator started.
 
-You will be asked:
+### 5.1 Interactive ask (choose full / naive / both)
 
-```text
-Pipeline [full/naive/both] (both):
-Question:
-patient_id (optional):
+```bash
+./scripts/start-local.sh ask
+# or, from the console: 1 / 2 / 3, or type a clinical question
 ```
 
 - `full`  → `POST /api/v1/medswin/chat`
 - `naive` → `POST /api/v1/naive/chat`
 - `both`  → `POST /api/v1/naive/compare`
+
+`--prompt` remains an alias for `ask`.
 
 ### 5.2 One-shot question
 
@@ -336,23 +341,26 @@ python3 -m uvicorn app.main:app --reload --port 8200
 ```
 
 ```bash
+# Preferred: operator starts :8200 from the repo root
+./scripts/start-local.sh eval --open
+
 # Full system
 curl -s http://127.0.0.1:8200/api/run \
   -H 'Content-Type: application/json' \
-  -d '{"cases_path":"data/sample/cases.jsonl","max_cases":2,"pipeline":"medswin"}'
+  -d '{"cases_path":"eval/data/sample/cases.jsonl","max_cases":2,"pipeline":"medswin"}'
 
 # Naive control
 curl -s http://127.0.0.1:8200/api/run \
   -H 'Content-Type: application/json' \
-  -d '{"cases_path":"data/sample/cases.jsonl","max_cases":2,"pipeline":"naive_rag"}'
+  -d '{"cases_path":"eval/data/sample/cases.jsonl","max_cases":2,"pipeline":"naive_rag"}'
 
 # Both, plus a comparison sidecar
 curl -s http://127.0.0.1:8200/api/run \
   -H 'Content-Type: application/json' \
-  -d '{"cases_path":"data/sample/cases.jsonl","max_cases":2,"pipeline":"both"}'
+  -d '{"cases_path":"eval/data/sample/cases.jsonl","max_cases":2,"pipeline":"both"}'
 ```
 
-From the **repository root**, the smoke file is `eval/data/sample/cases.jsonl`. If you `cd eval`, use `data/sample/cases.jsonl`.
+From the **repository root** (how the operator starts eval), the smoke file is `eval/data/sample/cases.jsonl`.
 
 ### 7.2 One script, no eval UI
 
@@ -372,9 +380,19 @@ Writes under `RUN_STORE_DIR` (default `/tmp/medswin-audits`):
 
 For publication numbers, point `--cases-path` at the TREC JSONL produced by `eval/scripts/prepare_trec_cds.py` and use the judged PMC ingest in `eval/README.md`. Do not publish smoke-file scores.
 
-### 7.3 What the harness does not punish on naive runs
+### 7.3 What the harness scores the same — and what it does not
 
-`eval/app/runner.py` skips MedSwin-only architecture errors when `pipeline=naive_rag` (missing sufficiency checks, missing agent messages, etc.). Those gaps are the baseline, not a crash.
+Both pipelines share the same cases, `BENCHMARK_ORG_ID`, EMR ingest, index provenance gates, qrel coverage gates, pure query text, `min_evidence_grade`, and audit extractors (`evidence_doc_recall`, facet recall, citation precision, MSAS).
+
+Naive-specific wiring:
+
+- Chat goes to `POST /api/v1/naive/chat` with an explicit `top_k` (eval default 5).
+- Preflight calls `GET /api/v1/naive/ready` and fails the run if Mongo is down or the corpus has chunks but 0 embeddings.
+- Case concurrency follows `max_concurrency`. The reranker budget is not applied (naive does not rerank).
+- Infrastructure failures (`degraded_mode.error` / `no_embeddings` / `empty_index`, `retrieval_backend` `error` / `dim_mismatch`) are case errors and raise `error_rate`. Do not publish those runs.
+- MedSwin-only architecture checks (sufficiency checks, specialist messages) are **not** applied. Those gaps are the baseline.
+
+`pipeline=both` writes `{medswin_run_id}.json` plus `{medswin_run_id}.comparison.json`. The returned audit is the MedSwin run; naive aggregates live under `diagnostics.pipeline_comparison`. The eval UI surfaces those deltas.
 
 Shared metrics still apply and are the ones to compare:
 
@@ -415,8 +433,11 @@ Set them in `.env`. `env.example` lists the naive keys.
 ```text
 app/medswin/naive.py                 NaiveRAGOrchestrator + compare_responses()
 app/api/v1/endpoints/naive.py        POST /naive/chat, POST /naive/compare
+app/cli/operator.py                  python -m app.cli.operator  (console / up / ask / eval)
 app/cli/prompt.py                    python -m app.cli.prompt
-scripts/start-local.sh               env + Mongo + API + optional prompt
+app/cli/surfaces.py                  portal URLs, health probes, pid files
+scripts/start-local.sh               operator: console / ask / eval / portals
+docs/OPERATOR.md                     operator manual
 eval/app/client.py                   pipeline=naive_rag uses /api/v1/naive/chat
 eval/app/runner.py                   pipeline=medswin|naive_rag|both
 eval/app/compare.py                  aggregate deltas
@@ -430,7 +451,7 @@ tests/test_naive_rag.py              control-pipeline unit tests
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `API health check failed` | uvicorn not up, wrong port | `./scripts/start-local.sh` then `curl /health`. Default port is **8100**. |
+| `API health check failed` | uvicorn not up, wrong port | `./scripts/start-local.sh serve` or `console`, then `curl /health`. Default port is **8100**. |
 | Naive `retrieval_backend=empty` | no chunks for `org_id`, or embeddings missing | ingest with that `org_id`. Ingest now attaches embeddings in every mode when the embedding client (or local ModelManager) works |
 | Naive answer mentions “0 embeddings” / CLI exit 1 | chunks stored without vectors | `POST /api/v1/storage/embeddings/refresh` then `POST /api/v1/storage/index/build` |
 | Chat hangs for minutes then fails | old rate-limiter treated connection-refused as a 429 | connection errors now fail after two short retries; upgrade to this revision |

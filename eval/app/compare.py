@@ -19,6 +19,7 @@ _NUMERIC = [
     "mean_unsafe_omission_penalty",
     "mean_msas",
     "policy_pass_rate",
+    "degraded_rate",
     "error_rate",
 ]
 
@@ -54,16 +55,34 @@ def compare_audits(naive: RunAudit, medswin: RunAudit) -> dict[str, Any]:
                 "naive_policy_passed": baseline.policy_passed,
                 "medswin_policy_passed": case.policy_passed,
                 "medswin_abstained": case.policy_passed is False,
+                "naive_retrieval_backend": baseline.retrieval_backend,
+                "medswin_retrieval_backend": case.retrieval_backend,
+                "naive_errors": list(baseline.errors),
+                "medswin_errors": list(case.errors),
                 "jaccard": (len(overlap) / len(union)) if union else 0.0,
                 "overlap_chunk_ids": sorted(overlap),
             }
         )
 
+    config_keys = (
+        "pipeline",
+        "top_k",
+        "min_evidence_grade",
+        "source_policy",
+        "guideline_only",
+        "case_concurrency",
+        "reranker_budget",
+        "benchmark_org_id",
+    )
     return {
         "naive_run_id": naive.run_id,
         "medswin_run_id": medswin.run_id,
         "naive_aggregate": naive_agg,
         "medswin_aggregate": medswin_agg,
         "delta_medswin_minus_naive": delta,
+        "naive_retrieval_backend_counts": (naive.diagnostics or {}).get("retrieval_backend_counts") or {},
+        "medswin_retrieval_backend_counts": (medswin.diagnostics or {}).get("retrieval_backend_counts") or {},
+        "naive_config": {key: (naive.config or {}).get(key) for key in config_keys},
+        "medswin_config": {key: (medswin.config or {}).get(key) for key in config_keys},
         "per_case": per_case,
     }

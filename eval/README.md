@@ -1,6 +1,6 @@
 # MedSwin End-to-End System Benchmark
 
-This harness evaluates the full MedSwin system rather than the standalone LLM or reranker. It calls an existing MedSwin FastAPI runtime, runs benchmark cases through `/api/v1/medswin/chat`, retrieves trace summaries, and emits an audit JSON file containing evidence, provenance, sufficiency, safety, and trace-completeness metrics.
+This harness evaluates the live MedSwin runtime rather than a standalone LLM or reranker. It runs the same cases through `/api/v1/medswin/chat` and/or the naive-RAG control at `/api/v1/naive/chat`, retrieves trace summaries, and emits an audit JSON file containing evidence, provenance, sufficiency, safety, and trace-completeness metrics.
 
 The benchmark now keeps the clinical question text separate from the patient note. Case context is ingested as EMR-like evidence, while the query sent to MedSwin stays pure so retrieval quality is measured against the runtime contract rather than prompt augmentation.
 
@@ -26,8 +26,10 @@ TREC CDS case JSONL
 Benchmark FastAPI service :8200
         |
         | preflight health check    -> GET  /health
+        | naive preflight (control) -> GET  /api/v1/naive/ready
         | ingest case note          -> POST /api/v1/medswin/ingest?source_type=EMR
         | chat call                 -> POST /api/v1/medswin/chat
+        |                           or POST /api/v1/naive/chat  (same org, query, constraints)
         | trace call                -> GET  /api/v1/medswin/traces/{trace_id}
         v
 MedSwin runtime :8100 (fixed benchmark org namespace)
@@ -51,7 +53,7 @@ scripts/
   prepare_trec_cds.py  # exports TREC CDS cases with qrels via ir_datasets
   ingest_trec_pmc.py   # bulk-ingests PMC evidence into MedSwin
 data/sample/
-  cases.jsonl          # two toy cases for smoke testing
+  cases.jsonl          # two toy cases; from repo root use eval/data/sample/cases.jsonl
 audits/
   audit_schema.json    # expected audit output shape
 static/
@@ -62,20 +64,20 @@ README.md
 
 ## Quick start
 
-Start MedSwin first:
+From the repository root, the operator can start both portals:
+
+```bash
+./scripts/start-local.sh up --with-eval --open
+# clinician UI  http://127.0.0.1:8100/app/
+# eval portal   http://127.0.0.1:8200/
+./scripts/start-local.sh eval --run --pipeline both --max-cases 2
+```
+
+Or start the services yourself:
 
 ```bash
 python3 -m uvicorn app.main:app --reload --port 8100
-```
-
-Then run this benchmark service:
-
-```bash
-cd eval
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python3 -m uvicorn app.main:app --reload --port 8200
+python3 -m uvicorn eval.app.main:app --reload --port 8200
 ```
 
 Open:
@@ -140,13 +142,30 @@ curl -X POST http://localhost:8200/api/run \
     "ingest_case_context": true,
     "source_policy": "ANY",
     "min_evidence_grade": 0.3,
-    "clinical_scope": "clinician_cds"
+    "clinical_scope": "clinician_cds",
+    "pipeline": "medswin"
   }'
 ```
 
-The output is saved to `audits/{run_id}.json`.
+The output is saved under `RUN_STORE_DIR` (default `/tmp/medswin-audits/{run_id}.json`). `pipeline=both` also writes `{run_id}.comparison.json`.
 
-Each run uses the fixed configured `BENCHMARK_ORG_ID`, so the prepared corpus remains visible to `/api/v1/medswin/chat`. Use the benchmark reset endpoint or the ingest script's `--reset-org` option before preparing a fresh corpus.
+Each run uses the fixed configured `BENCHMARK_ORG_ID` (default `bench-org`), so the prepared corpus remains visible to `/api/v1/medswin/chat` and `/api/v1/naive/chat`. Use `POST /api/v1/storage/benchmark/reset` or the ingest script's `--reset-org` option before preparing a fresh corpus.
+
+### Eval HTTP API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/` | Benchmark UI |
+| `GET` | `/health` | Harness liveness |
+| `GET` | `/api/cases?path=…` | Preview cases JSONL |
+| `POST` | `/api/run` | Run an audit |
+| `GET` | `/api/runs` | List audits (`pipeline`, MSAS, optional naive MSAS) |
+| `GET` | `/api/runs/{run_id}` | Full `RunAudit` |
+| `GET` | `/api/runs/{run_id}/download` | Download JSON |
+
+`RunRequest` fields: `cases_path`, `max_cases`, `max_concurrency`, `reranker_budget`, `ingest_case_context`, `fetch_trace_summary`, `include_patient_context_in_query`, `source_policy`, `guideline_only`, `min_evidence_grade`, `clinical_scope`, `pipeline` (`medswin` \| `naive_rag` \| `both`), `top_k` (default 5, sent to `/naive/chat`).
+
+From the repo root, start the UI with `./scripts/start-local.sh eval --open` so the default cases path `eval/data/sample/cases.jsonl` resolves.
 
 ## Main metric: MedSwin System Audit Score
 
@@ -186,11 +205,14 @@ curl -X POST http://localhost:8200/api/run \
   -d '{
     "cases_path": "data/sample/cases.jsonl",
     "max_cases": 2,
-    "pipeline": "both"
+    "pipeline": "both",
+    "top_k": 5
   }'
 ```
 
-Or from the repo root, with MedSwin already healthy:
+From the repo root the smoke file is `eval/data/sample/cases.jsonl`. Smoke gold `doc_id`s must exist in `bench-org` or qrel coverage validation fails — that is intentional.
+
+Or with MedSwin already healthy:
 
 ```bash
 python3 eval/scripts/run_pipeline_compare.py \
@@ -199,3 +221,11 @@ python3 eval/scripts/run_pipeline_compare.py \
 ```
 
 This isolates whether the whole system improves evidence coverage, safety, provenance, and sufficiency behavior beyond model-level generation and naive top-K stuffing.
+
+Fairness contract for the two pipelines:
+
+- Same `BENCHMARK_ORG_ID`, cases file, EMR ingest, index provenance, qrel gates, query text, and `min_evidence_grade`.
+- Naive chat sends `top_k` (default 5). MedSwin is not capped by that field.
+- Naive concurrency follows `max_concurrency`. MedSwin case fan-out is still capped by `reranker_budget`.
+- Naive infrastructure failures (`no_embeddings`, dim mismatch, runtime error) count toward `error_rate`. Missing MAC / gate artifacts do not.
+- `pipeline=both` returns the MedSwin `RunAudit`. Naive totals and deltas are in `diagnostics.pipeline_comparison` and `{run_id}.comparison.json`. Do not publish a run whose naive `retrieval_backend_counts` are not `ann`.

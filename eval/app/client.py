@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from facets import benchmark_required_facets
+from .facets import benchmark_required_facets
 from .schemas import BenchmarkCase
 
 
@@ -53,6 +53,9 @@ class MedSwinClient:
 
     async def health(self) -> dict[str, Any]:
         return await self._request_json("GET", "/health")
+
+    async def naive_ready(self) -> dict[str, Any]:
+        return await self._request_json("GET", "/api/v1/naive/ready")
 
     async def ingest_case_context(self, case: BenchmarkCase) -> dict[str, Any] | None:
         """Ingest the TREC topic note as EMR-like context scoped to the case patient_id.
@@ -109,7 +112,17 @@ class MedSwinClient:
             json=payload,
         )
 
-    async def chat(self, case: BenchmarkCase, *, source_policy: str, guideline_only: bool, min_evidence_grade: float, clinical_scope: str, pipeline: str = "medswin") -> dict[str, Any]:
+    async def chat(
+        self,
+        case: BenchmarkCase,
+        *,
+        source_policy: str,
+        guideline_only: bool,
+        min_evidence_grade: float,
+        clinical_scope: str,
+        pipeline: str = "medswin",
+        top_k: int | None = None,
+    ) -> dict[str, Any]:
         patient_id = case.patient_id or f"patient-{case.case_id}"
         required_facets = benchmark_required_facets(case.query_type, case.gold_facets)
 
@@ -136,8 +149,12 @@ class MedSwinClient:
             "constraints": constraints,
         }
         path = "/api/v1/naive/chat" if pipeline == "naive_rag" else "/api/v1/medswin/chat"
-        if pipeline == "naive_rag" and case.constraints.get("top_k") is not None:
-            payload["top_k"] = case.constraints.get("top_k")
+        if pipeline == "naive_rag":
+            resolved_k = case.constraints.get("top_k")
+            if resolved_k is None:
+                resolved_k = top_k
+            if resolved_k is not None:
+                payload["top_k"] = resolved_k
         return await self._request_json("POST", path, json=payload)
 
     async def build_index(self, *, force_rebuild: bool = True, org_id: str | None = None) -> dict[str, Any]:

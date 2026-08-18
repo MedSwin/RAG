@@ -189,9 +189,7 @@ async def _run_single(req: RunRequest, settings: Settings) -> RunAudit:
     # namespace, while each case note is still patient-scoped. Using the same org
     # for eval runs makes the 5000-sample corpus visible to /medswin/chat.
     benchmark_org_id = settings.benchmark_org_id
-    reranker_budget = max(1, min(int(req.reranker_budget or 1), int(req.max_concurrency or 1) if req.max_concurrency else 1))
-    case_concurrency = max(1, min(int(req.max_concurrency or 1), reranker_budget))
-    setup_concurrency = max(1, min(int(req.max_concurrency or 1), 4))
+    reranker_budget, case_concurrency, setup_concurrency = _concurrency_plan(req)
 
     run = RunAudit(
         run_id=run_id,
@@ -213,6 +211,7 @@ async def _run_single(req: RunRequest, settings: Settings) -> RunAudit:
             "fetch_trace_summary": req.fetch_trace_summary,
             "include_patient_context_in_query": req.include_patient_context_in_query,
             "pipeline": req.pipeline,
+            "top_k": req.top_k,
         },
     )
 
@@ -227,6 +226,14 @@ async def _run_single(req: RunRequest, settings: Settings) -> RunAudit:
             await client.health()
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"MedSwin runtime health check failed: {exc}") from exc
+
+        naive_ready: dict[str, Any] | None = None
+        if req.pipeline == "naive_rag" and hasattr(client, "naive_ready"):
+            try:
+                naive_ready = await client.naive_ready()
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(f"Naive RAG preflight failed: {exc}") from exc
+            _validate_naive_ready(naive_ready)
 
         setup_stats_before = await client.storage_stats(org_id=benchmark_org_id)
         setup_qrel_before = _qrel_corpus_diagnostics(cases, setup_stats_before)
@@ -289,6 +296,7 @@ async def _run_single(req: RunRequest, settings: Settings) -> RunAudit:
                     min_evidence_grade=req.min_evidence_grade,
                     clinical_scope=req.clinical_scope,
                     pipeline=req.pipeline,
+                    top_k=req.top_k,
                 )
                 trace_id = response.get("trace_id") or (response.get("trace") or {}).get("trace_id")
                 if trace_id and req.fetch_trace_summary:
@@ -296,7 +304,9 @@ async def _run_single(req: RunRequest, settings: Settings) -> RunAudit:
                         trace_summary = await client.trace(trace_id, include_details=True)
                     except Exception as exc:  # noqa: BLE001
                         errors.append(f"trace_fetch_failed: {exc}")
-                if req.pipeline != "naive_rag":
+                if req.pipeline == "naive_rag":
+                    errors.extend(_naive_runtime_errors(response))
+                else:
                     errors.extend(_architecture_errors(response, trace_summary))
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"case_failed: {exc}")
@@ -308,6 +318,7 @@ async def _run_single(req: RunRequest, settings: Settings) -> RunAudit:
                 errors=errors,
                 available_doc_ids=available_doc_ids or None,
                 indexed_doc_ids=indexed_doc_ids or None,
+                pipeline=req.pipeline,
             )
 
         if case_concurrency == 1:
@@ -348,6 +359,9 @@ async def _run_single(req: RunRequest, settings: Settings) -> RunAudit:
         "failure_buckets": dict(Counter(case.failure_bucket for case in run.cases if case.failure_bucket)),
         "trace_rate_limit_stats": _aggregate_rate_limit_stats(run.cases),
         "pipeline": req.pipeline,
+        "top_k": req.top_k,
+        "naive_ready": naive_ready,
+        "retrieval_backend_counts": dict(Counter(case.retrieval_backend for case in run.cases if case.retrieval_backend)),
     }
     output_path = Path(settings.run_store_dir) / f"{run_id}.json"
     write_json(output_path, run.model_dump())
@@ -356,6 +370,67 @@ async def _run_single(req: RunRequest, settings: Settings) -> RunAudit:
 
 def run_benchmark_sync(req: RunRequest, settings: Settings) -> RunAudit:
     return asyncio.run(run_benchmark(req, settings))
+
+
+def _concurrency_plan(req: RunRequest) -> tuple[int, int, int]:
+    """Return reranker_budget, case_concurrency, setup_concurrency.
+
+    Naive-RAG does not call the reranker, so its case fan-out should follow
+    `max_concurrency` only. MedSwin stays capped by the reranker budget so a
+    510-case run cannot stampede the shared cross-encoder.
+    """
+    max_concurrency = max(1, int(req.max_concurrency or 1))
+    setup_concurrency = max(1, min(max_concurrency, 4))
+    if req.pipeline == "naive_rag":
+        return 0, max_concurrency, setup_concurrency
+    reranker_budget = max(1, min(int(req.reranker_budget or 1), max_concurrency))
+    return reranker_budget, max(1, min(max_concurrency, reranker_budget)), setup_concurrency
+
+
+def _validate_naive_ready(ready: dict[str, Any]) -> None:
+    if not ready.get("mongo"):
+        detail = ready.get("mongo_error")
+        raise RuntimeError(
+            "Naive RAG preflight failed: Mongo is unavailable"
+            + (f" ({detail})" if detail else "")
+        )
+    chunks = ready.get("chunk_count")
+    embedded = ready.get("embedded_count")
+    if isinstance(chunks, int) and chunks > 0 and embedded == 0:
+        raise RuntimeError(
+            "Naive RAG preflight failed: corpus has chunks but 0 embeddings. "
+            "Call POST /api/v1/storage/embeddings/refresh before benchmarking."
+        )
+
+
+def _naive_runtime_errors(response: dict[str, Any]) -> list[str]:
+    """Flag infrastructure failures that would make a naive baseline unpublishable.
+
+    MedSwin-only artifacts (sufficiency checks, specialist messages) are the
+    control gap and must not be treated as case errors.
+    """
+    errors: list[str] = []
+    pipeline = response.get("pipeline")
+    if pipeline not in {None, "naive_rag"}:
+        errors.append(f"unexpected_pipeline:{pipeline}")
+    degraded = response.get("degraded_mode") or {}
+    if isinstance(degraded, dict):
+        if degraded.get("error"):
+            errors.append("naive_runtime_error")
+        if degraded.get("no_embeddings"):
+            errors.append("naive_no_embeddings")
+        if degraded.get("empty_index"):
+            errors.append("naive_empty_index")
+    backend = response.get("retrieval_backend")
+    if backend == "dim_mismatch":
+        errors.append("naive_dim_mismatch")
+    if backend == "error":
+        errors.append("naive_retrieval_error")
+    if not response.get("evidence_bundle"):
+        errors.append("missing_evidence_bundle")
+    if not response.get("trace_id"):
+        errors.append("missing_trace_id")
+    return errors
 
 
 def _architecture_errors(response: dict[str, Any], trace_summary: dict[str, Any] | None) -> list[str]:

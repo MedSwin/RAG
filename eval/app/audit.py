@@ -70,7 +70,7 @@ def extract_doc_ids(response: dict[str, Any]) -> tuple[list[str], list[str], lis
 
 
 def selected_source_counts(response: dict[str, Any]) -> dict[str, int]:
-    counts: dict[str, int] = {"CPG": 0, "EMR": 0, "LIT": 0}
+    counts: dict[str, int] = {"CPG": 0, "EMR": 0, "LIT": 0, "SAFETY": 0}
     bundle = response.get("evidence_bundle") or {}
     for key in ("passages", "evidence", "selected_passages", "chunks", "items"):
         items = bundle.get(key)
@@ -191,11 +191,10 @@ def groundedness_proxy(response: dict[str, Any], cited_doc_ids: set[str]) -> tup
         for item in ledger:
             if not isinstance(item, dict):
                 continue
-            claim = item.get("claim") or item.get("text") or item.get("statement")
-            if claim:
+            for claim_item in _ledger_claim_items(item):
                 total += 1
-                doc_id = _norm_id(item.get("doc_id") or item.get("document_id") or item.get("source_id"))
-                polarity = str(item.get("polarity", "support")).lower()
+                doc_id = _norm_id(claim_item.get("doc_id"))
+                polarity = str(claim_item.get("polarity") or "support").lower()
                 if doc_id in cited_doc_ids and polarity in {"support", "supports", "qualifies"}:
                     supported += 1
         if total:
@@ -207,6 +206,42 @@ def groundedness_proxy(response: dict[str, Any], cited_doc_ids: set[str]) -> tup
     return 0.25, 0.75
 
 
+def _ledger_claim_items(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize top-level or nested ledger claims onto the same scoring path.
+
+    Naive-RAG and MedSwin both persist `EvidenceLedgerEntry.claims[]`. Older
+    proxy fixtures still emit a single top-level `claim`. Score both shapes
+    the same way so the baseline is not silently forced onto the citation
+    fallback (0.65) while the full system uses a different path.
+    """
+    entry_doc_id = item.get("doc_id") or item.get("document_id") or item.get("source_id")
+    top_claim = item.get("claim") or item.get("text") or item.get("statement")
+    if top_claim:
+        return [
+            {
+                "claim": top_claim,
+                "doc_id": entry_doc_id,
+                "polarity": item.get("polarity", "support"),
+            }
+        ]
+    nested = item.get("claims") if isinstance(item.get("claims"), list) else []
+    claims: list[dict[str, Any]] = []
+    for sub in nested:
+        if not isinstance(sub, dict):
+            continue
+        claim = sub.get("claim") or sub.get("text") or sub.get("statement")
+        if not claim:
+            continue
+        claims.append(
+            {
+                "claim": claim,
+                "doc_id": sub.get("doc_id") or sub.get("document_id") or entry_doc_id,
+                "polarity": sub.get("polarity") or item.get("polarity") or "support",
+            }
+        )
+    return claims
+
+
 def audit_case(
     case: BenchmarkCase,
     response: dict[str, Any],
@@ -214,6 +249,7 @@ def audit_case(
     errors: list[str] | None = None,
     available_doc_ids: set[str] | None = None,
     indexed_doc_ids: set[str] | None = None,
+    pipeline: str | None = None,
 ) -> CaseAudit:
     selected_doc_ids, cited_doc_ids, selected_chunk_ids = extract_doc_ids(response)
     selected_counts = selected_source_counts(response)
@@ -261,6 +297,8 @@ def audit_case(
     return CaseAudit(
         case_id=case.case_id,
         dataset=case.dataset,
+        pipeline=pipeline or response.get("pipeline"),
+        retrieval_backend=response.get("retrieval_backend"),
         trace_id=response.get("trace_id") or (response.get("trace") or {}).get("trace_id"),
         session_id=response.get("session_id"),
         policy_passed=policy_passed,
