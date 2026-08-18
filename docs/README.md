@@ -1,21 +1,34 @@
 # MedSwin documentation
 
-This folder is the operator and architecture manual set for the live runtime. Start here, then open the page that matches the job.
+This folder is the governed manual set for the **live** runtime (`app/medswin/`, `app/cli/`, `scripts/start-local.sh`).
+
+**Administrators start here:** [`ADMIN.md`](ADMIN.md) — configure `.env`, start, ingest, index, ask, compare, evaluate, and what not to follow.
+
+Then open the specialist page that matches the job.
 
 | Document | What it is for |
 | --- | --- |
-| [`../README.md`](../README.md) | Product overview, pipeline diagrams, data model, local setup |
-| [`OPERATOR.md`](OPERATOR.md) | Local console: start, ask, compare, eval, portals, index, stop |
-| [`NAIVE_RAG.md`](NAIVE_RAG.md) | Fairness contract and how to run the textbook RAG control |
-| [`ENDPOINTS.md`](ENDPOINTS.md) | HTTP API contract for MedSwin, naive-RAG, storage, and ops |
-| [`MEDSWIN.md`](MEDSWIN.md) | Current runtime architecture (MAC, gate, scoring, traces) |
-| [`INDEXING.md`](INDEXING.md) | ANN files, ingest embeddings, BM25, and index rebuild |
-| [`../eval/README.md`](../eval/README.md) | TREC CDS harness, MSAS, `pipeline=medswin\|naive_rag\|both` |
-| [`../env.example`](../env.example) | Environment keys. Copy to `.env`. Never commit secrets |
+| [`ADMIN.md`](ADMIN.md) | Day-one runbook: config, ports, orgs, portals, first-run, eval, troubleshooting |
+| [`OPERATOR.md`](OPERATOR.md) | Local console commands, menu, flags |
+| [`NAIVE_RAG.md`](NAIVE_RAG.md) | Fairness contract for the textbook RAG control |
+| [`ENDPOINTS.md`](ENDPOINTS.md) | HTTP routes for MedSwin, naive-RAG, storage, dashboard, eval |
+| [`MEDSWIN.md`](MEDSWIN.md) | MAC, gate, scoring, traces (current runtime, not the old 3-agent sketch) |
+| [`INDEXING.md`](INDEXING.md) | Embeddings, HNSW ∪ IVF, refresh / rebuild |
+| [`../README.md`](../README.md) | Product overview, pipeline diagrams, data model |
+| [`../eval/README.md`](../eval/README.md) | TREC CDS 2016 harness and MSAS |
+| [`../env.example`](../env.example) | Environment keys. Copy to `.env`; never commit secrets |
 
-The architecture paper (`MedSwin.tex`) is intentionally not tracked in this repository. The runtime in `app/medswin/` is the executable source of truth.
+The architecture paper (`MedSwin.tex`) is intentionally not the git-tracked runtime contract. Code in `app/` wins when a sentence disagrees with a diagram.
 
-Default local ports:
+### Canonical vs leftover paths
+
+| Follow | Do not treat as the local contract |
+| --- | --- |
+| `./scripts/start-local.sh` | `lab/` (HPC research modules) |
+| `APP_PORT=8100`, DB `medswin` | Root `docker-compose.yml` / `Dockerfile` (legacy **8000** / `medical_rag_db`) |
+| `demo-org` (ask) / `bench-org` (eval) | `aws/deploy.sh` (legacy EC2 compose deploy) |
+
+### Default local ports
 
 | Process | Port | Role |
 | --- | --- | --- |

@@ -80,8 +80,10 @@ raw query
           → capped Mongo cosine scan (local-dev only)
   → take top-K by dense_score
   → one LLMClient.call_llm  (“answer from these passages; if weak, still answer”)
-  → always generate (ungated)
+      except infrastructure gaps (see below)
 ```
+
+Ungated generation is the control **when the corpus is usable**. The LLM is **skipped** when chunks exist but have no embeddings (`degraded_mode.no_embeddings`) or the vector dimension does not match (`retrieval_backend=dim_mismatch`). That is a setup failure, not abstention. True empty retrieval (no chunks for the org) still parametric-generates.
 
 Explicitly unused:
 
@@ -93,7 +95,7 @@ Explicitly unused:
 - all MAC agents and `SynthesisAgent`
 - `EvidenceGate` / retrieve-more / `expand_query`
 
-Naive **always generates**, including when retrieval is empty (parametric fallback). That is a feature of the control: MedSwin’s abstention can only look valuable if the baseline is allowed to answer unsafely.
+When retrieval is empty **and** the org has no chunks, naive still parametric-generates. That is a feature of the control: MedSwin’s abstention can only look valuable if the baseline is allowed to answer unsafely. When the org has chunks but `embedded_count==0`, naive refuses to call the LLM and the one-shot CLI exits 1 — run `./scripts/start-local.sh index` first.
 
 ---
 
@@ -118,7 +120,7 @@ What is allowed to differ (this is the treatment):
 | Rerank / calibration | off | on |
 | Agents | off | MAC claim specialists |
 | Selection | raw dense rank + char cap | fusion + utility + packing |
-| Generation gate | always generate | accept / retrieve-more / abstain |
+| Generation gate | ungated (skip LLM only on `no_embeddings` / `dim_mismatch`) | accept / retrieve-more / abstain |
 | Answer style | generic RAG prompt | structured CDS synthesis |
 
 Mongo cosine fallback (`retrieval_backend=mongo_cosine`) is **not** a fair published baseline. It exists so `./scripts/start-local.sh --prompt` still works before you build an ANN index. For any number you would write down, build the index first and confirm `retrieval_backend=ann`.
@@ -291,7 +293,7 @@ Base: `http://127.0.0.1:8100`
 Response is a `ChatResponse` with:
 
 - `pipeline`: `"naive_rag"`
-- `retrieval_backend`: `"ann"` | `"mongo_cosine"` | `"empty"` | `"error"`
+- `retrieval_backend`: `"ann"` | `"mongo_cosine"` | `"empty"` | `"dim_mismatch"` | `"error"`
 - `timing_ms`: `{embed, retrieve, generate, total}`
 - `policy_decision.passed`: always `true` (ungated)
 - `uncertainty_level`: `"ungated"`
@@ -489,4 +491,6 @@ From the repository root:
 python3 -m pytest tests/test_naive_rag.py tests/test_eval_harness.py -q
 ```
 
-`test_naive_rag.py` asserts: dense top-K only, no reranker, generation with an empty pool, and the compare helper’s Jaccard / abstention fields.
+`test_naive_rag.py` asserts: dense top-K only, no reranker, generation with an empty pool, infrastructure-gap skip, and the compare helper’s Jaccard / abstention fields.
+
+Administrators: first-run sequence and portals are in [`ADMIN.md`](ADMIN.md).

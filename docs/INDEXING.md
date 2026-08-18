@@ -2,6 +2,7 @@
 
 How MedSwin (and the naive-RAG control) turn ingested documents into retrievable vectors. This page describes the **live chat path**, not the older “pick HNSW or FAISS or Tree per query” sketch.
 
+Admin first-run: [ADMIN.md](ADMIN.md).  
 Local rebuild from the operator: `./scripts/start-local.sh index`.  
 API: [ENDPOINTS.md](ENDPOINTS.md).  
 Fairness rules: [NAIVE_RAG.md](NAIVE_RAG.md).

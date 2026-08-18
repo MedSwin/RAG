@@ -1,5 +1,9 @@
 # Lab Environment Setup
 
+> **Legacy research tree.** This is **not** the supported MedSwin runtime.
+> Configure and run the product from [`docs/ADMIN.md`](../docs/ADMIN.md) and `./scripts/start-local.sh`.
+> Imports such as `app.services.preprocessing_service` in the “migration path” below do not match the current package layout (`app/medswin/`, `app/services/preprocessing.py`).
+
 This directory contains the original lab environment components for the Medical RAG System. These modules were designed for HPC (High Performance Computing) environments and local development before being integrated into the production FastAPI application.
 
 ## 📁 Directory Structure

@@ -4,7 +4,8 @@ This is the day-to-day manual for running MedSwin on one machine: start the API,
 
 The entry point is [`scripts/start-local.sh`](../scripts/start-local.sh). The intelligence lives in [`app/cli/operator.py`](../app/cli/operator.py). Asking a question reuses [`app/cli/prompt.py`](../app/cli/prompt.py).
 
-Related manuals: [NAIVE_RAG.md](NAIVE_RAG.md), [eval/README.md](../eval/README.md), [ENDPOINTS.md](ENDPOINTS.md).
+Day-one runbook (ports, `.env`, first ingest): [ADMIN.md](ADMIN.md).  
+Related: [NAIVE_RAG.md](NAIVE_RAG.md), [eval/README.md](../eval/README.md), [ENDPOINTS.md](ENDPOINTS.md).
 
 ---
 
@@ -22,6 +23,8 @@ After the stack is up you should be able to reach all four of these. They share 
 | Naive preflight | http://127.0.0.1:8100/api/v1/naive/ready | Mongo, chunk count, embedding count, index file |
 
 The clinician page served at `/app/` is the zero-build UI in [`web/public/index.html`](../web/public/index.html). If you run `npm run build` in `web/`, FastAPI prefers `web/dist/` instead.
+
+Form fields: pipeline (`full` / `naive` / `both`), question, `patient_id`, `org_id` (default `demo-org`), `user_id` (default `clinician-1`), naive `top_k` (1–20). The UI does **not** send `session_id` or `constraints` — use curl or eval for those. Nav links: clinician, ops dashboard, OpenAPI, eval portal (`hostname:8200`).
 
 ---
 
@@ -134,9 +137,18 @@ Only processes this operator started are stopped. An API you launched yourself w
 3. Installs `requirements.txt` only if `fastapi`, `uvicorn`, `httpx`, or `pymongo` are missing
 4. Pings `MONGODB_URL` (default `mongodb://localhost:27017`). If down, starts `mongo:6.0` as `rag_mongodb`
 5. Forces `MONGODB_DB=medswin` unless you already exported another name
-6. Creates `models/`, `data/`, `logs/`, `storage/`
-7. Warns if `models/MedEmbed-large-v0.1` or `models/bge-reranker-v2-m3` are absent
-8. Hands off to `python -m app.cli.operator …` or, for `serve`, to uvicorn
+6. Exports `DEBUG=true` unless you already set `DEBUG` in the environment (overrides `env.example` `DEBUG=false`)
+7. Creates `models/`, `data/`, `logs/`, `storage/`
+8. Warns if `models/MedEmbed-large-v0.1` or `models/bge-reranker-v2-m3` are absent
+9. Hands off to `python -m app.cli.operator …` or, for `serve`, to uvicorn
+
+`EVAL_BASE_URL` (default `http://127.0.0.1:8200`) is read by the shell, not by `app/core/config.py`.
+
+Python bytecode only (safe; does not wipe Mongo or `data/*.bin`):
+
+```bash
+./scripts/delete-cache.sh
+```
 
 Mongo database name is **`medswin`**. Port **8000** in `env.example` is the supervisor LLM, not this API.
 
@@ -173,7 +185,7 @@ If naive returns `degraded_mode.no_embeddings` or `degraded_mode.error`, the CLI
 `eval --run` calls the same runner as `POST http://127.0.0.1:8200/api/run`:
 
 - `pipeline=medswin|naive_rag|both`
-- same `BENCHMARK_ORG_ID` (default `bench-org`, not `demo-org`)
+- tenant is **`BENCHMARK_ORG_ID`** (default `bench-org`). `--org-id` is **not** applied to eval runs
 - naive preflight via `GET /api/v1/naive/ready`
 - writes `{run_id}.json` and, for `both`, `{run_id}.comparison.json` under `RUN_STORE_DIR` (default `/tmp/medswin-audits`)
 

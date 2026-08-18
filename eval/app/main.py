@@ -31,8 +31,23 @@ async def health() -> dict:
     return {"status": "ok", "service": "medswin-system-benchmark"}
 
 
+def _default_cases_path() -> str:
+    """Resolve the smoke JSONL from repo root or eval/ cwd."""
+    here = Path(__file__).resolve().parent.parent / "data" / "sample" / "cases.jsonl"
+    for candidate in (
+        Path("eval/data/sample/cases.jsonl"),
+        Path("data/sample/cases.jsonl"),
+        here,
+    ):
+        if candidate.exists():
+            return str(candidate)
+    return "eval/data/sample/cases.jsonl"
+
+
 @app.get("/api/cases")
-async def list_cases(path: str = "data/sample/cases.jsonl") -> dict:
+async def list_cases(path: str | None = None) -> dict:
+    if path is None:
+        path = _default_cases_path()
     try:
         cases = read_jsonl_cases(path)
     except Exception as exc:  # noqa: BLE001

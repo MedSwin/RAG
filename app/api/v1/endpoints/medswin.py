@@ -90,15 +90,11 @@ def get_orchestrator() -> MedSwinOrchestrator:
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, orchestrator: MedSwinOrchestrator = Depends(get_orchestrator)):
-    """Process a chat query through MedSwin pipeline.
-    
-    This endpoint orchestrates the multi-agent conversation system:
-    - Supervisor normalizes query
-    - Evidence Retriever (Agent 1) searches CPG + EMR indices
-    - EMR Summariser (Agent 2) produces structured patient state
-    - Guideline Synthesiser (Agent 3) extracts recommendations
-    - Safety Critic checks for conflicts and unsafe suggestions
-    - Supervisor generates final answer with citations
+    """Run the evidence-gated MedSwin pipeline.
+
+    Normalize the query, hybrid-retrieve (dense ∪ BM25), rerank, dispatch
+    MAC claim agents, apply the sufficiency gate, then synthesize or abstain.
+    See docs/MEDSWIN.md. The naive-RAG control is POST /api/v1/naive/chat.
     """
     try:
         response = await orchestrator.chat(

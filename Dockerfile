@@ -1,4 +1,5 @@
-# Use Python 3.9 slim image as base
+# LEGACY image: CMD listens on 8000. The supported local/runtime default is
+# APP_PORT=8100 (docs/ADMIN.md, app/core/config.py, ./scripts/start-local.sh).
 FROM python:3.9-slim
 
 # Set environment variables

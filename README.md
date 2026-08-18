@@ -6,8 +6,11 @@ MedSwin does not treat top-K retrieval as automatically usable. For every clinic
 
 Documentation index: [`docs/README.md`](docs/README.md)
 
+**Administrators:** configure and run from [`docs/ADMIN.md`](docs/ADMIN.md). Do not start from `lab/`, root `docker-compose.yml`, or `aws/deploy.sh` — those are leftover contracts (port 8000 / `medical_rag_db`).
+
 | Manual | Use it when |
 | --- | --- |
+| [`docs/ADMIN.md`](docs/ADMIN.md) | Day-one: `.env`, ports, orgs, ingest, index, ask, eval |
 | [`docs/OPERATOR.md`](docs/OPERATOR.md) | Starting the stack, asking, comparing, opening portals, running eval |
 | [`docs/NAIVE_RAG.md`](docs/NAIVE_RAG.md) | Fairness contract for the textbook RAG control |
 | [`docs/ENDPOINTS.md`](docs/ENDPOINTS.md) | HTTP routes for MedSwin, naive-RAG, storage, eval |
@@ -411,7 +414,7 @@ Equivalent manual API start:
 
 ```bash
 # MongoDB
-docker run -d -p 27017:27017 --name mongodb mongo:6.0
+docker run -d -p 27017:27017 --name rag_mongodb mongo:6.0
 
 # API
 python3 -m uvicorn app.main:app --reload --port 8100
@@ -419,7 +422,7 @@ python3 -m uvicorn app.main:app --reload --port 8100
 
 | Surface | URL |
 | --- | --- |
-| Clinician UI (full / naive / both) | [http://localhost:8100/app/](http://localhost:8100/app/) |
+| Clinician UI (full / naive / both) | [http://localhost:8100/app/](http://localhost:8100/app/) — form: query, pipeline, org, user, patient, naive top-K (no `constraints`) |
 | Ops dashboard | [http://localhost:8100/api/v1/dashboard/](http://localhost:8100/api/v1/dashboard/) |
 | Eval harness | [http://localhost:8200/](http://localhost:8200/) (`./scripts/start-local.sh eval`) |
 | OpenAPI | [http://localhost:8100/docs](http://localhost:8100/docs) |
@@ -553,6 +556,7 @@ System-level TREC CDS audit lives under [`eval/`](eval/) and calls `/medswin/cha
 | [`eval/`](eval/) | TREC / smoke system audit |
 | [`data/calibration/`](data/calibration/) | Fitted score & agent reliability artefacts |
 | [`docs/README.md`](docs/README.md) | Documentation index |
+| [`docs/ADMIN.md`](docs/ADMIN.md) | Administrator day-one runbook |
 
 ---
 

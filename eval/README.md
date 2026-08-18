@@ -1,5 +1,7 @@
 # MedSwin End-to-End System Benchmark
 
+Administrator first-run (API + operator + portals): [`docs/ADMIN.md`](../docs/ADMIN.md).
+
 This harness evaluates the live MedSwin runtime rather than a standalone LLM or reranker. It runs the same cases through `/api/v1/medswin/chat` and/or the naive-RAG control at `/api/v1/naive/chat`, retrieves trace summaries, and emits an audit JSON file containing evidence, provenance, sufficiency, safety, and trace-completeness metrics.
 
 The benchmark now keeps the clinical question text separate from the patient note. Case context is ingested as EMR-like evidence, while the query sent to MedSwin stays pure so retrieval quality is measured against the runtime contract rather than prompt augmentation.
@@ -41,25 +43,30 @@ Audit JSON: MSAS, facet recall, critical-facet recall, citation precision,
 
 ## File layout
 
+Paths below are relative to **`eval/`**. From the repository root, prefix with `eval/`.
+
 ```text
-app/
-  main.py              # FastAPI benchmark API + static UI
-  runner.py            # end-to-end benchmark runner
-  client.py            # calls MedSwin endpoints
-  audit.py             # metrics and MSAS computation
-  schemas.py           # Pydantic audit/case models
-  config.py            # env-driven settings
-scripts/
-  prepare_trec_cds.py  # exports TREC CDS cases with qrels via ir_datasets
-  ingest_trec_pmc.py   # bulk-ingests PMC evidence into MedSwin
-data/sample/
-  cases.jsonl          # two toy cases; from repo root use eval/data/sample/cases.jsonl
-audits/
-  audit_schema.json    # expected audit output shape
-static/
-  index.html           # simple UI
-Dockerfile
-README.md
+eval/
+  app/
+    main.py              # FastAPI benchmark API + static UI
+    runner.py            # end-to-end benchmark runner
+    client.py            # calls MedSwin / naive endpoints
+    audit.py             # metrics and MSAS computation
+    schemas.py           # Pydantic audit/case models (default cases_path is repo-root relative)
+    config.py            # env-driven settings
+  scripts/
+    prepare_trec_cds.py  # exports TREC CDS cases with qrels via ir_datasets
+    ingest_trec_pmc.py   # bulk-ingests PMC evidence into MedSwin
+    run_pipeline_compare.py
+  data/sample/
+    cases.jsonl          # two toy cases — from repo root: eval/data/sample/cases.jsonl
+  audits/
+    audit_schema.json
+  static/
+    index.html
+  Dockerfile
+  docker-compose.yml     # eval service only (:8200); MedSwin must already be on :8100
+  README.md
 ```
 
 ## Quick start
@@ -73,12 +80,14 @@ From the repository root, the operator can start both portals:
 ./scripts/start-local.sh eval --run --pipeline both --max-cases 2
 ```
 
-Or start the services yourself:
+Or start the services yourself **from the repository root**:
 
 ```bash
 python3 -m uvicorn app.main:app --reload --port 8100
 python3 -m uvicorn eval.app.main:app --reload --port 8200
 ```
+
+`docker compose up --build` inside `eval/` starts **only** the harness on :8200. It expects MedSwin already healthy on the host at :8100. It is not a substitute for `./scripts/start-local.sh`.
 
 Open:
 
@@ -93,6 +102,8 @@ docker compose up --build
 ```
 
 ## Preparing TREC CDS 2016 cases
+
+From `eval/` (or prefix with `eval/` from the repository root):
 
 ```bash
 python scripts/prepare_trec_cds.py \
@@ -203,7 +214,7 @@ To run 2 and 5 back-to-back and write a delta file:
 curl -X POST http://localhost:8200/api/run \
   -H 'Content-Type: application/json' \
   -d '{
-    "cases_path": "data/sample/cases.jsonl",
+    "cases_path": "eval/data/sample/cases.jsonl",
     "max_cases": 2,
     "pipeline": "both",
     "top_k": 5

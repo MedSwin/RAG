@@ -1,3 +1,7 @@
+# LEGACY compose contract — not the supported local path.
+# Canonical admin runbook: docs/ADMIN.md  (APP_PORT=8100, MONGODB_DB=medswin,
+# ./scripts/start-local.sh). This file still publishes the API on 8000 and
+# initializes medical_rag_db. Do not mix those numbers with the operator docs.
 version: '3.8'
 
 services:

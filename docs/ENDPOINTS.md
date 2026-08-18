@@ -5,6 +5,7 @@ Base URL for the runtime: `http://127.0.0.1:8100`
 All versioned routes sit under `/api/v1`. Every MedSwin / naive / storage call that reads tenant data requires `org_id`.
 
 Interactive explorer: [http://127.0.0.1:8100/docs](http://127.0.0.1:8100/docs)  
+Admin runbook: [ADMIN.md](ADMIN.md)  
 Local operator: [OPERATOR.md](OPERATOR.md)  
 Architecture: [MEDSWIN.md](MEDSWIN.md)
 
@@ -15,7 +16,7 @@ Architecture: [MEDSWIN.md](MEDSWIN.md)
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/` | Redirect to `/app/` when the clinician UI is present, else `/api/v1/dashboard/` |
-| `GET` | `/health` | Liveness. Local: embedding / reranker loaded. Cloud: active embedding space + refresh status |
+| `GET` | `/health` | Liveness. Local: embedding / reranker loaded. Cloud: `cloud_mode`, `active_embedding_space`, `active_index_ready`, `embedding_refresh` |
 | `GET` | `/app/` | Clinician CDS (static `web/public` or built `web/dist`) |
 | `GET` | `/docs` | OpenAPI |
 
@@ -46,7 +47,7 @@ Full MAC + gate pipeline.
 }
 ```
 
-`source_policy` ∈ `ANY` | `CPG_ONLY` | `EMR_ONLY` | `LIT_ONLY`.
+`source_policy` ∈ `ANY` | `CPG_ONLY` | `EMR_ONLY` | `LIT_ONLY` | `SAFETY_ONLY`. The clinician UI does not send `constraints` or `session_id`; those fields are for curl / eval / the operator.
 
 Response is a `ChatResponse`:
 
