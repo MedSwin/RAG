@@ -9,7 +9,10 @@ active Cohere Embed v4 vector space, SQLite BM25 index, and HNSW label mapping.
 
 Counts alone are insufficient: equal-size stores can contain different IDs. We
 therefore compute order-independent cryptographic multiset fingerprints over
-cross-store identifiers and require exact equality.
+cross-store identifiers and require exact equality. In addition, deterministic
+HNSW labels are sampled and their stored vectors are compared with the Mongo
+embedding for the mapped chunk ID, catching vector/label mis-association that
+count and ID-set checks alone cannot detect.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -24,6 +28,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 import hnswlib
+import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVAL_ROOT = REPO_ROOT / "eval"
@@ -162,7 +167,6 @@ def _fts_integrity(path: Path, org_id: str) -> tuple[int, dict[str, Any]]:
         org_rows = int(conn.execute("SELECT count(*) FROM chunks_fts WHERE org_id = ?", (org_id,)).fetchone()[0])
         if org_rows != count:
             raise RuntimeError(f"BM25 FTS contains {count - org_rows:,} rows outside benchmark org {org_id}")
-        # Exercise FTS5's bm25() function itself, not merely the table shape.
         conn.execute(
             "SELECT chunk_id, bm25(chunks_fts) FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT 1",
             ('"clinical"',),
@@ -200,6 +204,81 @@ def _hnsw_count(path: Path, dimension: int) -> int:
     index = hnswlib.Index(space="cosine", dim=dimension)
     index.load_index(str(path))
     return int(index.get_current_count())
+
+
+def _cosine(left: np.ndarray, right: np.ndarray) -> float:
+    left = np.asarray(left, dtype=np.float32).reshape(-1)
+    right = np.asarray(right, dtype=np.float32).reshape(-1)
+    if left.size == 0 or right.size == 0 or left.size != right.size:
+        return 0.0
+    denom = float(np.linalg.norm(left) * np.linalg.norm(right))
+    if denom <= 0.0:
+        return 0.0
+    return float(np.dot(left, right) / denom)
+
+
+def _hnsw_vector_alignment(
+    index_path: Path,
+    mapping_path: Path,
+    coll: Any,
+    org_id: str,
+    dimension: int,
+    total_vectors: int,
+) -> dict[str, Any]:
+    """Deterministically sample HNSW label->vector->Mongo identity alignment."""
+    if total_vectors <= 0:
+        raise RuntimeError("Cannot verify HNSW vector alignment for an empty index")
+    requested = max(1, int(os.getenv("FULL_VERIFY_HNSW_SAMPLES", "32")))
+    sample_count = min(requested, total_vectors)
+    if sample_count == 1:
+        labels = [0]
+    else:
+        labels = sorted(
+            set(int(value) for value in np.linspace(0, total_vectors - 1, num=sample_count, dtype=np.int64))
+        )
+
+    index = hnswlib.Index(space="cosine", dim=dimension)
+    index.load_index(str(index_path))
+    conn = sqlite3.connect(f"file:{mapping_path.resolve()}?mode=ro", uri=True)
+    min_cosine = 1.0
+    samples: list[dict[str, Any]] = []
+    try:
+        for label in labels:
+            row = conn.execute("SELECT chunk_id FROM mapping WHERE label = ?", (label,)).fetchone()
+            if row is None:
+                raise RuntimeError(f"HNSW mapping has no chunk_id for sampled label {label}")
+            chunk_id = str(row[0])
+            mongo = coll.find_one(
+                {"org_id": org_id, "chunk_id": chunk_id},
+                {"_id": 0, "embedding": 1, "embedding_dim": 1, "embedding_space": 1},
+            )
+            if not mongo:
+                raise RuntimeError(f"Mongo has no chunk for sampled HNSW label {label} -> {chunk_id}")
+            embedding = mongo.get("embedding") or []
+            if len(embedding) != dimension:
+                raise RuntimeError(
+                    f"Mongo embedding dimension for {chunk_id} is {len(embedding)}, expected {dimension}"
+                )
+            stored = np.asarray(index.get_items([label])[0], dtype=np.float32)
+            similarity = _cosine(stored, np.asarray(embedding, dtype=np.float32))
+            min_cosine = min(min_cosine, similarity)
+            # hnswlib normalizes stored vectors for cosine space, so cosine
+            # equivalence rather than element-wise equality is the correct check.
+            if similarity < 0.9999:
+                raise RuntimeError(
+                    f"HNSW label/vector alignment mismatch for label={label} chunk_id={chunk_id}: cosine={similarity:.6f}"
+                )
+            samples.append({"label": label, "chunk_id": chunk_id, "cosine": similarity})
+    finally:
+        conn.close()
+
+    return {
+        "sample_count": len(samples),
+        "requested_sample_count": requested,
+        "minimum_cosine": min_cosine,
+        "first_sample": samples[0] if samples else None,
+        "last_sample": samples[-1] if samples else None,
+    }
 
 
 def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
@@ -280,9 +359,6 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
     if active_chunks != total_chunks:
         raise RuntimeError(f"Only {active_chunks:,}/{total_chunks:,} chunks are in the active embedding space")
 
-    # Verify the metadata Document layer created by the production ingest
-    # contract. It must contain exactly the same source document ID universes as
-    # the prepared Chunk layer and no extra benchmark-org documents.
     lit_document_records = documents.count_documents({**base, "source_type": "LIT"})
     emr_document_records = documents.count_documents({**base, "source_type": "EMR"})
     total_document_records = documents.count_documents(base)
@@ -368,6 +444,15 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
     if mapping_fingerprint != mongo_fingerprint:
         raise RuntimeError("HNSW mapping chunk-ID fingerprint does not match Mongo benchmark corpus")
 
+    hnsw_alignment = _hnsw_vector_alignment(
+        index_path,
+        mapping_path,
+        coll,
+        org_id,
+        settings.active_embedding_dimension(),
+        hnsw_vectors,
+    )
+
     verification = {
         "strict_pass": True,
         "verified_at": _now(),
@@ -401,6 +486,7 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
         "hnsw_mapping_rows": mapping_rows,
         "hnsw_mapping_label_bounds": label_bounds,
         "hnsw_mapping_chunk_id_fingerprint": mapping_fingerprint,
+        "hnsw_vector_alignment": hnsw_alignment,
         "cases_path": str(cases_path.resolve()),
         "runtime_manifest": str(runtime_path.resolve()),
     }
