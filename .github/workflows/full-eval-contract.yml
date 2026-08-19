@@ -77,6 +77,8 @@ jobs:
           grep -q 'FULL_VERIFY_HNSW_SAMPLES' eval/scripts/verify_full_trec_runtime.py
           grep -q 'chunk_id_fingerprint' eval/scripts/verify_full_trec_runtime.py
           grep -q 'input_type="document" if settings.CLOUD_MODE else None' app/api/v1/endpoints/medswin.py
+          grep -q '_render_final_answer' app/medswin/orchestrator.py
+          grep -q '_generation_signature' app/indexes/hybrid.py
       - name: Assert retrieval metric separation and budget fairness
         run: |
           grep -q 'retrieval_ndcg_at_10' eval/app/schemas.py
@@ -163,6 +165,25 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+      - name: Verify installed API route graph
+        run: |
+          python - <<'PY'
+          from app.main import app
+          paths = {route.path for route in app.routes}
+          required = {
+              "/health",
+              "/api/v1/medswin/chat",
+              "/api/v1/naive/chat",
+              "/api/v1/storage/chunks",
+              "/api/v1/retrieval/search",
+              "/api/v1/embedding/embed",
+              "/api/v1/preprocessing/chunk",
+          }
+          missing = sorted(required - paths)
+          if missing:
+              raise SystemExit(f"missing required routes: {missing}")
+          print(f"route graph OK: {len(paths)} routes")
+          PY
       - name: Run complete Python test suite
         run: pytest -q
 
@@ -198,3 +219,14 @@ jobs:
           ! grep -q 'medical_rag_db' /tmp/medswin-compose.yml
       - name: Build supported container image
         run: docker build --progress=plain -t medswin-ci .
+      - name: Import API from built image
+        run: |
+          docker run --rm --entrypoint python medswin-ci - <<'PY'
+          from app.main import app
+          paths = {route.path for route in app.routes}
+          required = {"/health", "/api/v1/medswin/chat", "/api/v1/storage/chunks"}
+          missing = sorted(required - paths)
+          if missing:
+              raise SystemExit(f"container missing required routes: {missing}")
+          print(f"container API import OK: {len(paths)} routes")
+          PY
