@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import math
 from collections import Counter
 from typing import Any
 
 from .schemas import BenchmarkCase, CaseAudit, GoldFacet, RunAudit
+
+
+TREC_EVIDENCE_CUTOFF = 10
 
 
 def _as_bool(value: Any) -> bool | None:
@@ -27,6 +31,117 @@ def _trace_count(trace_summary: dict[str, Any] | None, *keys: str) -> bool:
     if not trace_summary:
         return False
     return any(bool(trace_summary.get(key)) for key in keys)
+
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            ordered.append(value)
+    return ordered
+
+
+def extract_ranked_doc_ids(response: dict[str, Any]) -> list[str]:
+    """Preserve final literature-evidence order presented to the generator.
+
+    TREC CDS evaluates biomedical article retrieval. Patient EMR context is a
+    MedSwin system input, not a TREC result document, so known non-LIT sources do
+    not consume ranks. Older fixtures that omit source_type are retained as
+    literature-compatible rather than silently returning an empty ranking.
+    """
+    bundle = response.get("evidence_bundle") or {}
+    known_non_lit = {"EMR", "CPG", "SAFETY"}
+    for key in ("passages", "evidence", "selected_passages", "chunks", "items"):
+        items = bundle.get(key)
+        if not isinstance(items, list):
+            continue
+        ranked: list[str] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source_type") or item.get("source") or "").upper()
+            if source in known_non_lit:
+                continue
+            doc_id = _norm_id(item.get("doc_id") or item.get("document_id") or item.get("source_id"))
+            if doc_id:
+                ranked.append(doc_id)
+        if ranked:
+            return _ordered_unique(ranked)
+    # A response should normally expose evidence_bundle.passages. Citations are
+    # a last-resort ranked fallback for older audit fixtures.
+    citations = response.get("citations") or []
+    return _ordered_unique(
+        [
+            doc_id
+            for item in citations
+            if isinstance(item, dict)
+            for doc_id in [_norm_id(item.get("doc_id") or item.get("document_id") or item.get("source_id"))]
+            if doc_id
+        ]
+    )
+
+
+def _relevance_grades(case: BenchmarkCase) -> dict[str, int]:
+    raw = (case.metadata or {}).get("relevance_grades") or {}
+    grades: dict[str, int] = {}
+    if isinstance(raw, dict):
+        for doc_id, value in raw.items():
+            try:
+                grade = int(value)
+            except (TypeError, ValueError):
+                continue
+            if grade > 0:
+                grades[str(doc_id)] = grade
+    # Case-level positive qrels are authoritative if grade metadata is missing.
+    for doc_id in case.gold_doc_ids:
+        grades.setdefault(str(doc_id), 1)
+    return grades
+
+
+def ranked_trec_metrics(
+    case: BenchmarkCase,
+    ranked_doc_ids: list[str],
+    cutoff: int = TREC_EVIDENCE_CUTOFF,
+) -> dict[str, float]:
+    """Compute graded nDCG@k plus early binary relevance measures from qrels.
+
+    These are qrel-grounded ranked-evidence diagnostics. They are deliberately
+    reported separately from MSAS because MSAS also measures MedSwin-specific
+    audit/gating behavior that a naive-RAG control is designed not to implement.
+    """
+    cutoff = max(1, int(cutoff))
+    grades = _relevance_grades(case)
+    positive = {doc_id for doc_id, grade in grades.items() if grade > 0}
+    ranking = _ordered_unique(ranked_doc_ids)[:cutoff]
+
+    def gain(grade: int) -> float:
+        return float((2 ** max(0, int(grade))) - 1)
+
+    dcg = 0.0
+    for rank, doc_id in enumerate(ranking, start=1):
+        rel = int(grades.get(doc_id, 0))
+        if rel > 0:
+            dcg += gain(rel) / math.log2(rank + 1)
+    ideal = sorted((int(value) for value in grades.values() if int(value) > 0), reverse=True)[:cutoff]
+    idcg = sum(gain(rel) / math.log2(rank + 1) for rank, rel in enumerate(ideal, start=1))
+    ndcg = dcg / idcg if idcg > 0 else 1.0
+
+    relevant_retrieved = sum(1 for doc_id in ranking if doc_id in positive)
+    precision = relevant_retrieved / float(cutoff)
+    recall = relevant_retrieved / len(positive) if positive else 1.0
+    reciprocal_rank = 0.0
+    for rank, doc_id in enumerate(ranking, start=1):
+        if doc_id in positive:
+            reciprocal_rank = 1.0 / rank
+            break
+    return {
+        "ndcg_at_10": max(0.0, min(1.0, ndcg)),
+        "precision_at_10": max(0.0, min(1.0, precision)),
+        "recall_at_10": max(0.0, min(1.0, recall)),
+        "reciprocal_rank": max(0.0, min(1.0, reciprocal_rank)),
+    }
 
 
 def extract_doc_ids(response: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
@@ -133,12 +248,7 @@ def facet_recall(
         total += weight
         gold = set(facet.gold_doc_ids)
         if fallback_gold_doc_ids and (not gold or gold.isdisjoint(fallback_gold_doc_ids)):
-            # Root Cause vs Logic: some generated 510-case shards carry
-            # case-level qrels that differ from auto-seeded facet qrels. When
-            # that happens, facet recall should use the case qrel bundle rather
-            # than scoring against stale facet labels.
             gold = fallback_gold_doc_ids
-        # If a facet has no doc-level labels, do not penalize it in this automatic pass.
         if not gold:
             earned += weight
         elif gold & evidence_doc_ids:
@@ -161,9 +271,6 @@ def trace_completeness(response: dict[str, Any], trace_summary: dict[str, Any] |
     }
     if trace_summary is not None:
         checks["trace_fetch"] = bool(trace_summary)
-        # Root Cause vs Logic: the runtime emits plural count fields (for example
-        # messages_count) while older benchmark code expected singular aliases. The
-        # logic now accepts both so trace completeness reflects the actual audit payload.
         checks["trace_counts"] = (
             _trace_count(trace_summary, "messages_count", "message_count")
             or _trace_count(trace_summary, "tool_calls_count", "tool_count")
@@ -174,11 +281,10 @@ def trace_completeness(response: dict[str, Any], trace_summary: dict[str, Any] |
 
 
 def groundedness_proxy(response: dict[str, Any], cited_doc_ids: set[str]) -> tuple[float, float]:
-    """Estimate groundedness from citations/ledger without an LLM judge.
+    """Estimate citation/ledger alignment without an external semantic judge.
 
-    For publication, replace or supplement this with blinded clinician or rubric-based
-    claim adjudication. The proxy is intentionally conservative: answers with no
-    citations or no evidence ledger lose points.
+    This remains an automatic system diagnostic. It is not presented as a
+    replacement for clinician/rubric-based claim adjudication.
     """
     answer = response.get("answer") or ""
     ledger = response.get("evidence_ledger") or (response.get("evidence_bundle") or {}).get("evidence_ledger") or []
@@ -200,20 +306,12 @@ def groundedness_proxy(response: dict[str, Any], cited_doc_ids: set[str]) -> tup
         if total:
             score = supported / total
             return score, 1.0 - score
-    # Fallback: citation presence per answer length.
     if citations:
         return 0.65, 0.35
     return 0.25, 0.75
 
 
 def _ledger_claim_items(item: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normalize top-level or nested ledger claims onto the same scoring path.
-
-    Naive-RAG and MedSwin both persist `EvidenceLedgerEntry.claims[]`. Older
-    proxy fixtures still emit a single top-level `claim`. Score both shapes
-    the same way so the baseline is not silently forced onto the citation
-    fallback (0.65) while the full system uses a different path.
-    """
     entry_doc_id = item.get("doc_id") or item.get("document_id") or item.get("source_id")
     top_claim = item.get("claim") or item.get("text") or item.get("statement")
     if top_claim:
@@ -251,6 +349,8 @@ def audit_case(
     indexed_doc_ids: set[str] | None = None,
     pipeline: str | None = None,
 ) -> CaseAudit:
+    ranked_doc_ids = extract_ranked_doc_ids(response)
+    trec_metrics = ranked_trec_metrics(case, ranked_doc_ids)
     selected_doc_ids, cited_doc_ids, selected_chunk_ids = extract_doc_ids(response)
     selected_counts = selected_source_counts(response)
     evidence_doc_ids = set(selected_doc_ids) | set(cited_doc_ids)
@@ -259,7 +359,11 @@ def audit_case(
     indexed_gold = len(gold_doc_ids & indexed_doc_ids) if indexed_doc_ids is not None else None
 
     evidence_doc_recall = len(gold_doc_ids & evidence_doc_ids) / len(gold_doc_ids) if gold_doc_ids else 1.0
-    citation_precision = len(set(cited_doc_ids) & gold_doc_ids) / len(set(cited_doc_ids)) if cited_doc_ids and gold_doc_ids else (1.0 if cited_doc_ids else 0.0)
+    citation_precision = (
+        len(set(cited_doc_ids) & gold_doc_ids) / len(set(cited_doc_ids))
+        if cited_doc_ids and gold_doc_ids
+        else (1.0 if cited_doc_ids else 0.0)
+    )
 
     f_recall = facet_recall(case.gold_facets, evidence_doc_ids, critical_only=False, fallback_gold_doc_ids=gold_doc_ids)
     cf_recall = facet_recall(case.gold_facets, evidence_doc_ids, critical_only=True, fallback_gold_doc_ids=gold_doc_ids)
@@ -280,7 +384,9 @@ def audit_case(
     unsafe_penalty = max(0.0, 1.0 - cf_recall)
     trace_score = trace_completeness(response, trace_summary)
 
-    clinical_quality_proxy = 0.5 * ground_score + 0.5 * min(1.0, len(str(response.get("answer") or "")) / 600.0)
+    # MSAS stays a system-audit diagnostic. The previous formula rewarded raw
+    # answer length as a "clinical quality" proxy; verbosity is not clinical
+    # quality, so that term is replaced by qrel-grounded citation precision.
     msas = (
         0.25 * cf_recall
         + 0.15 * f_recall
@@ -288,7 +394,7 @@ def audit_case(
         + 0.15 * suff_score
         + 0.10 * trace_score
         + 0.10 * evidence_doc_recall
-        + 0.10 * clinical_quality_proxy
+        + 0.10 * citation_precision
         - 0.20 * unsafe_penalty
         - 0.10 * unsupported_penalty
     )
@@ -304,6 +410,7 @@ def audit_case(
         policy_passed=policy_passed,
         degraded_mode=bool(response.get("degraded_mode")) if response.get("degraded_mode") is not None else None,
         answer_chars=len(str(response.get("answer") or "")),
+        ranked_doc_ids=ranked_doc_ids,
         selected_doc_ids=selected_doc_ids,
         cited_doc_ids=cited_doc_ids,
         selected_chunk_ids=selected_chunk_ids,
@@ -323,6 +430,10 @@ def audit_case(
             policy_passed=policy_passed,
             errors=errors or [],
         ),
+        ndcg_at_10=trec_metrics["ndcg_at_10"],
+        precision_at_10=trec_metrics["precision_at_10"],
+        recall_at_10=trec_metrics["recall_at_10"],
+        reciprocal_rank=trec_metrics["reciprocal_rank"],
         facet_recall=f_recall,
         critical_facet_recall=cf_recall,
         evidence_doc_recall=evidence_doc_recall,
@@ -344,6 +455,10 @@ def aggregate_run(run: RunAudit) -> RunAudit:
         run.aggregate = {}
         return run
     numeric_fields = [
+        "ndcg_at_10",
+        "precision_at_10",
+        "recall_at_10",
+        "reciprocal_rank",
         "facet_recall",
         "critical_facet_recall",
         "evidence_doc_recall",
@@ -365,6 +480,17 @@ def aggregate_run(run: RunAudit) -> RunAudit:
     agg["error_rate"] = sum(1 for c in run.cases if c.errors) / len(run.cases)
     buckets = Counter(c.failure_bucket for c in run.cases if c.failure_bucket)
     run.diagnostics["failure_buckets"] = dict(buckets)
+    run.diagnostics["metric_semantics"] = {
+        "trec_ranked_evidence": ["mean_ndcg_at_10", "mean_precision_at_10", "mean_recall_at_10", "mean_reciprocal_rank"],
+        "system_audit_diagnostic": "mean_msas",
+        "facet_warning": (
+            "Automatically prepared TREC facets are seeded from document-level qrels; "
+            "facet/sufficiency metrics remain provisional until facet-level adjudication."
+        ),
+        "groundedness_warning": (
+            "groundedness_proxy checks citation/ledger alignment only; use clinician/rubric claim adjudication for publication claims."
+        ),
+    }
     run.aggregate = agg
     run.num_cases = len(run.cases)
     return run
