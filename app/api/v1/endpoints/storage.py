@@ -2,9 +2,11 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.core.config import settings
+from app.schemas.enums import SourceType
+from app.services.adapters.embedding import EmbeddingClient
 from app.services.storage import StorageService
 
 logger = logging.getLogger(__name__)
@@ -12,15 +14,15 @@ router = APIRouter()
 
 
 class StoreChunksRequest(BaseModel):
-    """Request model for storing tenant-scoped chunks."""
-    org_id: str
-    chunks: List[Dict[str, Any]]
+    """Request model for normalizing, embedding, and storing tenant chunks."""
+    org_id: str = Field(min_length=1)
+    chunks: List[Dict[str, Any]] = Field(min_length=1)
     collection_name: str = "chunks"
-    batch_size: int = 100
+    batch_size: int = Field(default=100, ge=1, le=1000)
+    source_type: SourceType = SourceType.LIT
 
 
 class StoreChunksResponse(BaseModel):
-    """Response model for storing chunks."""
     success_count: int
     skipped_count: int = 0
     failed_count: int
@@ -30,11 +32,10 @@ class StoreChunksResponse(BaseModel):
 
 
 class BuildIndexRequest(BaseModel):
-    """Request model for building an ordinary HNSW index."""
+    """Request model for rebuilding the shared ordinary HNSW index."""
     index_path: Optional[str] = None
     mapping_path: Optional[str] = None
     force_rebuild: bool = False
-    org_id: str
 
 
 class BuildIndexResponse(BaseModel):
@@ -46,9 +47,8 @@ class BuildIndexResponse(BaseModel):
 
 
 class RefreshEmbeddingsRequest(BaseModel):
-    """Request model for active cloud embedding refresh."""
-    batch_size: Optional[int] = None
-    org_id: str
+    batch_size: Optional[int] = Field(None, ge=1, le=1000)
+    org_id: str = Field(min_length=1)
 
 
 class BenchmarkResetRequest(BaseModel):
@@ -77,8 +77,6 @@ class StorageStats(BaseModel):
     last_updated: Optional[datetime] = None
 
 
-# One service per API process. StorageService owns a lazily-created thread pool;
-# constructing it per request would leak executors under sustained admin usage.
 _storage_service = StorageService()
 
 
@@ -90,36 +88,123 @@ def cleanup_storage_service() -> None:
     _storage_service.cleanup()
 
 
+def _normalize_chunk(raw: Dict[str, Any], org_id: str, source_type: SourceType) -> Dict[str, Any]:
+    """Translate legacy preprocessing records into the production Chunk schema."""
+    chunk = dict(raw)
+    metadata = dict(chunk.get("metadata") or {})
+    embedded_org = str(chunk.get("org_id") or org_id).strip()
+    if embedded_org != org_id:
+        raise HTTPException(status_code=400, detail="All chunks must match request org_id")
+
+    chunk_id = str(chunk.get("chunk_id") or metadata.get("chunk_id") or "").strip()
+    text = str(chunk.get("text") or chunk.get("content") or "").strip()
+    doc_id = str(chunk.get("doc_id") or metadata.get("parent_id") or chunk_id).strip()
+    if not chunk_id:
+        raise HTTPException(status_code=400, detail="Each chunk requires chunk_id or metadata.chunk_id")
+    if not text:
+        raise HTTPException(status_code=400, detail=f"Chunk {chunk_id} has no text/content")
+    if not doc_id:
+        raise HTTPException(status_code=400, detail=f"Chunk {chunk_id} has no document identity")
+
+    raw_source = chunk.get("source_type") or source_type.value
+    try:
+        normalized_source = SourceType(str(raw_source).upper())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Chunk {chunk_id} has invalid source_type {raw_source!r}") from exc
+
+    reliability_defaults = {
+        SourceType.CPG: settings.SOURCE_CPG_SCORE,
+        SourceType.EMR: settings.SOURCE_EMR_SCORE,
+        SourceType.LIT: settings.SOURCE_LIT_SCORE,
+        SourceType.SAFETY: settings.EBM_SAFETY_WEIGHT,
+    }
+    reliability = float(chunk.get("source_reliability", reliability_defaults[normalized_source]))
+    grade = chunk.get("evidence_grade")
+    if not isinstance(grade, dict):
+        grade = {
+            "label": normalized_source.value.lower(),
+            "score": reliability,
+            "source_reliability": reliability,
+        }
+
+    return {
+        **chunk,
+        "chunk_id": chunk_id,
+        "doc_id": doc_id,
+        "org_id": org_id,
+        "source_type": normalized_source.value,
+        "text": text,
+        "content": text,  # legacy clients still inspect this field
+        "patient_id": chunk.get("patient_id") or metadata.get("patient_id"),
+        "section": chunk.get("section") or metadata.get("section"),
+        "source_reliability": reliability,
+        "evidence_grade": grade,
+        "tokenized_text": chunk.get("tokenized_text") or text.lower().split(),
+        "metadata": metadata,
+        "created_at": chunk.get("created_at") or datetime.now(timezone.utc),
+    }
+
+
+async def _attach_missing_embeddings(chunks: List[Dict[str, Any]], batch_size: int) -> None:
+    """Make preprocessing→storage immediately retrievable instead of storing stale chunks."""
+    expected_dim = settings.active_embedding_dimension()
+    missing = [
+        chunk
+        for chunk in chunks
+        if not isinstance(chunk.get("embedding"), list)
+        or len(chunk.get("embedding") or []) != expected_dim
+        or chunk.get("embedding_model") != settings.active_embedding_model()
+        or chunk.get("embedding_space") != settings.active_embedding_space()
+    ]
+    if not missing:
+        return
+
+    client = EmbeddingClient(settings.active_embedding_url())
+    try:
+        for start in range(0, len(missing), batch_size):
+            batch = missing[start : start + batch_size]
+            vectors = await client.embed(
+                [str(chunk["text"]) for chunk in batch],
+                input_type="document" if settings.CLOUD_MODE else None,
+            )
+            if len(vectors) != len(batch):
+                raise RuntimeError(f"Embedding service returned {len(vectors)} vectors for {len(batch)} chunks")
+            for chunk, vector in zip(batch, vectors):
+                chunk["embedding"] = vector.tolist()
+                chunk["embedding_model"] = settings.active_embedding_model()
+                chunk["embedding_dim"] = int(len(vector))
+                chunk["embedding_space"] = settings.active_embedding_space()
+                chunk["embedding_updated_at"] = datetime.now(timezone.utc)
+    finally:
+        await client.close()
+
+
 @router.post("/chunks", response_model=StoreChunksResponse)
 async def store_chunks(
     request: StoreChunksRequest,
     background_tasks: BackgroundTasks,
     storage_service: StorageService = Depends(get_storage_service),
 ):
-    """Store chunks for exactly one organization and refresh that index."""
-    if not request.chunks:
-        raise HTTPException(status_code=400, detail="No chunks provided")
-
-    normalized: List[Dict[str, Any]] = []
-    for raw in request.chunks:
-        chunk = dict(raw)
-        embedded_org = str(chunk.get("org_id") or request.org_id).strip()
-        if embedded_org != request.org_id:
-            raise HTTPException(status_code=400, detail="All chunks must match request org_id")
-        chunk["org_id"] = request.org_id
-        normalized.append(chunk)
-
+    """Normalize, document-embed, persist, then rebuild the shared ANN."""
     try:
+        normalized = [
+            _normalize_chunk(raw, request.org_id, request.source_type)
+            for raw in request.chunks
+        ]
+        await _attach_missing_embeddings(normalized, request.batch_size)
         result = await storage_service.store_chunks(
             chunks=normalized,
             collection_name=request.collection_name,
             batch_size=request.batch_size,
         )
         if result["success_count"] > 0:
+            # The online retriever uses one configured HNSW artifact. Keep that
+            # artifact global across tenants and enforce org isolation when
+            # resolving ANN labels through Mongo filters.
             background_tasks.add_task(
                 storage_service.build_hnsw_index_async,
                 force_rebuild=True,
-                org_id=request.org_id,
+                org_id=None,
             )
         return StoreChunksResponse(
             success_count=result["success_count"],
@@ -144,13 +229,13 @@ async def build_index(
     request: BuildIndexRequest,
     storage_service: StorageService = Depends(get_storage_service),
 ):
-    """Build HNSW index for one organization."""
+    """Rebuild the one shared ordinary ANN over all active tenant vectors."""
     try:
         result = await storage_service.build_hnsw_index_async(
             index_path=request.index_path or settings.HNSW_INDEX_PATH,
             mapping_path=request.mapping_path or settings.HNSW_MAPPING_PATH,
             force_rebuild=request.force_rebuild,
-            org_id=request.org_id,
+            org_id=None,
         )
         return BuildIndexResponse(
             success=result["success"],
@@ -167,13 +252,23 @@ async def build_index(
 @router.post("/embeddings/refresh")
 async def refresh_cloud_embeddings(
     request: RefreshEmbeddingsRequest,
+    background_tasks: BackgroundTasks,
     storage_service: StorageService = Depends(get_storage_service),
 ):
+    """Refresh one tenant's vectors, then rebuild the global online ANN."""
     try:
-        return await storage_service.refresh_cloud_embeddings(
+        result = await storage_service.refresh_cloud_embeddings(
             batch_size=request.batch_size,
             org_id=request.org_id,
+            rebuild_index=False,
         )
+        if result.get("ready"):
+            background_tasks.add_task(
+                storage_service.build_hnsw_index_async,
+                force_rebuild=True,
+                org_id=None,
+            )
+        return result
     except Exception as exc:
         logger.error("Error refreshing cloud embeddings: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to refresh cloud embeddings: {exc}")
@@ -213,7 +308,6 @@ async def clear_chunks(
     collection_name: str = "chunks",
     storage_service: StorageService = Depends(get_storage_service),
 ):
-    """Clear only the requested organization's chunks."""
     try:
         result = await storage_service.clear_chunks(collection_name, org_id=org_id)
         return {
