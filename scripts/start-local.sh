@@ -3,6 +3,11 @@
 # MedSwin local operator.
 # A TTY session becomes the interactive console. Non-interactive use stays
 # `serve`. Legacy --prompt / --question flags still work.
+#
+# Evaluation warmup is strict and idempotent by default: the requested MedSwin
+# snapshot, the complete TREC-CDS 2016 cache, and Azure Foundry services are
+# verified before normal startup. Set EVAL_WARMUP_ON_START=false or pass
+# --skip-eval-warmup only when deliberately running a non-evaluation dev stack.
 
 set -euo pipefail
 
@@ -34,6 +39,9 @@ WITH_EVAL=0
 OPEN_BROWSER=""
 EVAL_ACTION="ui"
 JSON=0
+SKIP_EVAL_WARMUP=0
+FORCE_EVAL_WARMUP=0
+RESET_FULL_CORPUS=0
 
 usage() {
     cat <<'EOF'
@@ -46,6 +54,8 @@ Commands
   up          Start API, print portals, open the clinician UI
   ask         Prompt full MedSwin, naive-RAG, or both
   eval        Start the benchmark UI, or run a compare
+  warmup      Verify/download MedSwin model + full TREC-CDS + Foundry services
+  full-eval   Prepare 100% TREC corpus/index and run the strict 2x2 eval matrix
   open        Open a portal in the browser
   status      API / corpus / naive / eval health
   index       Refresh embeddings and rebuild the ANN index
@@ -72,26 +82,31 @@ Options
   --with-eval           Also start the eval portal
   --open / --no-open    Open browsers
   --run                 With eval: run a benchmark instead of only the UI
+  --skip-eval-warmup    Skip the three evaluation warmup tasks for this run
+  --force-eval-warmup   Revalidate/redownload warmup artifacts
+  --reset-full-corpus   Force full-eval to delete/rebuild the benchmark corpus
   --json                Machine-readable operator output
   --help
 
-Portals (after `up` or `console`)
-  Clinician CDS    http://127.0.0.1:8100/app/
-  Ops dashboard    http://127.0.0.1:8100/api/v1/dashboard/
-  OpenAPI          http://127.0.0.1:8100/docs
-  Eval harness     http://127.0.0.1:8200/
+Evaluation defaults
+  FOUNDRY_MODEL      gpt-5.4
+  CLOUD_EMBEDDING    embed-v-4-0
+  CLOUD_RERANKER     Cohere-rerank-v4.0-fast
+  MedSwin generator  MedSwin/MedSwin-DaRE-TIES-KD-0.7
 
 Examples
   ./scripts/start-local.sh
+  ./scripts/start-local.sh warmup
+  ./scripts/start-local.sh full-eval
+  ./scripts/start-local.sh full-eval --reset-full-corpus
   ./scripts/start-local.sh up --with-eval --open
   ./scripts/start-local.sh ask --mode both --question "Can metformin continue?"
   ./scripts/start-local.sh eval --run --pipeline both --max-cases 2
-  ./scripts/start-local.sh open dashboard
-  ./scripts/start-local.sh serve
+  ./scripts/start-local.sh serve --skip-eval-warmup
 EOF
 }
 
-KNOWN_COMMANDS="console serve up ask prompt eval open status index stop"
+KNOWN_COMMANDS="console serve up ask prompt eval warmup full-eval open status index stop"
 
 if [[ $# -gt 0 && "$1" != -* ]]; then
     case " $KNOWN_COMMANDS " in
@@ -118,6 +133,9 @@ while [[ $# -gt 0 ]]; do
         --open) OPEN_BROWSER="1"; shift ;;
         --no-open) OPEN_BROWSER="0"; shift ;;
         --run) EVAL_ACTION="run"; shift ;;
+        --skip-eval-warmup) SKIP_EVAL_WARMUP=1; shift ;;
+        --force-eval-warmup) FORCE_EVAL_WARMUP=1; shift ;;
+        --reset-full-corpus) RESET_FULL_CORPUS=1; shift ;;
         --json) JSON=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *)
@@ -185,6 +203,20 @@ EVAL_PORT="${EVAL_PORT:-8200}"
 BASE_URL="${MEDSWIN_BASE_URL:-http://127.0.0.1:${APP_PORT}}"
 EVAL_URL="${EVAL_BASE_URL:-http://127.0.0.1:${EVAL_PORT}}"
 
+# Canonical evaluation model identities. Explicit .env values may override only
+# where the caller deliberately wants a different deployment name/endpoint.
+export FOUNDRY_MODEL="${FOUNDRY_MODEL:-gpt-5.4}"
+export CLOUD_MODEL="${CLOUD_MODEL:-$FOUNDRY_MODEL}"
+export CLOUD_EMBEDDING="${CLOUD_EMBEDDING:-embed-v-4-0}"
+export CLOUD_EMBEDDING_DIMENSION="${CLOUD_EMBEDDING_DIMENSION:-1536}"
+export CLOUD_RERANKER="${CLOUD_RERANKER:-Cohere-rerank-v4.0-fast}"
+export CLOUD_MODEL_INFERENCE_API_VERSION="${CLOUD_MODEL_INFERENCE_API_VERSION:-2024-05-01-preview}"
+export MEDSWIN_MODEL_REPO="${MEDSWIN_MODEL_REPO:-MedSwin/MedSwin-DaRE-TIES-KD-0.7}"
+export MEDSWIN_MODEL_PATH="${MEDSWIN_MODEL_PATH:-./models/MedSwin-DaRE-TIES-KD-0.7}"
+export MEDSWIN_LLM_MODEL="${MEDSWIN_LLM_MODEL:-MedSwin/MedSwin-DaRE-TIES-KD-0.7}"
+export MEDSWIN_LLM_URL="${MEDSWIN_LLM_URL:-http://127.0.0.1:8000/v1/chat/completions}"
+export EVAL_WARMUP_ON_START="${EVAL_WARMUP_ON_START:-true}"
+
 need_full_bootstrap() {
     case "$COMMAND" in
         stop|status|open) return 1 ;;
@@ -192,10 +224,21 @@ need_full_bootstrap() {
     esac
 }
 
+run_eval_warmup() {
+    local args=()
+    if [[ "$FORCE_EVAL_WARMUP" -eq 1 ]]; then args+=(--force); fi
+    echo -e "${YELLOW}Evaluation warmup: MedSwin snapshot + full TREC-CDS 2016 + Azure Foundry ...${NC}"
+    CLOUD_MODE=true python3 scripts/warmup-eval.py "${args[@]}"
+}
+
 if need_full_bootstrap; then
-    if ! python3 -c "import fastapi, uvicorn, httpx, pymongo" >/dev/null 2>&1; then
+    if ! python3 -c "import fastapi, uvicorn, httpx, pymongo, huggingface_hub" >/dev/null 2>&1; then
         echo -e "${YELLOW}Installing Python dependencies ...${NC}"
         pip install -r requirements.txt
+    fi
+    if ! python3 -c "import ir_datasets" >/dev/null 2>&1; then
+        echo -e "${YELLOW}Installing TREC dataset adapter ...${NC}"
+        pip install 'ir-datasets==0.5.9'
     fi
 
     export MONGODB_URL="${MONGODB_URL:-mongodb://localhost:27017}"
@@ -223,7 +266,7 @@ if need_full_bootstrap; then
         echo -e "${YELLOW}That is OK in CLOUD_MODE. Otherwise place the model or set EMBEDDING_URL.${NC}"
     fi
     if [ ! -d "models/bge-reranker-v2-m3" ]; then
-        echo -e "${YELLOW}Local reranker not found at models/bge-reranker-v2-m3 (needed for a fair full-MedSwin compare).${NC}"
+        echo -e "${YELLOW}Local reranker not found at models/bge-reranker-v2-m3; full cloud evaluation uses Cohere rerank instead.${NC}"
     fi
 
     export EMBEDDING_MODEL_PATH="${EMBEDDING_MODEL_PATH:-./models/MedEmbed-large-v0.1}"
@@ -236,6 +279,10 @@ if need_full_bootstrap; then
     export APP_HOST
     export APP_PORT
     export EVAL_PORT
+
+    if [[ "$COMMAND" != "warmup" && "$COMMAND" != "full-eval" && "$SKIP_EVAL_WARMUP" -eq 0 && "$EVAL_WARMUP_ON_START" == "true" ]]; then
+        run_eval_warmup
+    fi
 fi
 
 operator() {
@@ -267,7 +314,26 @@ print_banner() {
     echo -e "${YELLOW}In another terminal:${NC}"
     echo -e "  ./scripts/start-local.sh ask --mode both"
     echo -e "  ./scripts/start-local.sh eval --with-eval --open"
+    echo -e "  ./scripts/start-local.sh full-eval"
     echo -e "  ./scripts/start-local.sh status"
+}
+
+run_full_eval() {
+    local bench_org="${BENCHMARK_ORG_ID:-bench-org}"
+    local checkpoint="data/eval-warmup/full-trec-${bench_org}-checkpoint.json"
+    local prep_args=(--org-id "$bench_org")
+    run_eval_warmup
+    # A first publication build must never mix an old smoke/sample corpus with
+    # the complete corpus. Once a compatible checkpoint exists, resume/reuse it.
+    if [[ "$RESET_FULL_CORPUS" -eq 1 || ! -f "$checkpoint" ]]; then
+        prep_args+=(--reset)
+    fi
+    echo -e "${YELLOW}Preparing complete TREC-CDS runtime corpus and indexes ...${NC}"
+    CLOUD_MODE=true CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query \
+        python3 eval/scripts/prepare_full_trec_runtime.py "${prep_args[@]}"
+    echo -e "${YELLOW}Running strict naive/full × MedSwin/GPT-5.4 matrix ...${NC}"
+    CLOUD_MODE=true CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query \
+        python3 eval/scripts/run_full_matrix.py --org-id "$bench_org"
 }
 
 case "$COMMAND" in
@@ -280,6 +346,8 @@ case "$COMMAND" in
     up) operator up ;;
     ask) operator ask ;;
     eval) operator eval ;;
+    warmup) run_eval_warmup ;;
+    full-eval) run_full_eval ;;
     open) operator open ;;
     status) operator status ;;
     index) operator index ;;
