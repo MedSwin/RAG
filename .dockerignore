@@ -1,4 +1,35 @@
-*.md
-*.sh
+.git
+.github
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Runtime/generated state is mounted or materialized separately.
+data
+models
+logs
+storage
+*.log
+
+# Local evaluation outputs and caches.
+eval/runs
+eval/results
+data/eval-warmup
+
+# Frontend dependencies/build are recreated in the image builder stage.
+web/node_modules
+web/dist
+
+# Local notebooks/keys must never enter images.
 lab
 key
+*.pem
+*.key
