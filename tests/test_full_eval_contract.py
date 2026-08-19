@@ -3,6 +3,11 @@ import sqlite3
 import pytest
 
 from app.core.indexing.hnsw import SQLiteLabelMapping
+from app.medswin.naive import _truncate_context
+from app.schemas.enums import SourceType
+from app.schemas.evidence import CandidatePassage
+from eval.app.audit import ranked_trec_metrics
+from eval.app.schemas import BenchmarkCase
 from eval.scripts.run_full_matrix import (
     EXPECTED_LOCAL_MODEL,
     _runtime_artifact_env,
@@ -190,3 +195,42 @@ def test_cross_store_fingerprint_is_order_independent_but_identity_sensitive():
     assert forward != substituted
     assert forward != duplicated
     assert forward["count"] == 3
+
+
+def test_trec_ranked_metrics_use_graded_qrels_and_fixed_p10_denominator():
+    case = BenchmarkCase(
+        case_id="1",
+        query="clinical question",
+        gold_doc_ids=["d1", "d2"],
+        metadata={"relevance_grades": {"d1": 2, "d2": 1}},
+    )
+
+    ideal = ranked_trec_metrics(case, ["d1", "d2"])
+    reversed_ranking = ranked_trec_metrics(case, ["d2", "d1"])
+
+    assert ideal["ndcg_at_10"] == pytest.approx(1.0)
+    assert ideal["precision_at_10"] == pytest.approx(0.2)
+    assert ideal["recall_at_10"] == pytest.approx(1.0)
+    assert ideal["reciprocal_rank"] == pytest.approx(1.0)
+    assert reversed_ranking["ndcg_at_10"] < ideal["ndcg_at_10"]
+
+
+def test_naive_context_packer_uses_token_budget_before_character_ceiling():
+    passages = [
+        CandidatePassage(
+            chunk_id="c1",
+            doc_id="d1",
+            source_type=SourceType.LIT,
+            text="one two three four",
+        ),
+        CandidatePassage(
+            chunk_id="c2",
+            doc_id="d2",
+            source_type=SourceType.LIT,
+            text="five six seven eight",
+        ),
+    ]
+
+    packed = _truncate_context(passages, max_chars=10000, token_budget=5)
+
+    assert [passage.chunk_id for passage in packed] == ["c1"]
