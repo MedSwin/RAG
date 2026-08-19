@@ -2,9 +2,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
+import os
 import uvicorn
 from contextlib import asynccontextmanager
-
 from pathlib import Path
 
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +16,7 @@ from app.api.v1.router import api_router
 from app.api.auth import AuthMiddleware
 from app.services.dataset import HuggingFaceDatasetService
 from app.services.storage import StorageService
+from app.services.adapters.llm import _generation_backend
 import asyncio
 
 # Configure logging
@@ -32,28 +33,38 @@ logger = logging.getLogger(__name__)
 # Initialize global services
 initialize_services()
 
+
+def _disabled(name: str) -> bool:
+    return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _active_generation_identity() -> tuple[str, str]:
+    """Return the actual generation backend/model selected by LLMClient."""
+    backend = _generation_backend()
+    if backend == "medswin_local":
+        return backend, os.getenv("MEDSWIN_LLM_MODEL") or settings.MEDSWIN_LLM_MODEL
+    if backend == "foundry":
+        return backend, os.getenv("FOUNDRY_MODEL") or settings.FOUNDRY_MODEL or settings.CLOUD_MODEL
+    return backend, "default"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup and shutdown events."""
-    # Startup
     logger.info("Starting RAG application...")
-    
-    # Initialize database (with retries and graceful failure)
+
     try:
         await init_database()
         logger.info("Database initialized")
     except Exception as e:
         logger.warning(f"Database connection failed (this is expected if security group not configured): {e}")
         logger.warning("Application will start but database features may not be available")
-    
+
     if settings.CLOUD_MODE:
-        logger.info("Cloud mode enabled; skipping local HF model download/load")
-        # Root Cause vs Logic: startup previously launched an all-tenant cloud
-        # embedding refresh, which can consume quota and trigger 429s before a
-        # benchmark-specific reset/refresh begins. Cloud refresh is now explicit
-        # through /api/v1/storage/embeddings/refresh with optional org scoping.
+        logger.info("Cloud mode enabled; skipping local HF embedding/reranker download/load")
+        # Cloud embedding refresh is explicit. Startup must not spend benchmark
+        # quota or mutate a prepared publication index before verification.
     else:
-        # Download models if not present
         try:
             logger.info("Checking and downloading models...")
             model_download_service = get_model_download_service()
@@ -65,9 +76,7 @@ async def lifespan(app: FastAPI):
                     logger.warning(f"Model {model_name}: {result.get('error', 'Unknown error')}")
         except Exception as e:
             logger.error(f"Failed to download models: {e}")
-            # Continue without failing startup
-        
-        # Load models
+
         try:
             model_manager = get_model_manager()
             await model_manager.load_embedding_model()
@@ -76,21 +85,22 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to load models: {e}")
             logger.warning("Continuing without models - some features may not be available")
-    
-    # Preload dataset information in background (non-blocking)
+
     async def preload_datasets():
-        """Preload dataset information in background."""
+        """Preload dashboard dataset information without blocking normal startup."""
         try:
             logger.info("Preloading dataset information from Hugging Face...")
             hf_service = HuggingFaceDatasetService()
-            
-            # Preload all dataset info with timeout (use_cache=False to force fresh load)
             try:
                 stats = await asyncio.wait_for(
                     hf_service.get_total_statistics(use_cache=False),
-                    timeout=300.0  # 5 minute timeout
+                    timeout=300.0,
                 )
-                logger.info(f"Dataset preloading completed: {stats['total_datasets']} datasets, {stats['total_rows']} total rows")
+                logger.info(
+                    "Dataset preloading completed: %s datasets, %s total rows",
+                    stats['total_datasets'],
+                    stats['total_rows'],
+                )
                 logger.info("Dataset statistics cached and ready for dashboard")
             except asyncio.TimeoutError:
                 logger.warning("Dataset preloading timed out - will load on demand")
@@ -98,17 +108,21 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"Dataset preloading failed: {e} - will load on demand")
         except Exception as e:
             logger.warning(f"Error setting up dataset preloading: {e} - will load on demand")
-    
-    # Start dataset preloading in background (don't wait for it)
-    asyncio.create_task(preload_datasets())
-    
+
+    # Full publication evaluation disables unrelated dashboard preloading so API
+    # startup cannot add network/CPU noise or touch auxiliary datasets while a
+    # cell is being measured. Normal application startup retains the old behavior.
+    if _disabled("DISABLE_DATASET_PRELOAD"):
+        logger.info("Dataset dashboard preload disabled for this process")
+    else:
+        asyncio.create_task(preload_datasets())
+
     yield
-    
-    # Shutdown
+
     logger.info("Shutting down RAG application...")
     cleanup_services()
 
-# Create FastAPI application
+
 app = FastAPI(
     title="MedSwin Clinical Decision Support",
     description="Evidence-gated multi-agent clinical RAG with sufficiency audit",
@@ -116,10 +130,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Auth scaffold (no-op unless ENABLE_AUTH)
 app.add_middleware(AuthMiddleware)
-
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
@@ -127,8 +138,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Include API router
 app.include_router(api_router, prefix="/api/v1")
 
 _WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
@@ -138,6 +147,7 @@ if _WEB_DIST.is_dir():
 elif _WEB_PUBLIC.is_dir():
     app.mount("/app", StaticFiles(directory=str(_WEB_PUBLIC), html=True), name="clinician")
 
+
 @app.get("/")
 async def root():
     """Root endpoint - clinician CDSS UI when present, else dashboard."""
@@ -146,39 +156,48 @@ async def root():
         return RedirectResponse(url="/app/")
     return RedirectResponse(url="/api/v1/dashboard/")
 
+
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check including the real generation identity used by this process."""
     try:
+        generation_backend, generation_model = _active_generation_identity()
         if settings.CLOUD_MODE:
             refresh = StorageService().get_embedding_refresh_status()
             return {
                 "status": "healthy",
                 "cloud_mode": True,
-                "llm_model": settings.CLOUD_MODEL,
+                "generation_backend": generation_backend,
+                "generation_model": generation_model,
+                "llm_model": generation_model,
                 "embedding_model": settings.CLOUD_EMBEDDING,
                 "reranker_model": settings.CLOUD_RERANKER,
                 "active_embedding_space": settings.active_embedding_space(),
+                "active_embedding_dimension": settings.active_embedding_dimension(),
                 "active_index_ready": refresh.get("ready", False),
                 "embedding_refresh": refresh,
-                "database": "connected"
+                "dataset_preload_disabled": _disabled("DISABLE_DATASET_PRELOAD"),
+                "database": "connected",
             }
 
-        # Check if models are loaded
         model_manager = get_model_manager()
         embedding_loaded = model_manager.embedding_model is not None
         reranker_loaded = model_manager.reranker_model is not None
-        
         return {
             "status": "healthy",
             "cloud_mode": False,
+            "generation_backend": generation_backend,
+            "generation_model": generation_model,
+            "llm_model": generation_model,
             "embedding_model": "loaded" if embedding_loaded else "not_loaded",
             "reranker_model": "loaded" if reranker_loaded else "not_loaded",
-            "database": "connected"  # Add actual DB check if needed
+            "dataset_preload_disabled": _disabled("DISABLE_DATASET_PRELOAD"),
+            "database": "connected",
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unavailable")
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
@@ -188,6 +207,7 @@ async def global_exception_handler(request, exc):
         status_code=500,
         content={"detail": "Internal server error"}
     )
+
 
 if __name__ == "__main__":
     uvicorn.run(
