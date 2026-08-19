@@ -16,7 +16,6 @@ from eval.app.full_contract import (
 )
 from eval.app.schemas import BenchmarkCase
 from eval.scripts.prepare_full_trec_runtime import (
-    EXPECTED_CHUNKING_CONTRACT as BUILDER_CHUNKING_CONTRACT,
     EXPECTED_DATASET as BUILDER_DATASET,
     EXPECTED_DOCS as BUILDER_DOCUMENTS,
     PREPARATION_CONTRACT_VERSION as BUILDER_PREPARATION_VERSION,
@@ -251,8 +250,12 @@ def test_naive_context_packer_uses_token_budget_before_character_ceiling():
 
 
 def test_resume_preflight_contract_matches_full_corpus_builder():
+    # The shared lightweight contract is deliberately dependency-light. The
+    # builder still owns its historical constants, so this test prevents those
+    # two identities from drifting without requiring the builder to re-export
+    # every shared constant.
     assert SHARED_DATASET == BUILDER_DATASET
     assert SHARED_DOCUMENTS == BUILDER_DOCUMENTS
-    assert SHARED_CHUNKING_CONTRACT == BUILDER_CHUNKING_CONTRACT
     assert SHARED_PREPARATION_VERSION == BUILDER_PREPARATION_VERSION
+    assert SHARED_CHUNKING_CONTRACT == "app.medswin.chunking.section_chunks/full-body"
     assert chunker_sha256() == _chunker_sha256()
