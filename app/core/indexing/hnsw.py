@@ -1,200 +1,172 @@
-"""HNSW index builder and loader."""
+"""HNSW index builder and loader with scalable label mappings."""
 
 import logging
-from typing import Dict, Any, List, Optional, Tuple
-import numpy as np
-import hnswlib
+import sqlite3
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-from app.core.indexing.base import BaseIndexBuilder
+import hnswlib
+import numpy as np
+
 from app.core.config import settings
+from app.core.indexing.base import BaseIndexBuilder
 
 logger = logging.getLogger(__name__)
 
 
+class SQLiteLabelMapping:
+    """Lazy label→chunk lookup for full-corpus indexes.
+
+    A JSON dict for millions of chunk IDs can consume substantial RAM before a
+    single query is served. Full TREC builds therefore store the mapping in
+    SQLite and resolve only the HNSW labels returned by each query. Existing
+    JSON mappings remain fully supported.
+    """
+
+    def __init__(self, path: str):
+        self.path = path
+        self._conn = sqlite3.connect(f"file:{Path(path).resolve()}?mode=ro", uri=True, check_same_thread=False)
+
+    def get(self, key: str, default=None):
+        try:
+            label = int(key)
+        except (TypeError, ValueError):
+            return default
+        row = self._conn.execute("SELECT chunk_id FROM mapping WHERE label = ?", (label,)).fetchone()
+        return row[0] if row else default
+
+    def close(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _sqlite_mapping(path: str) -> bool:
+    file_path = Path(path)
+    if not file_path.exists() or file_path.stat().st_size < 16:
+        return False
+    try:
+        with file_path.open("rb") as handle:
+            return handle.read(16) == b"SQLite format 3\x00"
+    except OSError:
+        return False
+
+
 class HNSWIndexBuilder(BaseIndexBuilder):
     """Builder for HNSW (Hierarchical Navigable Small World) indexes."""
-    
+
     def __init__(
         self,
         embedding_dim: int,
-        config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None,
     ):
-        """
-        Initialize HNSW index builder.
-        
-        Args:
-            embedding_dim: Dimension of embeddings
-            config: Configuration dict with M, ef_construction, space, max_elements
-        """
         if config is None:
             config = {
                 "M": 16,
                 "ef_construction": 200,
                 "space": "cosine",
-                "max_elements": 100000
+                "max_elements": 100000,
             }
-        
         super().__init__(embedding_dim, config)
         self.index = None
-        self.mapping = {}
-    
+        self.mapping: Any = {}
+
     def build(
         self,
         embeddings: List[List[float]],
         chunk_ids: List[str],
         index_path: str,
-        mapping_path: str
+        mapping_path: str,
     ) -> Dict[str, Any]:
-        """
-        Build HNSW index from embeddings.
-        
-        Args:
-            embeddings: List of embeddings
-            chunk_ids: List of chunk IDs corresponding to embeddings
-            index_path: Path to save index file
-            mapping_path: Path to save mapping file
-            
-        Returns:
-            Dict with success status and metadata
-        """
+        """Build an in-memory HNSW index for normal/smaller corpora."""
         try:
-            # Validate embeddings
-            valid_embeddings, valid_chunk_ids = self._validate_embeddings(
-                embeddings, chunk_ids
-            )
-            
+            valid_embeddings, valid_chunk_ids = self._validate_embeddings(embeddings, chunk_ids)
             if not valid_embeddings:
                 return {
                     "success": False,
                     "index_path": index_path,
                     "mapping_path": mapping_path,
                     "total_vectors": 0,
-                    "message": "No valid embeddings found"
+                    "message": "No valid embeddings found",
                 }
-            
-            # Convert to numpy array
+
             embeddings_array = np.array(valid_embeddings, dtype=np.float32)
-            
-            # Create HNSW index
-            self.index = hnswlib.Index(
-                space=self.config.get("space", "cosine"),
-                dim=self.embedding_dim
-            )
-            
+            self.index = hnswlib.Index(space=self.config.get("space", "cosine"), dim=self.embedding_dim)
+
             dataset_size = len(valid_embeddings)
             adaptive_m = self.config.get("M") or (16 if dataset_size < 50000 else 32)
             adaptive_m = min(max(int(adaptive_m), 8), max(dataset_size - 1, 8))
-            adaptive_ef_construction = max(
-                int(self.config.get("ef_construction", 200)),
-                adaptive_m * 12,
+            adaptive_ef_construction = max(int(self.config.get("ef_construction", 200)), adaptive_m * 12)
+            self.config.update(
+                {
+                    "M": adaptive_m,
+                    "ef_construction": adaptive_ef_construction,
+                    "max_elements": max(int(self.config.get("max_elements", 0)), dataset_size),
+                }
             )
-            self.config.update({
-                "M": adaptive_m,
-                "ef_construction": adaptive_ef_construction,
-                "max_elements": max(int(self.config.get("max_elements", 0)), dataset_size),
-            })
 
             self.index.init_index(
                 max_elements=self.config["max_elements"],
                 ef_construction=self.config["ef_construction"],
-                M=self.config["M"]
+                M=self.config["M"],
             )
-            
             self.index.add_items(embeddings_array)
-            
-            # Create mapping (label -> chunk_id)
             self.mapping = {str(i): chunk_id for i, chunk_id in enumerate(valid_chunk_ids)}
-            
-            # Save index
+
             Path(index_path).parent.mkdir(parents=True, exist_ok=True)
             self.index.save_index(index_path)
-            
-            # Save mapping
             self._save_mapping(mapping_path, self.mapping)
-            
-            logger.info(
-                f"HNSW index built successfully with {len(valid_embeddings)} vectors"
-            )
-            
+            logger.info("HNSW index built successfully with %s vectors", len(valid_embeddings))
             return {
                 "success": True,
                 "index_path": index_path,
                 "mapping_path": mapping_path,
                 "total_vectors": len(valid_embeddings),
-                "message": f"Index built successfully with {len(valid_embeddings)} vectors"
+                "message": f"Index built successfully with {len(valid_embeddings)} vectors",
             }
-            
-        except Exception as e:
-            logger.error(f"Error building HNSW index: {e}")
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Error building HNSW index: %s", exc)
             return {
                 "success": False,
                 "index_path": index_path,
                 "mapping_path": mapping_path,
                 "total_vectors": 0,
-                "message": f"Index building failed: {str(e)}"
+                "message": f"Index building failed: {exc}",
             }
-    
+
     def load(self, index_path: str, mapping_path: str) -> bool:
-        """
-        Load existing HNSW index from disk.
-        
-        Args:
-            index_path: Path to index file
-            mapping_path: Path to mapping file
-            
-        Returns:
-            True if loaded successfully
-        """
+        """Load existing HNSW and either JSON or SQLite label mapping."""
         try:
-            # Load mapping
-            self.mapping = self._load_mapping(mapping_path)
-            
-            # Load index
-            self.index = hnswlib.Index(
-                space=self.config.get("space", "cosine"),
-                dim=self.embedding_dim
+            if isinstance(self.mapping, SQLiteLabelMapping):
+                self.mapping.close()
+            self.mapping = (
+                SQLiteLabelMapping(mapping_path)
+                if _sqlite_mapping(mapping_path)
+                else self._load_mapping(mapping_path)
             )
+            self.index = hnswlib.Index(space=self.config.get("space", "cosine"), dim=self.embedding_dim)
             self.index.load_index(str(index_path))
-            
-            logger.info(f"HNSW index loaded from {index_path}")
+            logger.info(
+                "HNSW index loaded from %s with %s mapping",
+                index_path,
+                "SQLite" if isinstance(self.mapping, SQLiteLabelMapping) else "JSON",
+            )
             return True
-            
-        except Exception as e:
-            logger.error(f"Error loading HNSW index: {e}")
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Error loading HNSW index: %s", exc)
             return False
-    
-    def query(
-        self,
-        query_embedding: np.ndarray,
-        top_k: int
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Query HNSW index for nearest neighbors.
-        
-        Args:
-            query_embedding: Query embedding vector
-            top_k: Number of results to return
-            
-        Returns:
-            Tuple of (labels, distances)
-        """
+
+    def query(self, query_embedding: np.ndarray, top_k: int) -> Tuple[np.ndarray, np.ndarray]:
         if self.index is None:
             raise RuntimeError("Index not loaded or built")
-        
-        # Ensure query embedding is 2D
         if query_embedding.ndim == 1:
             query_embedding = query_embedding.reshape(1, -1)
-        
         available = int(getattr(self.index, "element_count", 0))
         if available <= 0:
             return np.array([], dtype=np.int64), np.array([], dtype=np.float32)
         requested_k = max(1, min(int(top_k), available))
 
-        # Root Cause vs Logic: hnswlib raises a contiguous-array error when k is
-        # too large for the graph's effective search breadth. We clamp k to the
-        # loaded element count and grow ef_search until the existing index can
-        # satisfy the request, bounded to avoid infinite retry loops.
         ef_search = max(requested_k * 2, 50)
         max_ef = max(settings.HNSW_MAX_EF_SEARCH, ef_search, available)
         last_error = None
@@ -210,21 +182,10 @@ class HNSWIndexBuilder(BaseIndexBuilder):
                     raise
                 ef_search *= 2
         raise last_error or RuntimeError("HNSW query failed")
-    
+
     def get_index_info(self) -> Dict[str, Any]:
-        """
-        Get information about the loaded index.
-        
-        Returns:
-            Dict with index metadata
-        """
         if self.index is None:
-            return {
-                "type": "hnsw",
-                "loaded": False,
-                "message": "Index not loaded"
-            }
-        
+            return {"type": "hnsw", "loaded": False, "message": "Index not loaded"}
         return {
             "type": "hnsw",
             "loaded": True,
@@ -232,25 +193,13 @@ class HNSWIndexBuilder(BaseIndexBuilder):
             "total_vectors": self.index.element_count,
             "space": self.config.get("space", "cosine"),
             "M": self.config.get("M", 16),
-            "ef_construction": self.config.get("ef_construction", 200)
+            "ef_construction": self.config.get("ef_construction", 200),
+            "mapping_backend": "sqlite" if isinstance(self.mapping, SQLiteLabelMapping) else "json",
         }
 
 
 def load_hnsw_index(embedding_dim: int, index_path: str, mapping_path: str) -> HNSWIndexBuilder:
-    """
-    Convenience function to load HNSW index.
-    
-    Args:
-        embedding_dim: Dimension of embeddings
-        index_path: Path to index file
-        mapping_path: Path to mapping file
-        
-    Returns:
-        Loaded HNSWIndexBuilder instance
-    """
     builder = HNSWIndexBuilder(embedding_dim)
-    
     if not builder.load(index_path, mapping_path):
         raise RuntimeError(f"Failed to load HNSW index from {index_path}")
-    
     return builder
