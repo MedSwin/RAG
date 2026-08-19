@@ -338,6 +338,13 @@ run_full_eval() {
     export LLM_TIMEOUT_S="${FULL_EVAL_LLM_TIMEOUT_S:-600}"
 
     run_eval_warmup
+
+    # Migrate natural keys and remove redundant Mongo text indexing BEFORE any
+    # complete-corpus writes. This preserves tenant isolation and avoids paying
+    # for a second full-body lexical index in addition to FTS5 BM25.
+    echo -e "${YELLOW}Preparing tenant-safe Mongo indexes for complete TREC ingestion ...${NC}"
+    CLOUD_MODE=true python3 eval/scripts/prepare_full_trec_mongo.py --org-id "$bench_org"
+
     # A first publication build must never mix an old smoke/sample corpus with
     # the complete corpus. Once a compatible checkpoint exists, resume/reuse it.
     if [[ "$RESET_FULL_CORPUS" -eq 1 || ! -f "$checkpoint" ]]; then
