@@ -105,7 +105,6 @@ def _render_prompt(tokenizer: Any, messages: list[dict[str, Any]]) -> str:
 
 @app.on_event("startup")
 async def startup() -> None:
-    # Fail at service start rather than on the first benchmark case.
     _load()
 
 
@@ -173,8 +172,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
 if __name__ == "__main__":
     import uvicorn
 
+    # Pass the app object directly. The filename contains hyphens, so using a
+    # module import string such as ``scripts.serve-medswin-llm:app`` is invalid.
     uvicorn.run(
-        "scripts.serve-medswin-llm:app",
+        app,
         host=os.getenv("MEDSWIN_LLM_HOST", "127.0.0.1"),
         port=int(os.getenv("MEDSWIN_LLM_PORT", "8000")),
         reload=False,
