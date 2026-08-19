@@ -7,8 +7,10 @@ Azure Foundry can expose Cohere Embed v4 through more than one wire contract:
 * Cohere-native deployment endpoints such as ``.../v1/embed`` or ``.../v2/embed``:
   ``texts`` + required ``search_query``/``search_document`` intent.
 
-The adapter supports both explicitly and never treats an endpoint change as a
-mere URL substitution with the old payload shape.
+Stored-corpus writers pass ``document`` explicitly. When a cloud caller omits
+intent, the adapter defaults to ``query`` because the shared online API use case
+is retrieval. This keeps ordinary cloud chat aligned with the strict matrix
+without relying on a benchmark-only environment override.
 """
 
 import asyncio
@@ -59,9 +61,6 @@ def _auth_headers(protocol: str, api_key: Optional[str]) -> dict[str, str]:
     if protocol != "cohere_native":
         return {"api-key": api_key}
 
-    # Cohere's public/native v2 contract uses Bearer authentication. Some Azure
-    # managed-compute deployments expose a raw Authorization key; make that
-    # difference explicit rather than guessing based on the hostname.
     scheme = (os.getenv("CLOUD_EMBEDDING_AUTH_SCHEME") or "bearer").strip().lower()
     if scheme in {"bearer", "token"}:
         return {"Authorization": f"Bearer {api_key}"}
@@ -75,10 +74,9 @@ def _auth_headers(protocol: str, api_key: Optional[str]) -> dict[str, str]:
 class EmbeddingClient:
     """Client for embedding endpoints.
 
-    Full-evaluation API processes set ``CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query``
-    so every online retrieval vector is a Cohere query embedding. Corpus builders
-    pass ``input_type=document`` explicitly. Native Cohere endpoints require one
-    of those semantic-search intents and are rejected if it is missing.
+    Online cloud calls default to query intent. Corpus builders and ingestion
+    paths must pass ``input_type=document`` explicitly, which is asserted by the
+    publication contract and tests.
     """
 
     def __init__(
@@ -104,7 +102,7 @@ class EmbeddingClient:
             if not native_type:
                 raise ValueError(
                     "Cohere-native semantic-search embedding requires input_type=document or query; "
-                    "publication corpus builders must use document and retrieval must use query"
+                    "corpus builders must use document and retrieval must use query"
                 )
             return {
                 "model": self.model,
@@ -134,15 +132,17 @@ class EmbeddingClient:
         Args:
             texts: Texts to embed.
             request_id: Optional trace identifier.
-            input_type: Semantic search intent. Use ``document`` for corpus
-                chunks and ``query`` for online ANN lookup. ``text`` remains
-                supported only by the generic Foundry embeddings contract.
+            input_type: Semantic-search intent. Use ``document`` for corpus
+                chunks and ``query`` for online ANN lookup. In cloud mode a
+                missing value resolves to the configured default, then to
+                ``query``. ``text`` is supported only by the generic Foundry
+                embeddings contract.
         """
         if not texts:
             return []
         if settings.CLOUD_MODE and input_type is None:
             configured_default = (settings.CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE or "").strip().lower()
-            input_type = configured_default or None
+            input_type = configured_default or "query"
         if input_type not in {None, "query", "document", "text"}:
             raise ValueError("input_type must be query, document, text, or None")
 
@@ -243,8 +243,6 @@ def _parse_embedding_response(data) -> List[np.ndarray]:
     if isinstance(data, dict) and "embeddings" in data:
         raw = data["embeddings"]
         if isinstance(raw, dict):
-            # Cohere v2 returns embeddings by requested type. Some SDK/model
-            # serializations spell the float field ``float_``.
             raw = raw.get("float") or raw.get("float_") or []
         if isinstance(raw, list):
             return [np.array(emb, dtype=np.float32) for emb in raw]
