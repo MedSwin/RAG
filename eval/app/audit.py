@@ -44,12 +44,11 @@ def _ordered_unique(values: list[str]) -> list[str]:
 
 
 def extract_ranked_doc_ids(response: dict[str, Any]) -> list[str]:
-    """Preserve final literature-evidence order presented to the generator.
+    """Preserve the final literature-evidence order shown to the generator.
 
-    TREC CDS evaluates biomedical article retrieval. Patient EMR context is a
-    MedSwin system input, not a TREC result document, so known non-LIT sources do
-    not consume ranks. Older fixtures that omit source_type are retained as
-    literature-compatible rather than silently returning an empty ranking.
+    This function deliberately describes the *packed RAG context*, not the
+    pre-pack retrieval ranking. Strict full-matrix retrieval metrics are attached
+    separately from trace-derived ANN/reranker rankings.
     """
     bundle = response.get("evidence_bundle") or {}
     known_non_lit = {"EMR", "CPG", "SAFETY"}
@@ -69,8 +68,6 @@ def extract_ranked_doc_ids(response: dict[str, Any]) -> list[str]:
                 ranked.append(doc_id)
         if ranked:
             return _ordered_unique(ranked)
-    # A response should normally expose evidence_bundle.passages. Citations are
-    # a last-resort ranked fallback for older audit fixtures.
     citations = response.get("citations") or []
     return _ordered_unique(
         [
@@ -94,7 +91,6 @@ def _relevance_grades(case: BenchmarkCase) -> dict[str, int]:
                 continue
             if grade > 0:
                 grades[str(doc_id)] = grade
-    # Case-level positive qrels are authoritative if grade metadata is missing.
     for doc_id in case.gold_doc_ids:
         grades.setdefault(str(doc_id), 1)
     return grades
@@ -105,11 +101,11 @@ def ranked_trec_metrics(
     ranked_doc_ids: list[str],
     cutoff: int = TREC_EVIDENCE_CUTOFF,
 ) -> dict[str, float]:
-    """Compute graded nDCG@k plus early binary relevance measures from qrels.
+    """Compute graded nDCG@k plus early binary relevance diagnostics from qrels.
 
-    These are qrel-grounded ranked-evidence diagnostics. They are deliberately
-    reported separately from MSAS because MSAS also measures MedSwin-specific
-    audit/gating behavior that a naive-RAG control is designed not to implement.
+    These calculations are deterministic qrel-grounded measures at a bounded
+    cutoff. They are track-aligned diagnostics, not a claim to reproduce NIST's
+    official pooled/sample-eval leaderboard statistics such as inferred NDCG.
     """
     cutoff = max(1, int(cutoff))
     grades = _relevance_grades(case)
@@ -281,11 +277,7 @@ def trace_completeness(response: dict[str, Any], trace_summary: dict[str, Any] |
 
 
 def groundedness_proxy(response: dict[str, Any], cited_doc_ids: set[str]) -> tuple[float, float]:
-    """Estimate citation/ledger alignment without an external semantic judge.
-
-    This remains an automatic system diagnostic. It is not presented as a
-    replacement for clinician/rubric-based claim adjudication.
-    """
+    """Estimate citation/ledger alignment without an external semantic judge."""
     answer = response.get("answer") or ""
     ledger = response.get("evidence_ledger") or (response.get("evidence_bundle") or {}).get("evidence_ledger") or []
     citations = response.get("citations") or []
@@ -315,13 +307,7 @@ def _ledger_claim_items(item: dict[str, Any]) -> list[dict[str, Any]]:
     entry_doc_id = item.get("doc_id") or item.get("document_id") or item.get("source_id")
     top_claim = item.get("claim") or item.get("text") or item.get("statement")
     if top_claim:
-        return [
-            {
-                "claim": top_claim,
-                "doc_id": entry_doc_id,
-                "polarity": item.get("polarity", "support"),
-            }
-        ]
+        return [{"claim": top_claim, "doc_id": entry_doc_id, "polarity": item.get("polarity", "support")}]
     nested = item.get("claims") if isinstance(item.get("claims"), list) else []
     claims: list[dict[str, Any]] = []
     for sub in nested:
@@ -349,8 +335,8 @@ def audit_case(
     indexed_doc_ids: set[str] | None = None,
     pipeline: str | None = None,
 ) -> CaseAudit:
-    ranked_doc_ids = extract_ranked_doc_ids(response)
-    trec_metrics = ranked_trec_metrics(case, ranked_doc_ids)
+    final_ranked_doc_ids = extract_ranked_doc_ids(response)
+    final_metrics = ranked_trec_metrics(case, final_ranked_doc_ids)
     selected_doc_ids, cited_doc_ids, selected_chunk_ids = extract_doc_ids(response)
     selected_counts = selected_source_counts(response)
     evidence_doc_ids = set(selected_doc_ids) | set(cited_doc_ids)
@@ -364,7 +350,6 @@ def audit_case(
         if cited_doc_ids and gold_doc_ids
         else (1.0 if cited_doc_ids else 0.0)
     )
-
     f_recall = facet_recall(case.gold_facets, evidence_doc_ids, critical_only=False, fallback_gold_doc_ids=gold_doc_ids)
     cf_recall = facet_recall(case.gold_facets, evidence_doc_ids, critical_only=True, fallback_gold_doc_ids=gold_doc_ids)
 
@@ -384,9 +369,6 @@ def audit_case(
     unsafe_penalty = max(0.0, 1.0 - cf_recall)
     trace_score = trace_completeness(response, trace_summary)
 
-    # MSAS stays a system-audit diagnostic. The previous formula rewarded raw
-    # answer length as a "clinical quality" proxy; verbosity is not clinical
-    # quality, so that term is replaced by qrel-grounded citation precision.
     msas = (
         0.25 * cf_recall
         + 0.15 * f_recall
@@ -410,7 +392,11 @@ def audit_case(
         policy_passed=policy_passed,
         degraded_mode=bool(response.get("degraded_mode")) if response.get("degraded_mode") is not None else None,
         answer_chars=len(str(response.get("answer") or "")),
-        ranked_doc_ids=ranked_doc_ids,
+        final_evidence_ranked_doc_ids=final_ranked_doc_ids,
+        final_evidence_ndcg_at_10=final_metrics["ndcg_at_10"],
+        final_evidence_precision_at_10=final_metrics["precision_at_10"],
+        final_evidence_recall_at_10=final_metrics["recall_at_10"],
+        final_evidence_reciprocal_rank=final_metrics["reciprocal_rank"],
         selected_doc_ids=selected_doc_ids,
         cited_doc_ids=cited_doc_ids,
         selected_chunk_ids=selected_chunk_ids,
@@ -430,10 +416,6 @@ def audit_case(
             policy_passed=policy_passed,
             errors=errors or [],
         ),
-        ndcg_at_10=trec_metrics["ndcg_at_10"],
-        precision_at_10=trec_metrics["precision_at_10"],
-        recall_at_10=trec_metrics["recall_at_10"],
-        reciprocal_rank=trec_metrics["reciprocal_rank"],
         facet_recall=f_recall,
         critical_facet_recall=cf_recall,
         evidence_doc_recall=evidence_doc_recall,
@@ -454,11 +436,12 @@ def aggregate_run(run: RunAudit) -> RunAudit:
     if not run.cases:
         run.aggregate = {}
         return run
-    numeric_fields = [
-        "ndcg_at_10",
-        "precision_at_10",
-        "recall_at_10",
-        "reciprocal_rank",
+
+    always_numeric = [
+        "final_evidence_ndcg_at_10",
+        "final_evidence_precision_at_10",
+        "final_evidence_recall_at_10",
+        "final_evidence_reciprocal_rank",
         "facet_recall",
         "critical_facet_recall",
         "evidence_doc_recall",
@@ -470,10 +453,21 @@ def aggregate_run(run: RunAudit) -> RunAudit:
         "unsafe_omission_penalty",
         "msas",
     ]
+    optional_retrieval = [
+        "retrieval_ndcg_at_10",
+        "retrieval_precision_at_10",
+        "retrieval_recall_at_10",
+        "retrieval_reciprocal_rank",
+    ]
     agg: dict[str, float] = {}
-    for field in numeric_fields:
+    for field in always_numeric:
         vals = [float(getattr(c, field)) for c in run.cases]
         agg[f"mean_{field}"] = sum(vals) / len(vals)
+    for field in optional_retrieval:
+        vals = [float(value) for c in run.cases if (value := getattr(c, field)) is not None]
+        if vals:
+            agg[f"mean_{field}"] = sum(vals) / len(vals)
+
     passed = Counter(c.policy_passed for c in run.cases)
     agg["policy_pass_rate"] = passed.get(True, 0) / len(run.cases)
     agg["degraded_rate"] = sum(1 for c in run.cases if c.degraded_mode) / len(run.cases)
@@ -481,7 +475,22 @@ def aggregate_run(run: RunAudit) -> RunAudit:
     buckets = Counter(c.failure_bucket for c in run.cases if c.failure_bucket)
     run.diagnostics["failure_buckets"] = dict(buckets)
     run.diagnostics["metric_semantics"] = {
-        "trec_ranked_evidence": ["mean_ndcg_at_10", "mean_precision_at_10", "mean_recall_at_10", "mean_reciprocal_rank"],
+        "track_aligned_retrieval": [
+            "mean_retrieval_ndcg_at_10",
+            "mean_retrieval_precision_at_10",
+            "mean_retrieval_recall_at_10",
+            "mean_retrieval_reciprocal_rank",
+        ],
+        "final_rag_evidence_packet": [
+            "mean_final_evidence_ndcg_at_10",
+            "mean_final_evidence_precision_at_10",
+            "mean_final_evidence_recall_at_10",
+            "mean_final_evidence_reciprocal_rank",
+        ],
+        "official_trec_warning": (
+            "The @10 metrics are deterministic qrel-grounded diagnostics. They do not reproduce "
+            "the official TREC 2016 inferred/sample-eval leaderboard measures."
+        ),
         "system_audit_diagnostic": "mean_msas",
         "facet_warning": (
             "Automatically prepared TREC facets are seeded from document-level qrels; "
