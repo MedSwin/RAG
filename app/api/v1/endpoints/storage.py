@@ -3,8 +3,10 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import logging
 from datetime import datetime, timezone
+import asyncio
 
 from app.core.config import settings
+from app.core.database import get_database
 from app.schemas.enums import SourceType
 from app.services.adapters.embedding import EmbeddingClient
 from app.services.storage import StorageService
@@ -134,7 +136,7 @@ def _normalize_chunk(raw: Dict[str, Any], org_id: str, source_type: SourceType) 
         "org_id": org_id,
         "source_type": normalized_source.value,
         "text": text,
-        "content": text,  # legacy clients still inspect this field
+        "content": text,
         "patient_id": chunk.get("patient_id") or metadata.get("patient_id"),
         "section": chunk.get("section") or metadata.get("section"),
         "source_reliability": reliability,
@@ -179,6 +181,65 @@ async def _attach_missing_embeddings(chunks: List[Dict[str, Any]], batch_size: i
         await client.close()
 
 
+async def _refresh_tenant_embeddings(org_id: str, batch_size: int) -> Dict[str, Any]:
+    """Refresh one tenant in place without ever publishing a tenant-only ANN."""
+    db = get_database()
+    coll = db["chunks"]
+    expected_dim = settings.active_embedding_dimension()
+    stale_filter: Dict[str, Any] = {
+        "org_id": org_id,
+        "$or": [
+            {"embedding": {"$exists": False}},
+            {"embedding": []},
+            {"embedding_space": {"$ne": settings.active_embedding_space()}},
+            {"embedding_model": {"$ne": settings.active_embedding_model()}},
+            {"embedding_dim": {"$ne": expected_dim}},
+        ],
+    }
+    stale = await coll.count_documents(stale_filter)
+    updated = 0
+    client = EmbeddingClient(settings.active_embedding_url())
+    try:
+        while True:
+            rows = await coll.find(stale_filter).limit(batch_size).to_list(length=batch_size)
+            if not rows:
+                break
+            texts = [str(row.get("text") or row.get("content") or "") for row in rows]
+            if any(not text.strip() for text in texts):
+                raise RuntimeError("Cannot refresh embeddings for chunks with empty text")
+            vectors = await client.embed(
+                texts,
+                input_type="document" if settings.CLOUD_MODE else None,
+            )
+            if len(vectors) != len(rows):
+                raise RuntimeError(f"Embedding service returned {len(vectors)} vectors for {len(rows)} chunks")
+            for row, vector in zip(rows, vectors):
+                await coll.update_one(
+                    {"_id": row["_id"]},
+                    {"$set": {
+                        "embedding": vector.tolist(),
+                        "embedding_model": settings.active_embedding_model(),
+                        "embedding_dim": int(len(vector)),
+                        "embedding_space": settings.active_embedding_space(),
+                        "embedding_updated_at": datetime.now(timezone.utc),
+                    }},
+                )
+                updated += 1
+            if settings.CLOUD_MODE and settings.CLOUD_EMBED_BATCH_DELAY_S > 0:
+                await asyncio.sleep(settings.CLOUD_EMBED_BATCH_DELAY_S)
+    finally:
+        await client.close()
+    return {
+        "running": False,
+        "ready": True,
+        "org_id": org_id,
+        "stale": int(stale),
+        "updated": updated,
+        "embedding_space": settings.active_embedding_space(),
+        "completed_at": datetime.now(timezone.utc),
+    }
+
+
 @router.post("/chunks", response_model=StoreChunksResponse)
 async def store_chunks(
     request: StoreChunksRequest,
@@ -187,10 +248,7 @@ async def store_chunks(
 ):
     """Normalize, document-embed, persist, then rebuild the shared ANN."""
     try:
-        normalized = [
-            _normalize_chunk(raw, request.org_id, request.source_type)
-            for raw in request.chunks
-        ]
+        normalized = [_normalize_chunk(raw, request.org_id, request.source_type) for raw in request.chunks]
         await _attach_missing_embeddings(normalized, request.batch_size)
         result = await storage_service.store_chunks(
             chunks=normalized,
@@ -198,9 +256,6 @@ async def store_chunks(
             batch_size=request.batch_size,
         )
         if result["success_count"] > 0:
-            # The online retriever uses one configured HNSW artifact. Keep that
-            # artifact global across tenants and enforce org isolation when
-            # resolving ANN labels through Mongo filters.
             background_tasks.add_task(
                 storage_service.build_hnsw_index_async,
                 force_rebuild=True,
@@ -257,17 +312,13 @@ async def refresh_cloud_embeddings(
 ):
     """Refresh one tenant's vectors, then rebuild the global online ANN."""
     try:
-        result = await storage_service.refresh_cloud_embeddings(
-            batch_size=request.batch_size,
-            org_id=request.org_id,
-            rebuild_index=False,
+        batch_size = request.batch_size or settings.CLOUD_EMBED_BATCH_SIZE
+        result = await _refresh_tenant_embeddings(request.org_id, max(1, int(batch_size)))
+        background_tasks.add_task(
+            storage_service.build_hnsw_index_async,
+            force_rebuild=True,
+            org_id=None,
         )
-        if result.get("ready"):
-            background_tasks.add_task(
-                storage_service.build_hnsw_index_async,
-                force_rebuild=True,
-                org_id=None,
-            )
         return result
     except Exception as exc:
         logger.error("Error refreshing cloud embeddings: %s", exc, exc_info=True)
