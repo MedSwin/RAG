@@ -10,9 +10,9 @@ Cells:
 This runner is fail-closed and self-certifying. It re-verifies the persisted
 complete-TREC runtime before starting any cell, binds every API subprocess to the
 HNSW/SQLite-BM25 artifacts recorded by that verified runtime manifest, validates
-the actual generator identity reported by the API, and rejects any full-system
-case that does not prove both stage-1 retrieval channels, stage-2 reranking, MAC
-specialists, and sufficiency gating executed successfully.
+the actual generator identity reported by the API, proves both systems obey the
+same final evidence-token budget, and records TREC/qrel diagnostics from the
+*pre-pack retrieval ranking* separately from the final RAG evidence packet.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ for root in (REPO_ROOT, EVAL_ROOT, SCRIPTS_ROOT):
 
 from app.core.config import settings as app_settings
 from app.core.database import get_sync_database
-from eval.app.audit import aggregate_run, audit_case
+from eval.app.audit import aggregate_run, audit_case, ranked_trec_metrics
 from eval.app.client import MedSwinClient
 from eval.app.schemas import BenchmarkCase, RunAudit
 from verify_full_trec_runtime import verify as verify_full_runtime
@@ -63,6 +63,7 @@ DEFAULT_SHARED_TOKEN_BUDGET = 700
 DEFAULT_AGENT_PASSAGE_LIMIT = 4
 DEFAULT_AGENT_PASSAGE_MAX_CHARS = 500
 DEFAULT_GENERATION_MAX_TOKENS = 384
+DEFAULT_RETRIEVAL_TOP_K = 10
 
 
 def _now() -> str:
@@ -122,12 +123,7 @@ def _validate_runtime_manifest(org_id: str) -> dict[str, Any]:
 
 
 def _configure_parent_for_verification(manifest: dict[str, Any]) -> None:
-    """Make independent verification use the runtime's exact embedding space.
-
-    A user may invoke this script directly rather than through start-local.sh.
-    Verification therefore cannot depend on the parent shell having already set
-    CLOUD_MODE/CLOUD_EMBEDDING correctly.
-    """
+    """Make independent verification use the runtime's exact embedding space."""
     app_settings.CLOUD_MODE = True
     app_settings.CLOUD_EMBEDDING = EXPECTED_EMBEDDING
     app_settings.CLOUD_EMBEDDING_DIMENSION = int(manifest.get("embedding_dim") or 1536)
@@ -140,15 +136,14 @@ def _verify_persisted_runtime(manifest: dict[str, Any], org_id: str, cases_path:
         raise RuntimeError("Independent persisted-runtime verification did not return strict_pass=true")
     if int(verification.get("persisted_literature_documents") or 0) != EXPECTED_DOCS:
         raise RuntimeError("Independent verification did not prove all TREC literature documents")
+    alignment = verification.get("hnsw_vector_alignment") or {}
+    if int(alignment.get("sample_count") or 0) <= 0 or float(alignment.get("minimum_cosine") or 0.0) < 0.9999:
+        raise RuntimeError("Independent verification did not prove HNSW vector/label alignment")
     return verification
 
 
 def _runtime_artifact_env(manifest: dict[str, Any]) -> dict[str, str]:
-    """Return child-process paths bound to the verified publication artifacts.
-
-    Do not inherit generic/dev HNSW, FAISS, or BM25 paths. Direct matrix runs
-    must be just as isolated as ``start-local.sh full-eval``.
-    """
+    """Return child-process paths bound to the verified publication artifacts."""
     hnsw = manifest.get("hnsw") or {}
     bm25 = manifest.get("bm25") or {}
     index_path = Path(str(hnsw.get("index_path") or "")).resolve()
@@ -161,9 +156,6 @@ def _runtime_artifact_env(manifest: dict[str, Any]) -> dict[str, str]:
         "HNSW_INDEX_PATH": str(index_path),
         "HNSW_MAPPING_PATH": str(mapping_path),
         "LEXICAL_FTS_PATH": str(fts_path),
-        # HybridIndex attempts FAISS when a file is configured. Force an isolated
-        # absent path so a stale developer FAISS index can never contaminate the
-        # publication HNSW candidate set.
         "FAISS_INDEX_PATH": str(artifact_dir / "faiss_unused.bin"),
         "FAISS_MAPPING_PATH": str(artifact_dir / "faiss_unused.json"),
         "TREE_INDEX_PATH": str(artifact_dir / "tree_unused.npy"),
@@ -211,7 +203,17 @@ def _degraded(response: dict[str, Any]) -> bool:
     return isinstance(value, dict) and any(bool(item) for item in value.values())
 
 
-def _strict_naive_errors(response: dict[str, Any], trace: dict[str, Any] | None) -> list[str]:
+def _evidence_packet_stats(response: dict[str, Any]) -> tuple[int, int]:
+    bundle = response.get("evidence_bundle") or {}
+    passages = bundle.get("passages") or []
+    return len(passages) if isinstance(passages, list) else 0, int(bundle.get("total_tokens") or 0)
+
+
+def _strict_naive_errors(
+    response: dict[str, Any],
+    trace: dict[str, Any] | None,
+    token_budget: int | None = None,
+) -> list[str]:
     errors: list[str] = []
     if response.get("pipeline") != "naive_rag":
         errors.append(f"unexpected_pipeline:{response.get('pipeline')}")
@@ -221,11 +223,17 @@ def _strict_naive_errors(response: dict[str, Any], trace: dict[str, Any] | None)
         errors.append("naive_degraded")
     if not str(response.get("answer") or "").strip():
         errors.append("empty_answer")
-    if not (response.get("evidence_bundle") or {}).get("passages"):
+    passages, packet_tokens = _evidence_packet_stats(response)
+    if passages <= 0:
         errors.append("naive_empty_evidence")
+    if token_budget is not None:
+        if packet_tokens <= 0:
+            errors.append("naive_missing_evidence_token_count")
+        if passages > 1 and packet_tokens > int(token_budget):
+            errors.append(f"naive_evidence_budget_exceeded:{packet_tokens}>{token_budget}")
     if trace is None:
         errors.append("missing_trace")
-        return errors
+        return sorted(set(errors))
 
     tools = trace.get("tool_calls") or []
     naive_tools = [item for item in tools if item.get("tool_name") == "retrieval.naive_dense"]
@@ -238,6 +246,22 @@ def _strict_naive_errors(response: dict[str, Any], trace: dict[str, Any] | None)
             if params.get("backend") != "ann" or int(result.get("count") or 0) <= 0:
                 errors.append("naive_dense_trace_not_ann_or_empty")
                 break
+
+    if token_budget is not None:
+        packing = [item for item in tools if item.get("tool_name") == "packing.naive"]
+        if not packing:
+            errors.append("missing_naive_packing_trace")
+        else:
+            latest = packing[-1]
+            params = latest.get("parameters") or {}
+            result = latest.get("result") or {}
+            if int(params.get("token_budget") or 0) != int(token_budget):
+                errors.append("naive_packing_budget_mismatch")
+            if int(result.get("packed_passages") or 0) != passages:
+                errors.append("naive_packing_passage_count_mismatch")
+            if int(result.get("packed_tokens") or 0) != packet_tokens:
+                errors.append("naive_packing_token_count_mismatch")
+
     if trace.get("rerank_traces"):
         errors.append("naive_used_reranker")
     if [item for item in tools if str(item.get("tool_name") or "").startswith("agent.")]:
@@ -247,7 +271,11 @@ def _strict_naive_errors(response: dict[str, Any], trace: dict[str, Any] | None)
     return sorted(set(errors))
 
 
-def _strict_full_errors(response: dict[str, Any], trace: dict[str, Any] | None) -> list[str]:
+def _strict_full_errors(
+    response: dict[str, Any],
+    trace: dict[str, Any] | None,
+    token_budget: int | None = None,
+) -> list[str]:
     errors: list[str] = []
     if response.get("pipeline") != "medswin":
         errors.append(f"unexpected_pipeline:{response.get('pipeline')}")
@@ -255,8 +283,14 @@ def _strict_full_errors(response: dict[str, Any], trace: dict[str, Any] | None) 
         errors.append("medswin_degraded")
     if not str(response.get("answer") or "").strip():
         errors.append("empty_answer")
-    if not (response.get("evidence_bundle") or {}).get("passages"):
+    passages, packet_tokens = _evidence_packet_stats(response)
+    if passages <= 0:
         errors.append("full_empty_evidence")
+    if token_budget is not None:
+        if packet_tokens <= 0:
+            errors.append("full_missing_evidence_token_count")
+        if passages > 1 and packet_tokens > int(token_budget):
+            errors.append(f"full_evidence_budget_exceeded:{packet_tokens}>{token_budget}")
     if not response.get("policy_decision"):
         errors.append("missing_policy_decision")
     if not response.get("sufficiency_decision"):
@@ -265,7 +299,7 @@ def _strict_full_errors(response: dict[str, Any], trace: dict[str, Any] | None) 
         errors.append("missing_facet_matrix")
     if trace is None:
         errors.append("missing_trace")
-        return errors
+        return sorted(set(errors))
 
     retrieval_traces = trace.get("retrieval_traces") or []
     rerank_traces = trace.get("rerank_traces") or []
@@ -274,9 +308,6 @@ def _strict_full_errors(response: dict[str, Any], trace: dict[str, Any] | None) 
     if not retrieval_traces:
         errors.append("missing_hybrid_retrieval_trace")
     else:
-        # A publication full-system pass must prove BOTH first-stage channels.
-        # BM25-only recovery after a broken ANN, or ANN-only recovery after a
-        # missing FTS artifact, is not the prescribed two-channel stage-1 system.
         if not any(int(item.get("dense_count") or 0) > 0 for item in retrieval_traces):
             errors.append("dense_ann_stage_missing")
         if not any(int(item.get("lexical_count") or 0) > 0 for item in retrieval_traces):
@@ -330,6 +361,53 @@ def _strict_full_errors(response: dict[str, Any], trace: dict[str, Any] | None) 
     if not EXPECTED_MAC_AGENTS.issubset(message_agents):
         errors.append("mac_message_provenance_incomplete")
     return sorted(set(errors))
+
+
+def _retrieval_ranked_lit_doc_ids(
+    pipeline: str,
+    trace: dict[str, Any] | None,
+    org_id: str,
+) -> list[str]:
+    """Resolve the pre-pack ranked literature list from trace chunk IDs."""
+    if not trace:
+        return []
+    chunk_ids: list[str] = []
+    if pipeline == "naive_rag":
+        retrieval_traces = trace.get("retrieval_traces") or []
+        if retrieval_traces:
+            chunk_ids = [
+                str(item.get("chunk_id") or "")
+                for item in (retrieval_traces[-1].get("candidates") or [])
+                if str(item.get("chunk_id") or "").strip()
+            ]
+    else:
+        rerank_traces = trace.get("rerank_traces") or []
+        if rerank_traces:
+            chunk_ids = [
+                str(item.get("chunk_id") or "")
+                for item in (rerank_traces[-1].get("scores") or [])
+                if str(item.get("chunk_id") or "").strip()
+            ]
+    if not chunk_ids:
+        return []
+
+    coll = get_sync_database()["chunks"]
+    rows = coll.find(
+        {"org_id": org_id, "chunk_id": {"$in": list(dict.fromkeys(chunk_ids))}},
+        {"_id": 0, "chunk_id": 1, "doc_id": 1, "source_type": 1},
+    )
+    by_chunk = {str(row.get("chunk_id")): row for row in rows}
+    ranked_docs: list[str] = []
+    seen: set[str] = set()
+    for chunk_id in chunk_ids:
+        row = by_chunk.get(chunk_id) or {}
+        if str(row.get("source_type") or "").upper() != "LIT":
+            continue
+        doc_id = str(row.get("doc_id") or "").strip()
+        if doc_id and doc_id not in seen:
+            seen.add(doc_id)
+            ranked_docs.append(doc_id)
+    return ranked_docs
 
 
 def _trace_summary(trace: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -400,9 +478,6 @@ def _start_local_medswin(expected_revision: str) -> tuple[subprocess.Popen[Any] 
     except Exception:
         existing_health = None
     if existing_health is not None:
-        # If a service is already bound to the requested port, it must be the
-        # exact pinned MedSwin server. Never hide a wrong-service conflict by
-        # attempting to start another process on the same port.
         _validate_local_health(existing_health, expected_revision)
         return None, existing_health
 
@@ -510,16 +585,7 @@ def _start_api(generator: str, port: int, org_id: str, manifest: dict[str, Any])
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_handle = log_path.open("ab", buffering=0)
     process = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "app.main:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-        ],
+        [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
         cwd=REPO_ROOT,
         env=_api_env(generator, port, org_id, manifest),
         stdout=log_handle,
@@ -559,10 +625,17 @@ async def _run_cell(
             "corpus_embedding_input_type": manifest.get("embedding_input_type"),
             "reranker_model": EXPECTED_RERANKER if pipeline == "medswin" else None,
             "cases": len(cases),
-            "top_k": top_k,
+            "retrieval_top_k": top_k,
             "strict_full_corpus": True,
             "shared_generation_envelope": envelope,
             "runtime_artifacts": _runtime_artifact_env(manifest),
+            "primary_retrieval_metrics": [
+                "retrieval_ndcg_at_10",
+                "retrieval_precision_at_10",
+                "retrieval_recall_at_10",
+                "retrieval_reciprocal_rank",
+            ],
+            "system_diagnostic": "msas",
         },
     )
     base_url = f"http://127.0.0.1:{port}"
@@ -578,6 +651,7 @@ async def _run_cell(
             raise RuntimeError(f"API Mongo preflight failed: {naive_ready}")
         for index, case in enumerate(cases, start=1):
             response: dict[str, Any]
+            trace: dict[str, Any] | None = None
             try:
                 response = await client.chat(
                     case,
@@ -597,36 +671,56 @@ async def _run_cell(
                     "degraded_mode": {"request_error": True},
                 }
                 strict_errors = [f"request_failed:{exc}"]
-                trace = None
             else:
                 trace_id = str(response.get("trace_id") or "")
                 trace = _trace_document(trace_id, org_id) if trace_id else None
                 strict_errors = (
-                    _strict_naive_errors(response, trace)
+                    _strict_naive_errors(response, trace, envelope["token_budget"])
                     if pipeline == "naive_rag"
-                    else _strict_full_errors(response, trace)
+                    else _strict_full_errors(response, trace, envelope["token_budget"])
                 )
+
+            retrieval_ranked_doc_ids = _retrieval_ranked_lit_doc_ids(pipeline, trace, org_id)
+            if not retrieval_ranked_doc_ids:
+                strict_errors.append("retrieval_literature_ranking_empty")
+
             case_audit = audit_case(
                 case,
                 response,
                 _trace_summary(trace),
-                errors=strict_errors,
+                errors=sorted(set(strict_errors)),
                 available_doc_ids=gold_present,
                 indexed_doc_ids=gold_present,
                 pipeline=pipeline,
             )
+            if retrieval_ranked_doc_ids:
+                retrieval_metrics = ranked_trec_metrics(case, retrieval_ranked_doc_ids)
+                case_audit.retrieval_ranked_doc_ids = retrieval_ranked_doc_ids
+                case_audit.retrieval_ndcg_at_10 = retrieval_metrics["ndcg_at_10"]
+                case_audit.retrieval_precision_at_10 = retrieval_metrics["precision_at_10"]
+                case_audit.retrieval_recall_at_10 = retrieval_metrics["recall_at_10"]
+                case_audit.retrieval_reciprocal_rank = retrieval_metrics["reciprocal_rank"]
             run.cases.append(case_audit)
+            retrieval_ndcg = case_audit.retrieval_ndcg_at_10
             print(
                 f"[full-matrix] {generator}/{pipeline} case {index}/{len(cases)} "
-                f"errors={len(strict_errors)} msas={case_audit.msas:.4f}",
+                f"errors={len(case_audit.errors)} "
+                f"retrieval_ndcg@10={retrieval_ndcg if retrieval_ndcg is not None else 'NA'} "
+                f"msas={case_audit.msas:.4f}",
                 flush=True,
             )
 
     aggregate_run(run)
+    retrieval_metric_cases = sum(1 for case in run.cases if case.retrieval_ndcg_at_10 is not None)
     run.diagnostics.update(
         {
             "strict_error_cases": sum(1 for case in run.cases if case.errors),
-            "strict_pass": len(run.cases) == EXPECTED_QUERIES and all(not case.errors for case in run.cases),
+            "retrieval_metric_cases": retrieval_metric_cases,
+            "strict_pass": (
+                len(run.cases) == EXPECTED_QUERIES
+                and retrieval_metric_cases == EXPECTED_QUERIES
+                and all(not case.errors for case in run.cases)
+            ),
             "generator": generator,
             "pipeline": pipeline,
             "expected_cases": EXPECTED_QUERIES,
@@ -652,14 +746,29 @@ def _metric(run: RunAudit, name: str) -> float:
     return float((run.aggregate or {}).get(name) or 0.0)
 
 
+def _delta_metrics(left: RunAudit, right: RunAudit) -> dict[str, float]:
+    names = [
+        "mean_retrieval_ndcg_at_10",
+        "mean_retrieval_precision_at_10",
+        "mean_retrieval_recall_at_10",
+        "mean_retrieval_reciprocal_rank",
+        "mean_final_evidence_ndcg_at_10",
+        "mean_final_evidence_precision_at_10",
+        "mean_final_evidence_recall_at_10",
+        "mean_final_evidence_reciprocal_rank",
+        "mean_evidence_doc_recall",
+        "mean_citation_precision",
+        "mean_groundedness_proxy",
+        "mean_msas",
+    ]
+    return {name: _metric(left, name) - _metric(right, name) for name in names}
+
+
 async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
     manifest = _validate_runtime_manifest(args.org_id)
     cases_path = Path(args.cases_path or manifest.get("cases_path") or DEFAULT_CASES)
     cases = _load_cases(cases_path)
 
-    # Re-verify the CURRENT Mongo/FTS/HNSW state here. This makes direct
-    # run_full_matrix.py invocation as strict as the start-local.sh wrapper and
-    # catches post-preparation deletion/corruption before model quota is spent.
     verification = _verify_persisted_runtime(manifest, args.org_id, cases_path)
     gold_present = _qrel_presence(cases, args.org_id)
     expected_revision = _expected_model_revision()
@@ -693,8 +802,6 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
                 _terminate(api_process)
                 await asyncio.sleep(1.0)
 
-            # Release runner-owned 7B GPU memory before GPT-only cells. An
-            # externally managed exact-revision server is never terminated.
             if generator == "medswin_local" and local_process is not None:
                 _terminate(local_process)
                 local_process = None
@@ -718,6 +825,20 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
         "local_medswin_health": local_health,
         "local_medswin_revision": expected_revision,
         "shared_generation_envelope": _shared_eval_envelope(),
+        "retrieval_top_k": args.top_k,
+        "primary_retrieval_metrics": [
+            "mean_retrieval_ndcg_at_10",
+            "mean_retrieval_precision_at_10",
+            "mean_retrieval_recall_at_10",
+            "mean_retrieval_reciprocal_rank",
+        ],
+        "secondary_rag_system_metrics": [
+            "mean_final_evidence_ndcg_at_10",
+            "mean_evidence_doc_recall",
+            "mean_citation_precision",
+            "mean_groundedness_proxy",
+            "mean_msas",
+        ],
         "runtime_artifacts": _runtime_artifact_env(manifest),
         "cells": {
             key: {
@@ -725,31 +846,38 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
                 "strict_pass": bool(run.diagnostics.get("strict_pass")),
                 "aggregate": run.aggregate,
                 "error_cases": int(run.diagnostics.get("strict_error_cases") or 0),
+                "retrieval_metric_cases": int(run.diagnostics.get("retrieval_metric_cases") or 0),
                 "cases": len(run.cases),
             }
             for key, run in results.items()
         },
         "comparisons": {},
+        "metric_notes": {
+            "retrieval": (
+                "Pre-pack literature rankings are scored at cutoff 10 from TREC qrels. "
+                "These are track-aligned diagnostics, not official NIST inferred/sample-eval leaderboard scores."
+            ),
+            "final_evidence": "Post-pack evidence packet shown to the generator under the shared token budget.",
+            "msas": "Architecture/system-audit diagnostic; not the sole model-comparison metric.",
+        },
     }
     for generator in ("medswin_local", "foundry"):
         naive = results[f"naive_rag:{generator}"]
         full = results[f"medswin:{generator}"]
-        matrix["comparisons"][f"full_minus_naive:{generator}"] = {
-            "mean_msas": _metric(full, "mean_msas") - _metric(naive, "mean_msas"),
-            "mean_evidence_doc_recall": _metric(full, "mean_evidence_doc_recall") - _metric(naive, "mean_evidence_doc_recall"),
-            "mean_groundedness_proxy": _metric(full, "mean_groundedness_proxy") - _metric(naive, "mean_groundedness_proxy"),
-        }
+        matrix["comparisons"][f"full_minus_naive:{generator}"] = _delta_metrics(full, naive)
     for pipeline in ("naive_rag", "medswin"):
         local = results[f"{pipeline}:medswin_local"]
         cloud = results[f"{pipeline}:foundry"]
-        matrix["comparisons"][f"gpt54_minus_medswin7b:{pipeline}"] = {
-            "mean_msas": _metric(cloud, "mean_msas") - _metric(local, "mean_msas"),
-            "mean_groundedness_proxy": _metric(cloud, "mean_groundedness_proxy") - _metric(local, "mean_groundedness_proxy"),
-        }
+        matrix["comparisons"][f"gpt54_minus_medswin7b:{pipeline}"] = _delta_metrics(cloud, local)
 
     matrix["strict_pass"] = (
         verification.get("strict_pass") is True
-        and all(cell["strict_pass"] and cell["cases"] == EXPECTED_QUERIES for cell in matrix["cells"].values())
+        and all(
+            cell["strict_pass"]
+            and cell["cases"] == EXPECTED_QUERIES
+            and cell["retrieval_metric_cases"] == EXPECTED_QUERIES
+            for cell in matrix["cells"].values()
+        )
     )
     path = _run_output_dir() / f"full-matrix-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
     path.write_text(json.dumps(matrix, indent=2, default=str), encoding="utf-8")
@@ -764,11 +892,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--org-id", default=os.getenv("BENCHMARK_ORG_ID", "bench-org"))
     parser.add_argument("--cases-path", default="")
     parser.add_argument("--api-port", type=int, default=int(os.getenv("FULL_EVAL_API_PORT", "8110")))
-    parser.add_argument("--top-k", type=int, default=int(os.getenv("FULL_EVAL_TOP_K", "5")))
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=int(os.getenv("FULL_EVAL_TOP_K", str(DEFAULT_RETRIEVAL_TOP_K))),
+        help="Naive pre-pack dense retrieval depth; default 10 so P@10/nDCG@10 are observable before context packing.",
+    )
     parser.add_argument("--timeout", type=float, default=float(os.getenv("FULL_EVAL_REQUEST_TIMEOUT_S", "600")))
     args = parser.parse_args()
-    if args.top_k <= 0:
-        parser.error("--top-k must be positive")
+    if args.top_k < 10:
+        parser.error("--top-k must be >=10 for the strict publication matrix")
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     return args
