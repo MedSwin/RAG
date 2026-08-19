@@ -140,7 +140,6 @@ class MedSwinOrchestrator:
                     1 for p in evidence_bundle.contradictions if p.severity == "high" and not p.resolved
                 ),
             )
-            # P0: never synthesize without a passing gate or on an empty accepted bundle
             if decision is None or (decision.passed and not evidence_bundle.passages):
                 decision = PolicyDecision(
                     passed=False,
@@ -284,7 +283,6 @@ class MedSwinOrchestrator:
         trace: AuditTrace,
     ):
         batches = []
-        # Always run quality on candidates; route specialists by missing facets / hints
         always = {"quality"}
         targets = set(always)
         if isinstance(routed, list):
@@ -353,9 +351,7 @@ class MedSwinOrchestrator:
             return empty, None
 
         source_type_filter = SourceType.CPG if constraints.get("guideline_only") else None
-        facets = query_spec.facets or QueryNormalizer.build_facets(
-            query, query_spec, constraints, patient_id
-        )
+        facets = query_spec.facets or QueryNormalizer.build_facets(query, query_spec, constraints, patient_id)
         if not query_spec.facets:
             query_spec.facets = facets
         iteration = 0
@@ -404,7 +400,6 @@ class MedSwinOrchestrator:
                 )
             )
 
-            # Merge candidate pool
             by_id = {c.chunk_id: c for c in all_candidates}
             for c in candidates:
                 if c.chunk_id not in by_id:
@@ -437,10 +432,7 @@ class MedSwinOrchestrator:
             selected = pack_bundle(selected, facets=facets)
             selected_ids = {p.chunk_id for p in selected}
             selected_ledger = filter_ledger(ledger, selected_ids)
-            contradictions = adjudicate_contradictions(
-                detect_contradictions(selected_ledger),
-                batches,
-            )
+            contradictions = adjudicate_contradictions(detect_contradictions(selected_ledger), batches)
             check = self.gate.check(
                 selected_ledger,
                 facets,
@@ -471,9 +463,9 @@ class MedSwinOrchestrator:
             contradictions = decision.contradictions
 
         if selected:
-            for t in trace.rerank_traces[-1:]:
-                t.selected_chunk_ids = [p.chunk_id for p in selected]
-                t.rejected_chunk_ids = [
+            for trace_row in trace.rerank_traces[-1:]:
+                trace_row.selected_chunk_ids = [p.chunk_id for p in selected]
+                trace_row.rejected_chunk_ids = [
                     c.chunk_id for c in all_candidates if c.chunk_id not in {p.chunk_id for p in selected}
                 ][:50]
 
@@ -486,6 +478,38 @@ class MedSwinOrchestrator:
         )
         return bundle, final_check
 
+    def _render_final_answer(self, answer_data: Dict[str, Any], evidence_bundle: EvidenceBundle) -> str:
+        """Backward-compatible grounded renderer used by safety/unit callers.
+
+        Citation filtering lives in ``SynthesisAgent._render``. Delegating here
+        keeps one implementation: fabricated chunk IDs are rejected against the
+        accepted EvidenceBundle rather than reimplementing grounding logic in
+        the orchestrator.
+        """
+        answer, _provenance = self.synthesis_agent._render(answer_data, evidence_bundle)
+        return answer
+
     def _citations(self, evidence_bundle: EvidenceBundle) -> List[Dict[str, Any]]:
         facets_by_chunk = {entry.chunk_id: entry.facets for entry in evidence_bundle.evidence_ledger}
         return [build_citation(passage, facets_by_chunk.get(passage.chunk_id, [])) for passage in evidence_bundle.passages]
+
+    async def close(self) -> None:
+        """Close each owned HTTP client exactly once."""
+        clients = [
+            self.supervisor,
+            self.emr_llm,
+            self.guideline_llm,
+            self.safety_llm,
+            self.quality_llm,
+            self.critic_llm,
+            self.embedding_client,
+            self.reranker_client,
+        ]
+        seen = set()
+        for client in clients:
+            if client is None or id(client) in seen:
+                continue
+            seen.add(id(client))
+            close = getattr(client, "close", None)
+            if close is not None:
+                await close()
