@@ -209,6 +209,7 @@ export CLOUD_EMBEDDING="${CLOUD_EMBEDDING:-embed-v-4-0}"
 export CLOUD_EMBEDDING_DIMENSION="${CLOUD_EMBEDDING_DIMENSION:-1536}"
 export CLOUD_RERANKER="${CLOUD_RERANKER:-Cohere-rerank-v4.0-fast}"
 export CLOUD_MODEL_INFERENCE_API_VERSION="${CLOUD_MODEL_INFERENCE_API_VERSION:-2024-05-01-preview}"
+export CLOUD_RERANKER_AUTH_SCHEME="${CLOUD_RERANKER_AUTH_SCHEME:-bearer}"
 export MEDSWIN_MODEL_REPO="${MEDSWIN_MODEL_REPO:-MedSwin/MedSwin-DaRE-TIES-KD-0.7}"
 export MEDSWIN_MODEL_PATH="${MEDSWIN_MODEL_PATH:-./models/MedSwin-DaRE-TIES-KD-0.7}"
 export MEDSWIN_LLM_MODEL="${MEDSWIN_LLM_MODEL:-MedSwin/MedSwin-DaRE-TIES-KD-0.7}"
@@ -331,6 +332,8 @@ run_full_eval() {
     export HNSW_MAPPING_PATH="${FULL_EVAL_HNSW_MAPPING_PATH:-${eval_data_dir}/hnsw_mapping.sqlite}"
     export FAISS_INDEX_PATH="${FULL_EVAL_FAISS_INDEX_PATH:-${eval_data_dir}/faiss_unused.bin}"
     export FAISS_MAPPING_PATH="${FULL_EVAL_FAISS_MAPPING_PATH:-${eval_data_dir}/faiss_unused.json}"
+    export TREE_INDEX_PATH="${FULL_EVAL_TREE_INDEX_PATH:-${eval_data_dir}/tree_unused.npy}"
+    export TREE_MAPPING_PATH="${FULL_EVAL_TREE_MAPPING_PATH:-${eval_data_dir}/tree_unused.json}"
     export LEXICAL_FTS_PATH="${FULL_EVAL_LEXICAL_FTS_PATH:-${eval_data_dir}/bm25.sqlite}"
     export LLM_TIMEOUT_S="${FULL_EVAL_LLM_TIMEOUT_S:-600}"
 
@@ -343,7 +346,19 @@ run_full_eval() {
     echo -e "${YELLOW}Preparing complete TREC-CDS runtime corpus and indexes ...${NC}"
     CLOUD_MODE=true \
         python3 eval/scripts/prepare_full_trec_runtime.py "${prep_args[@]}"
-    echo -e "${YELLOW}Verifying persisted 100% TREC corpus, embeddings, BM25 and HNSW ...${NC}"
+
+    # The scalable preparer bypasses per-document HTTP ingest but the production
+    # runtime contract persists both metadata Documents and embedded Chunks. Use
+    # a server-side Mongo aggregation to materialize the complete document layer
+    # without duplicating raw article bodies or issuing 1.25M API requests.
+    echo -e "${YELLOW}Materializing complete TREC document metadata layer ...${NC}"
+    if [[ "$RESET_FULL_CORPUS" -eq 1 ]]; then
+        CLOUD_MODE=true python3 eval/scripts/materialize_full_trec_documents.py --org-id "$bench_org" --force
+    else
+        CLOUD_MODE=true python3 eval/scripts/materialize_full_trec_documents.py --org-id "$bench_org"
+    fi
+
+    echo -e "${YELLOW}Verifying persisted 100% TREC documents, chunks, embeddings, BM25 and HNSW ...${NC}"
     CLOUD_MODE=true \
         python3 eval/scripts/verify_full_trec_runtime.py --org-id "$bench_org"
     echo -e "${YELLOW}Running strict naive/full × MedSwin/GPT-5.4 matrix ...${NC}"
