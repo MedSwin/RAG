@@ -3,13 +3,13 @@
 
 This verifier is intentionally independent of the ingestion checkpoint. It
 proves that the *current persisted runtime* still represents all 1,255,260 PMC
-collection documents and that every persisted chunk is present in the active
-Cohere Embed v4 vector space, SQLite BM25 index, and HNSW label mapping/index.
+collection documents and all 30 benchmark EMR cases; that the MedSwin Document
+and Chunk layers agree; and that every persisted chunk is represented in the
+active Cohere Embed v4 vector space, SQLite BM25 index, and HNSW label mapping.
 
-Counts alone are insufficient: two corrupted stores can have equal row counts
-while containing different chunk IDs. The verifier therefore computes the same
-order-independent cryptographic multiset fingerprint over Mongo chunk IDs,
-BM25/FTS chunk IDs, and HNSW-mapping chunk IDs and requires all three to match.
+Counts alone are insufficient: equal-size stores can contain different IDs. We
+therefore compute order-independent cryptographic multiset fingerprints over
+cross-store identifiers and require exact equality.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ EXPECTED_DATASET = "pmc/v2/trec-cds-2016"
 EXPECTED_DOCS = 1_255_260
 EXPECTED_QUERIES = 30
 EXPECTED_QRELS = 37_707
+EXPECTED_EMR_DOCS = 30
 EXPECTED_EMBEDDING = "embed-v-4-0"
 MANIFEST_DIR = REPO_ROOT / "data" / "eval-warmup"
 _FINGERPRINT_MASK = (1 << 256) - 1
@@ -80,32 +81,12 @@ def _cases(path: Path) -> tuple[list[dict[str, Any]], set[str]]:
     return rows, gold
 
 
-def _distinct_literature_docs(coll: Any, org_id: str) -> int:
+def _distinct_count(coll: Any, match: dict[str, Any], field: str) -> int:
     rows = list(
         coll.aggregate(
             [
-                {"$match": {"org_id": org_id, "source_type": "LIT"}},
-                {"$group": {"_id": "$doc_id"}},
-                {"$count": "count"},
-            ],
-            allowDiskUse=True,
-        )
-    )
-    return int(rows[0]["count"]) if rows else 0
-
-
-def _distinct_case_patients(coll: Any, org_id: str) -> int:
-    rows = list(
-        coll.aggregate(
-            [
-                {
-                    "$match": {
-                        "org_id": org_id,
-                        "source_type": "EMR",
-                        "metadata.benchmark_patient_context": True,
-                    }
-                },
-                {"$group": {"_id": "$patient_id"}},
+                {"$match": match},
+                {"$group": {"_id": f"${field}"}},
                 {"$count": "count"},
             ],
             allowDiskUse=True,
@@ -115,20 +96,14 @@ def _distinct_case_patients(coll: Any, org_id: str) -> int:
 
 
 def _fingerprint_ids(values: Iterable[str]) -> dict[str, Any]:
-    """Return an order-independent 256-bit multiset fingerprint.
-
-    XOR plus modular addition of SHA-256 digests, together with exact count,
-    makes omissions/substitutions detectable without sorting or materializing
-    millions of IDs in RAM. This is an integrity diagnostic, not a security
-    boundary; its purpose is cross-store publication reproducibility.
-    """
+    """Return an order-independent SHA-256 multiset fingerprint."""
     count = 0
     xor_value = 0
     sum_value = 0
     for raw in values:
         value = str(raw or "").strip()
         if not value:
-            raise RuntimeError("Encountered an empty chunk_id while fingerprinting full runtime")
+            raise RuntimeError("Encountered an empty identifier while fingerprinting full runtime")
         digest = int.from_bytes(hashlib.sha256(value.encode("utf-8")).digest(), "big")
         xor_value ^= digest
         sum_value = (sum_value + digest) & _FINGERPRINT_MASK
@@ -141,13 +116,31 @@ def _fingerprint_ids(values: Iterable[str]) -> dict[str, Any]:
 
 
 def _mongo_chunk_ids(coll: Any, org_id: str, batch_size: int = 4096) -> Iterator[str]:
-    cursor = coll.find(
-        {"org_id": org_id},
-        {"_id": 0, "chunk_id": 1},
+    cursor = coll.find({"org_id": org_id}, {"_id": 0, "chunk_id": 1}, batch_size=batch_size)
+    for row in cursor:
+        yield str(row.get("chunk_id") or "")
+
+
+def _distinct_chunk_doc_ids(coll: Any, org_id: str, source_type: str) -> Iterator[str]:
+    cursor = coll.aggregate(
+        [
+            {"$match": {"org_id": org_id, "source_type": source_type}},
+            {"$group": {"_id": "$doc_id"}},
+        ],
+        allowDiskUse=True,
+    )
+    for row in cursor:
+        yield str(row.get("_id") or "")
+
+
+def _document_doc_ids(documents: Any, org_id: str, source_type: str, batch_size: int = 4096) -> Iterator[str]:
+    cursor = documents.find(
+        {"org_id": org_id, "source_type": source_type},
+        {"_id": 0, "doc_id": 1},
         batch_size=batch_size,
     )
     for row in cursor:
-        yield str(row.get("chunk_id") or "")
+        yield str(row.get("doc_id") or "")
 
 
 def _sqlite_chunk_ids(conn: sqlite3.Connection, table: str, batch_size: int = 8192) -> Iterator[str]:
@@ -169,6 +162,7 @@ def _fts_integrity(path: Path, org_id: str) -> tuple[int, dict[str, Any]]:
         org_rows = int(conn.execute("SELECT count(*) FROM chunks_fts WHERE org_id = ?", (org_id,)).fetchone()[0])
         if org_rows != count:
             raise RuntimeError(f"BM25 FTS contains {count - org_rows:,} rows outside benchmark org {org_id}")
+        # Exercise FTS5's bm25() function itself, not merely the table shape.
         conn.execute(
             "SELECT chunk_id, bm25(chunks_fts) FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT 1",
             ('"clinical"',),
@@ -240,12 +234,40 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
 
     db = get_sync_database()
     coll = db["chunks"]
+    documents = db["documents"]
     base = {"org_id": org_id}
+
     total_chunks = coll.count_documents(base)
     lit_chunks = coll.count_documents({**base, "source_type": "LIT"})
     emr_chunks = coll.count_documents({**base, "source_type": "EMR"})
-    literature_docs = _distinct_literature_docs(coll, org_id)
-    case_patients = _distinct_case_patients(coll, org_id)
+    if total_chunks <= 0:
+        raise RuntimeError("Benchmark corpus is empty")
+    if total_chunks != lit_chunks + emr_chunks:
+        raise RuntimeError(
+            f"Benchmark chunk corpus contains unsupported extra source types: total={total_chunks:,}, "
+            f"LIT+EMR={lit_chunks + emr_chunks:,}"
+        )
+
+    literature_docs = _distinct_count(coll, {**base, "source_type": "LIT"}, "doc_id")
+    case_docs = _distinct_count(
+        coll,
+        {**base, "source_type": "EMR", "metadata.benchmark_patient_context": True},
+        "doc_id",
+    )
+    case_patients = _distinct_count(
+        coll,
+        {**base, "source_type": "EMR", "metadata.benchmark_patient_context": True},
+        "patient_id",
+    )
+    if literature_docs != EXPECTED_DOCS:
+        raise RuntimeError(
+            f"Persisted TREC literature coverage is {literature_docs:,}/{EXPECTED_DOCS:,} distinct documents"
+        )
+    if case_docs != EXPECTED_EMR_DOCS or case_patients != EXPECTED_QUERIES:
+        raise RuntimeError(
+            f"Persisted benchmark EMR coverage is documents={case_docs}/{EXPECTED_EMR_DOCS}, "
+            f"patients={case_patients}/{EXPECTED_QUERIES}"
+        )
 
     active_filter = {
         **base,
@@ -255,20 +277,52 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
         "embedding": {"$exists": True, "$type": "array", "$ne": []},
     }
     active_chunks = coll.count_documents(active_filter)
-    if total_chunks <= 0:
-        raise RuntimeError("Benchmark corpus is empty")
-    if literature_docs != EXPECTED_DOCS:
-        raise RuntimeError(
-            f"Persisted TREC literature coverage is {literature_docs:,}/{EXPECTED_DOCS:,} distinct documents"
-        )
-    if case_patients != EXPECTED_QUERIES:
-        raise RuntimeError(
-            f"Persisted benchmark EMR coverage is {case_patients}/{EXPECTED_QUERIES} patient cases"
-        )
     if active_chunks != total_chunks:
+        raise RuntimeError(f"Only {active_chunks:,}/{total_chunks:,} chunks are in the active embedding space")
+
+    # Verify the metadata Document layer created by the production ingest
+    # contract. It must contain exactly the same source document ID universes as
+    # the prepared Chunk layer and no extra benchmark-org documents.
+    lit_document_records = documents.count_documents({**base, "source_type": "LIT"})
+    emr_document_records = documents.count_documents({**base, "source_type": "EMR"})
+    total_document_records = documents.count_documents(base)
+    expected_document_records = EXPECTED_DOCS + EXPECTED_EMR_DOCS
+    if (
+        lit_document_records != EXPECTED_DOCS
+        or emr_document_records != EXPECTED_EMR_DOCS
+        or total_document_records != expected_document_records
+    ):
         raise RuntimeError(
-            f"Only {active_chunks:,}/{total_chunks:,} chunks are in the active embedding space"
+            "MedSwin Document layer incomplete or contaminated: "
+            f"LIT={lit_document_records:,}/{EXPECTED_DOCS:,}, "
+            f"EMR={emr_document_records}/{EXPECTED_EMR_DOCS}, "
+            f"total={total_document_records:,}/{expected_document_records:,}"
         )
+    bad_document_metadata = documents.count_documents(
+        {
+            "org_id": org_id,
+            "$or": [
+                {"doc_id": {"$exists": False}},
+                {"doc_id": ""},
+                {"title": {"$exists": False}},
+                {"title": ""},
+                {"evidence_grade": {"$exists": False}},
+                {"source_reliability": {"$exists": False}},
+                {"metadata.full_trec_runtime": {"$ne": True}},
+            ],
+        }
+    )
+    if bad_document_metadata:
+        raise RuntimeError(f"{bad_document_metadata:,} benchmark Document records fail required metadata checks")
+
+    lit_chunk_doc_fingerprint = _fingerprint_ids(_distinct_chunk_doc_ids(coll, org_id, "LIT"))
+    lit_document_fingerprint = _fingerprint_ids(_document_doc_ids(documents, org_id, "LIT"))
+    emr_chunk_doc_fingerprint = _fingerprint_ids(_distinct_chunk_doc_ids(coll, org_id, "EMR"))
+    emr_document_fingerprint = _fingerprint_ids(_document_doc_ids(documents, org_id, "EMR"))
+    if lit_chunk_doc_fingerprint != lit_document_fingerprint:
+        raise RuntimeError("LIT Document doc_id fingerprint does not match the chunk-derived PMC document universe")
+    if emr_chunk_doc_fingerprint != emr_document_fingerprint:
+        raise RuntimeError("EMR Document doc_id fingerprint does not match the chunk-derived benchmark note universe")
 
     gold_present = set(
         str(value)
@@ -325,7 +379,13 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
         "qrels": EXPECTED_QRELS,
         "positive_qrel_documents": len(gold_doc_ids),
         "positive_qrel_documents_present": len(gold_present),
+        "case_documents": case_docs,
         "case_patients": case_patients,
+        "document_records": total_document_records,
+        "lit_document_records": lit_document_records,
+        "emr_document_records": emr_document_records,
+        "lit_document_id_fingerprint": lit_document_fingerprint,
+        "emr_document_id_fingerprint": emr_document_fingerprint,
         "total_chunks": total_chunks,
         "lit_chunks": lit_chunks,
         "emr_chunks": emr_chunks,
@@ -363,8 +423,7 @@ def main() -> int:
     cases_value = args.cases_path or runtime.get("cases_path") or ""
     if not str(cases_value).strip():
         raise RuntimeError("No full TREC cases path is configured")
-    cases_path = Path(str(cases_value))
-    result = verify(args.org_id, cases_path)
+    result = verify(args.org_id, Path(str(cases_value)))
     print(json.dumps(result, indent=2, default=str))
     return 0
 
