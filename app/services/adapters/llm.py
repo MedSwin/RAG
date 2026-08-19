@@ -31,6 +31,25 @@ def _generation_backend() -> str:
     return "foundry" if settings.CLOUD_MODE else "local_http"
 
 
+def _default_max_tokens() -> Optional[int]:
+    """Return an optional shared generation cap.
+
+    The strict full-evaluation launcher sets this value for both generator
+    profiles. This prevents GPT-5.4 from receiving a larger output allowance
+    than the local MedSwin model merely because one backend has a larger context
+    window. Ordinary application behavior remains uncapped when the variable is
+    absent/zero.
+    """
+    raw = (os.getenv("LLM_DEFAULT_MAX_TOKENS") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError("LLM_DEFAULT_MAX_TOKENS must be an integer")
+    return value if value > 0 else None
+
+
 class LLMClient:
     """Client for OpenAI-compatible LLM endpoints.
 
@@ -76,11 +95,12 @@ class LLMClient:
         if not self.model.lower().startswith("gpt-5"):
             payload["temperature"] = temperature
 
-        if max_tokens:
+        effective_max_tokens = max_tokens or _default_max_tokens()
+        if effective_max_tokens:
             if self.model.lower().startswith("gpt-5"):
-                payload["max_completion_tokens"] = max_tokens
+                payload["max_completion_tokens"] = effective_max_tokens
             else:
-                payload["max_tokens"] = max_tokens
+                payload["max_tokens"] = effective_max_tokens
 
         if json_schema:
             system_msg = {"role": "system", "content": schema_instruction(json_schema)}
@@ -94,11 +114,12 @@ class LLMClient:
 
         try:
             logger.debug(
-                "Calling %s LLM at %s model=%s with %s messages",
+                "Calling %s LLM at %s model=%s with %s messages max_tokens=%s",
                 self.backend,
                 self.base_url,
                 self.model,
                 len(messages),
+                effective_max_tokens,
             )
             response = await request_with_model_rate_limit(
                 self.client,
