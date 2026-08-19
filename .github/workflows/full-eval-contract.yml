@@ -36,7 +36,7 @@ jobs:
           test -f eval/scripts/verify_full_trec_runtime.py
           test -f eval/scripts/run_full_matrix.py
           test -f eval/FULL_EVALUATION.md
-          grep -q 'EXPECTED_DOCS = 1_255_260' scripts/warmup-eval.py
+          grep -q 'EXPECTED_TREC_DOCS = 1_255_260' scripts/warmup-eval.py
           grep -q 'EXPECTED_DOCS = 1_255_260' eval/scripts/prepare_full_trec_runtime.py
           grep -q 'EXPECTED_DOCS = 1_255_260' eval/scripts/verify_full_trec_runtime.py
           grep -q 'EXPECTED_QUERIES = 30' eval/scripts/run_full_matrix.py
