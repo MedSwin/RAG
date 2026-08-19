@@ -1,19 +1,50 @@
-"""Embedding client adapter with retries and timeouts."""
+"""Embedding client adapter with retries, provider-aware payloads, and local fallback."""
 
 import asyncio
 import httpx
 import logging
+import os
 from typing import List, Optional
+
+import numpy as np
+
 from app.core.config import settings
 from app.services.adapters.limiter import request_with_model_rate_limit
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
+def _foundry_models_embedding_url() -> str:
+    """Resolve the Azure Foundry Models embeddings route for Cohere Embed.
+
+    `embed-v-4-0` is a Foundry Model, not an Azure OpenAI embedding deployment.
+    The Foundry Models API uses /models/embeddings and accepts the deployment/model
+    name in the request body. An explicit CLOUD_EMBEDDING_URI always wins.
+    """
+    explicit = (os.getenv("CLOUD_EMBEDDING_URI") or "").strip()
+    if explicit:
+        return explicit
+    endpoint = (settings.AZURE_AI_FOUNDRY_ENDPOINT or "").strip().rstrip("/")
+    if not endpoint:
+        return ""
+    # Accept users pasting either the account root or an OpenAI-v1 URL.
+    for suffix in ("/openai/v1", "/openai"):
+        if endpoint.endswith(suffix):
+            endpoint = endpoint[: -len(suffix)]
+            break
+    api_version = os.getenv("CLOUD_MODEL_INFERENCE_API_VERSION", "2024-05-01-preview")
+    return f"{endpoint}/models/embeddings?api-version={api_version}"
+
+
 class EmbeddingClient:
-    """Client for embedding endpoints."""
-    
+    """Client for embedding endpoints.
+
+    In cloud mode, Cohere Embed v4 is called through Azure Foundry Models with
+    explicit query/document input types. This is important for semantic-search
+    validity: corpus chunks and search queries must not be embedded as the same
+    generic input type.
+    """
+
     def __init__(
         self,
         base_url: str,
@@ -21,61 +52,78 @@ class EmbeddingClient:
         model: Optional[str] = None,
         api_key: Optional[str] = None,
     ):
-        """Initialize embedding client.
-        
-        Args:
-            base_url: Base URL for the embedding endpoint
-            timeout: Timeout in seconds (defaults to EMBED_TIMEOUT_S)
-        """
+        if settings.CLOUD_MODE and settings.CLOUD_EMBEDDING == "embed-v-4-0":
+            base_url = _foundry_models_embedding_url() or base_url
         self.base_url = base_url
         self.timeout = timeout or settings.EMBED_TIMEOUT_S
         self.model = model or (settings.CLOUD_EMBEDDING if settings.CLOUD_MODE else "default")
         self.api_key = api_key or (settings.AZURE_AI_FOUNDRY_API_KEY if settings.CLOUD_MODE else None)
         self.client = httpx.AsyncClient(timeout=self.timeout)
         self.rate_limit_key = f"embedding:{self.base_url}:{self.model}"
-    
-    async def embed(self, texts: List[str], request_id: Optional[str] = None) -> List[np.ndarray]:
+
+    async def embed(
+        self,
+        texts: List[str],
+        request_id: Optional[str] = None,
+        input_type: Optional[str] = None,
+    ) -> List[np.ndarray]:
         """Generate embeddings for texts.
-        
+
         Args:
-            texts: List of texts to embed
-            request_id: Optional request ID for tracing
-            
-        Returns:
-            List of embedding vectors as numpy arrays
-            
-        Raises:
-            httpx.HTTPError: If request fails after retries
+            texts: Texts to embed.
+            request_id: Optional trace identifier.
+            input_type: Foundry embedding input type: ``query``, ``document``,
+                or ``text``. Corpus ingestion should use ``document`` and ANN
+                lookup should use ``query``.
         """
         if not texts:
             return []
-        
+        if input_type not in {None, "query", "document", "text"}:
+            raise ValueError("input_type must be query, document, text, or None")
+
         payload = {
             "input": texts,
-            "model": self.model
+            "model": self.model,
         }
-        
+        if settings.CLOUD_MODE:
+            if input_type:
+                payload["input_type"] = input_type
+            # Keep a single vector space across indexing and retrieval. Embed v4
+            # supports 256/512/1024/1536 dimensions; MedSwin defaults to 1536.
+            if settings.CLOUD_EMBEDDING_DIMENSION or self.model == "embed-v-4-0":
+                payload["dimensions"] = settings.active_embedding_dimension()
+
         headers = {}
         if self.api_key:
             headers["api-key"] = self.api_key
         if request_id:
             headers["X-Request-ID"] = request_id
-        
+
         try:
-            logger.debug(f"Calling embedding service at {self.base_url} for {len(texts)} texts")
+            logger.debug(
+                "Calling embedding service at %s for %s texts (input_type=%s)",
+                self.base_url,
+                len(texts),
+                input_type,
+            )
             response = await request_with_model_rate_limit(
                 self.client,
                 self.base_url,
                 rate_limit_key=self.rate_limit_key,
                 logger=logger,
                 json=payload,
-                headers=headers
+                headers=headers,
             )
             response.raise_for_status()
-            return _parse_embedding_response(response.json())
+            embeddings = _parse_embedding_response(response.json())
+            if len(embeddings) != len(texts):
+                raise RuntimeError(
+                    f"Embedding service returned {len(embeddings)} vectors for {len(texts)} inputs"
+                )
+            return embeddings
         except Exception as exc:
             if settings.CLOUD_MODE:
-                logger.error(f"Embedding request failed: {exc}")
+                logger.error("Embedding request failed: %s", exc)
                 raise
             local = await self._local_embed(texts)
             if local is not None:
@@ -85,7 +133,7 @@ class EmbeddingClient:
                     exc,
                 )
                 return local
-            logger.error(f"Embedding request failed: {exc}")
+            logger.error("Embedding request failed: %s", exc)
             raise
 
     async def _local_embed(self, texts: List[str]) -> Optional[List[np.ndarray]]:
@@ -119,7 +167,7 @@ class EmbeddingClient:
             return [row.astype(np.float32) for row in pooled.cpu().numpy()]
 
         return await loop.run_in_executor(None, _encode)
-    
+
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()
