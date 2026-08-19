@@ -35,25 +35,33 @@ async def init_database():
         raise
 
 
-async def _drop_legacy_global_unique(collection, field_name: str) -> None:
-    """Remove a historical global unique index from a tenant-partitioned entity.
+async def _drop_legacy_chunk_indexes(collection) -> None:
+    """Migrate historical global identity and Mongo text indexes.
 
-    MedSwin reads/writes chunks and documents with ``org_id`` scope. A global
-    unique ``doc_id``/``chunk_id`` index makes identical source IDs collide
-    across organizations and can cause one tenant's upsert to overwrite another
-    tenant's data. Migrate those two natural keys before creating compound
-    unique indexes.
+    Chunk lexical retrieval is owned by MedSwin BM25/SQLite FTS, not Mongo
+    ``$text``. Maintaining a second full-body text index duplicates the corpus
+    and is especially costly for the complete TREC build.
     """
-    try:
-        info = await collection.index_information()
-        for name, spec in info.items():
-            keys = spec.get("key") or []
-            if keys == [(field_name, 1)] and spec.get("unique"):
-                await collection.drop_index(name)
-                logger.info("Dropped legacy global unique index %s on %s", name, field_name)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Could not migrate legacy global unique %s index: %s", field_name, exc)
-        raise
+    info = await collection.index_information()
+    for name, spec in info.items():
+        keys = spec.get("key") or []
+        if keys == [("chunk_id", 1)] and spec.get("unique"):
+            await collection.drop_index(name)
+            logger.info("Dropped legacy global unique chunk_id index %s", name)
+            continue
+        if any(str(kind) == "text" for _field, kind in keys):
+            await collection.drop_index(name)
+            logger.info("Dropped redundant Mongo chunk text index %s", name)
+
+
+async def _drop_legacy_document_indexes(collection) -> None:
+    """Remove historical global document identity before compound uniqueness."""
+    info = await collection.index_information()
+    for name, spec in info.items():
+        keys = spec.get("key") or []
+        if keys == [("doc_id", 1)] and spec.get("unique"):
+            await collection.drop_index(name)
+            logger.info("Dropped legacy global unique doc_id index %s", name)
 
 
 async def create_collections_and_indexes():
@@ -64,7 +72,7 @@ async def create_collections_and_indexes():
     db = client[settings.MONGODB_DATABASE]
 
     chunks_collection = db.chunks
-    await _drop_legacy_global_unique(chunks_collection, "chunk_id")
+    await _drop_legacy_chunk_indexes(chunks_collection)
     await chunks_collection.create_index([("org_id", 1), ("chunk_id", 1)], unique=True)
     await chunks_collection.create_index([("org_id", 1), ("source_type", 1)])
     await chunks_collection.create_index([("org_id", 1), ("patient_id", 1)])
@@ -72,10 +80,9 @@ async def create_collections_and_indexes():
     await chunks_collection.create_index([("metadata.source", 1), ("metadata.task", 1)])
     await chunks_collection.create_index("metadata.parent_id")
     await chunks_collection.create_index("metadata.created_timestamp")
-    await chunks_collection.create_index([("content", "text")])
 
     documents_collection = db.documents
-    await _drop_legacy_global_unique(documents_collection, "doc_id")
+    await _drop_legacy_document_indexes(documents_collection)
     await documents_collection.create_index([("org_id", 1), ("doc_id", 1)], unique=True)
     await documents_collection.create_index([("org_id", 1), ("source_type", 1)])
     await documents_collection.create_index([("org_id", 1), ("patient_id", 1)])
