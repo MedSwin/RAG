@@ -27,7 +27,6 @@ def _foundry_models_embedding_url() -> str:
     endpoint = (settings.AZURE_AI_FOUNDRY_ENDPOINT or "").strip().rstrip("/")
     if not endpoint:
         return ""
-    # Accept users pasting either the account root or an OpenAI-v1 URL.
     for suffix in ("/openai/v1", "/openai"):
         if endpoint.endswith(suffix):
             endpoint = endpoint[: -len(suffix)]
@@ -39,10 +38,10 @@ def _foundry_models_embedding_url() -> str:
 class EmbeddingClient:
     """Client for embedding endpoints.
 
-    In cloud mode, Cohere Embed v4 is called through Azure Foundry Models with
-    explicit query/document input types. This is important for semantic-search
-    validity: corpus chunks and search queries must not be embedded as the same
-    generic input type.
+    Full-evaluation API processes set ``CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query``
+    so every online retrieval vector is a Cohere query embedding. Corpus builders
+    must pass ``input_type=document`` explicitly. Ordinary deployments that do
+    not opt into this default preserve the provider's generic/text behavior.
     """
 
     def __init__(
@@ -78,18 +77,16 @@ class EmbeddingClient:
         """
         if not texts:
             return []
+        if settings.CLOUD_MODE and input_type is None:
+            configured_default = (os.getenv("CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE") or "").strip().lower()
+            input_type = configured_default or None
         if input_type not in {None, "query", "document", "text"}:
             raise ValueError("input_type must be query, document, text, or None")
 
-        payload = {
-            "input": texts,
-            "model": self.model,
-        }
+        payload = {"input": texts, "model": self.model}
         if settings.CLOUD_MODE:
             if input_type:
                 payload["input_type"] = input_type
-            # Keep a single vector space across indexing and retrieval. Embed v4
-            # supports 256/512/1024/1536 dimensions; MedSwin defaults to 1536.
             if settings.CLOUD_EMBEDDING_DIMENSION or self.model == "embed-v-4-0":
                 payload["dimensions"] = settings.active_embedding_dimension()
 
@@ -169,7 +166,6 @@ class EmbeddingClient:
         return await loop.run_in_executor(None, _encode)
 
     async def close(self):
-        """Close the HTTP client."""
         await self.client.aclose()
 
 
