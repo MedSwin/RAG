@@ -19,7 +19,6 @@ from app.services.storage import StorageService
 from app.services.adapters.llm import _generation_backend
 import asyncio
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -30,7 +29,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize global services
 initialize_services()
 
 
@@ -86,6 +84,26 @@ def _validate_cloud_configuration() -> None:
         raise RuntimeError("Cloud mode is missing required configuration: " + ", ".join(sorted(set(missing))))
 
 
+async def _cleanup_endpoint_runtimes() -> None:
+    """Close endpoint singletons that own HTTP clients and ANN mappings."""
+    try:
+        from app.api.v1.endpoints.naive import cleanup_naive_orchestrator
+
+        await cleanup_naive_orchestrator()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Naive RAG client cleanup failed: %s", exc)
+
+    try:
+        from app.api.v1.endpoints import medswin as medswin_endpoint
+
+        orchestrator = getattr(medswin_endpoint, "_orchestrator", None)
+        if orchestrator is not None:
+            await orchestrator.close()
+            medswin_endpoint._orchestrator = None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("MedSwin client cleanup failed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup and shutdown events."""
@@ -104,8 +122,6 @@ async def lifespan(app: FastAPI):
     if settings.CLOUD_MODE:
         _validate_cloud_configuration()
         logger.info("Cloud mode configuration validated; skipping local HF embedding/reranker load")
-        # Provider connectivity is probed by warmup-eval for strict publication
-        # runs. Ordinary startup validates configuration without consuming quota.
     else:
         try:
             logger.info("Checking and downloading models...")
@@ -159,6 +175,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         logger.info("Shutting down RAG application...")
+        await _cleanup_endpoint_runtimes()
         try:
             from app.api.v1.endpoints.storage import cleanup_storage_service
 
