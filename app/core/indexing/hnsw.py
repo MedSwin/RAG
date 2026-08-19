@@ -167,12 +167,19 @@ class HNSWIndexBuilder(BaseIndexBuilder):
             return np.array([], dtype=np.int64), np.array([], dtype=np.float32)
         requested_k = max(1, min(int(top_k), available))
 
+        # Search breadth may need to grow after the hnswlib contiguous-array/
+        # ef-too-small errors, but it must never scale with the entire index.
+        # On the complete TREC runtime ``available`` is in the millions; using
+        # it as the retry ceiling can turn one difficult query into an
+        # unbounded-memory/latency event. HNSW_MAX_EF_SEARCH is the operational
+        # ceiling, except that a caller asking for a larger k must still be
+        # allowed enough ef to satisfy that explicit request.
         ef_search = max(requested_k * 2, 50)
-        max_ef = max(settings.HNSW_MAX_EF_SEARCH, ef_search, available)
+        max_ef = max(int(settings.HNSW_MAX_EF_SEARCH), ef_search)
         last_error = None
         while ef_search <= max_ef:
             try:
-                self.index.set_ef(min(ef_search, max_ef))
+                self.index.set_ef(ef_search)
                 labels, distances = self.index.knn_query(query_embedding, k=requested_k)
                 return labels[0], distances[0]
             except RuntimeError as exc:
@@ -180,7 +187,9 @@ class HNSWIndexBuilder(BaseIndexBuilder):
                 message = str(exc).lower()
                 if "contiguous 2d array" not in message and "ef or m is too small" not in message:
                     raise
-                ef_search *= 2
+                if ef_search >= max_ef:
+                    break
+                ef_search = min(ef_search * 2, max_ef)
         raise last_error or RuntimeError("HNSW query failed")
 
     def get_index_info(self) -> Dict[str, Any]:
