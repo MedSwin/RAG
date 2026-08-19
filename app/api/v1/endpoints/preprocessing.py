@@ -59,15 +59,19 @@ def get_preprocessing_service() -> PreprocessingService:
     if _preprocessing_service is not None:
         return _preprocessing_service
     try:
-        if settings.CLOUD_MODE:
-            tokenizer = _TiktokenAdapter()
-        else:
-            tokenizer, _, _, _ = get_model_manager().get_embedding_model()
+        tokenizer = _TiktokenAdapter() if settings.CLOUD_MODE else get_model_manager().get_embedding_model()[0]
         _preprocessing_service = PreprocessingService(tokenizer)
         return _preprocessing_service
     except Exception as exc:
         logger.error("Failed to initialize preprocessing service: %s", exc)
         raise HTTPException(status_code=503, detail="Preprocessing service not available")
+
+
+def cleanup_preprocessing_service() -> None:
+    global _preprocessing_service
+    if _preprocessing_service is not None:
+        _preprocessing_service.cleanup()
+        _preprocessing_service = None
 
 
 def _stats(chunks: List[Dict[str, Any]], **extra) -> Dict[str, Any]:
@@ -108,7 +112,7 @@ async def chunk_data(request: ChunkingRequest):
 @router.post("/upload-and-chunk", response_model=ChunkingResponse)
 async def upload_and_chunk_file(
     file: UploadFile = File(...),
-    chunking_strategy: str = Form("auto"),  # preserved for API compatibility
+    chunking_strategy: str = Form("auto"),
     target_chunk_size: int = Form(settings.TARGET_CHUNK_SIZE),
 ):
     del chunking_strategy
@@ -140,8 +144,6 @@ async def upload_and_chunk_file(
         elif extension == ".json":
             frame = pd.DataFrame(json.loads(decoded))
         else:
-            # ALLOWED_FILE_TYPES may contain types supported by other upload
-            # routes; this dialogue preprocessor intentionally accepts CSV/JSON.
             raise HTTPException(status_code=400, detail="This preprocessing endpoint supports CSV or JSON")
 
         service = get_preprocessing_service()
