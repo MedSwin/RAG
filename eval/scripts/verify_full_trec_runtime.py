@@ -4,23 +4,24 @@
 This verifier is intentionally independent of the ingestion checkpoint. It
 proves that the *current persisted runtime* still represents all 1,255,260 PMC
 collection documents and that every persisted chunk is present in the active
-Cohere Embed v4 vector space, SQLite BM25 index, and HNSW index. It also verifies
-all 30 benchmark patient contexts and every positive-qrel document referenced by
-the full case file.
+Cohere Embed v4 vector space, SQLite BM25 index, and HNSW label mapping/index.
 
-A successful source-data iteration is not sufficient: deletion/corruption after
-a checkpoint must not be allowed to masquerade as a publication-complete run.
+Counts alone are insufficient: two corrupted stores can have equal row counts
+while containing different chunk IDs. The verifier therefore computes the same
+order-independent cryptographic multiset fingerprint over Mongo chunk IDs,
+BM25/FTS chunk IDs, and HNSW-mapping chunk IDs and requires all three to match.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Iterator
 
 import hnswlib
 
@@ -37,7 +38,9 @@ EXPECTED_DATASET = "pmc/v2/trec-cds-2016"
 EXPECTED_DOCS = 1_255_260
 EXPECTED_QUERIES = 30
 EXPECTED_QRELS = 37_707
+EXPECTED_EMBEDDING = "embed-v-4-0"
 MANIFEST_DIR = REPO_ROOT / "data" / "eval-warmup"
+_FINGERPRINT_MASK = (1 << 256) - 1
 
 
 def _now() -> str:
@@ -78,9 +81,6 @@ def _cases(path: Path) -> tuple[list[dict[str, Any]], set[str]]:
 
 
 def _distinct_literature_docs(coll: Any, org_id: str) -> int:
-    # Server-side grouping avoids transferring or materializing 1.25M IDs in
-    # the verification process. allowDiskUse keeps this deterministic on large
-    # Mongo installations with constrained aggregation memory.
     rows = list(
         coll.aggregate(
             [
@@ -114,29 +114,88 @@ def _distinct_case_patients(coll: Any, org_id: str) -> int:
     return int(rows[0]["count"]) if rows else 0
 
 
-def _fts_count(path: Path) -> int:
+def _fingerprint_ids(values: Iterable[str]) -> dict[str, Any]:
+    """Return an order-independent 256-bit multiset fingerprint.
+
+    XOR plus modular addition of SHA-256 digests, together with exact count,
+    makes omissions/substitutions detectable without sorting or materializing
+    millions of IDs in RAM. This is an integrity diagnostic, not a security
+    boundary; its purpose is cross-store publication reproducibility.
+    """
+    count = 0
+    xor_value = 0
+    sum_value = 0
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value:
+            raise RuntimeError("Encountered an empty chunk_id while fingerprinting full runtime")
+        digest = int.from_bytes(hashlib.sha256(value.encode("utf-8")).digest(), "big")
+        xor_value ^= digest
+        sum_value = (sum_value + digest) & _FINGERPRINT_MASK
+        count += 1
+    return {
+        "count": count,
+        "xor_sha256": f"{xor_value:064x}",
+        "sum_sha256_mod_2_256": f"{sum_value:064x}",
+    }
+
+
+def _mongo_chunk_ids(coll: Any, org_id: str, batch_size: int = 4096) -> Iterator[str]:
+    cursor = coll.find(
+        {"org_id": org_id},
+        {"_id": 0, "chunk_id": 1},
+        batch_size=batch_size,
+    )
+    for row in cursor:
+        yield str(row.get("chunk_id") or "")
+
+
+def _sqlite_chunk_ids(conn: sqlite3.Connection, table: str, batch_size: int = 8192) -> Iterator[str]:
+    cursor = conn.execute(f"SELECT chunk_id FROM {table}")
+    while True:
+        rows = cursor.fetchmany(batch_size)
+        if not rows:
+            break
+        for row in rows:
+            yield str(row[0] or "")
+
+
+def _fts_integrity(path: Path, org_id: str) -> tuple[int, dict[str, Any]]:
     if not path.exists():
         raise RuntimeError(f"BM25 FTS artifact is missing: {path}")
     conn = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True)
     try:
         count = int(conn.execute("SELECT count(*) FROM chunks_fts").fetchone()[0])
-        # Exercise the ranking function itself so a malformed/non-FTS database
-        # cannot pass merely because it has a table with the expected row count.
+        org_rows = int(conn.execute("SELECT count(*) FROM chunks_fts WHERE org_id = ?", (org_id,)).fetchone()[0])
+        if org_rows != count:
+            raise RuntimeError(f"BM25 FTS contains {count - org_rows:,} rows outside benchmark org {org_id}")
         conn.execute(
             "SELECT chunk_id, bm25(chunks_fts) FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT 1",
             ('"clinical"',),
         ).fetchall()
-        return count
+        fingerprint = _fingerprint_ids(_sqlite_chunk_ids(conn, "chunks_fts"))
+        return count, fingerprint
     finally:
         conn.close()
 
 
-def _mapping_count(path: Path) -> int:
+def _mapping_integrity(path: Path) -> tuple[int, dict[str, Any], dict[str, int | None]]:
     if not path.exists():
         raise RuntimeError(f"HNSW mapping artifact is missing: {path}")
     conn = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True)
     try:
-        return int(conn.execute("SELECT count(*) FROM mapping").fetchone()[0])
+        row = conn.execute("SELECT count(*), min(label), max(label) FROM mapping").fetchone()
+        count = int(row[0] or 0)
+        label_bounds = {
+            "min": int(row[1]) if row[1] is not None else None,
+            "max": int(row[2]) if row[2] is not None else None,
+        }
+        if count > 0 and (label_bounds["min"] != 0 or label_bounds["max"] != count - 1):
+            raise RuntimeError(
+                f"HNSW mapping labels are not contiguous 0..{count - 1}: bounds={label_bounds}"
+            )
+        fingerprint = _fingerprint_ids(_sqlite_chunk_ids(conn, "mapping"))
+        return count, fingerprint, label_bounds
     finally:
         conn.close()
 
@@ -158,16 +217,26 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
         raise RuntimeError("Full runtime manifest is not marked complete")
     if runtime.get("dataset") != EXPECTED_DATASET:
         raise RuntimeError(f"Unexpected dataset: {runtime.get('dataset')}")
+    if runtime.get("org_id") != org_id:
+        raise RuntimeError(f"Runtime manifest org {runtime.get('org_id')!r} != requested {org_id!r}")
     if int(runtime.get("expected_documents") or 0) != EXPECTED_DOCS:
         raise RuntimeError("Runtime manifest does not target the complete TREC collection")
     if int(runtime.get("queries") or 0) != EXPECTED_QUERIES:
         raise RuntimeError("Runtime manifest does not contain all 30 TREC topics")
     if int(runtime.get("qrels") or 0) != EXPECTED_QRELS:
         raise RuntimeError("Runtime manifest qrel count is incomplete")
-    if runtime.get("embedding_model") != "embed-v-4-0":
+    if runtime.get("embedding_model") != EXPECTED_EMBEDDING:
         raise RuntimeError(f"Unexpected embedding model: {runtime.get('embedding_model')}")
     if runtime.get("embedding_input_type") != "document":
         raise RuntimeError("Corpus manifest does not prove document-mode embedding")
+    if runtime.get("embedding_space") != settings.active_embedding_space():
+        raise RuntimeError(
+            f"Runtime embedding space {runtime.get('embedding_space')!r} != active {settings.active_embedding_space()!r}"
+        )
+    if int(runtime.get("embedding_dim") or 0) != settings.active_embedding_dimension():
+        raise RuntimeError("Runtime embedding dimension does not match the active evaluation dimension")
+    if runtime.get("chunking") != "app.medswin.chunking.section_chunks/full-body":
+        raise RuntimeError(f"Unexpected full-corpus chunking contract: {runtime.get('chunking')!r}")
 
     db = get_sync_database()
     coll = db["chunks"]
@@ -212,20 +281,38 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
         missing = sorted(gold_doc_ids - gold_present)
         raise RuntimeError(f"Missing {len(missing)} positive-qrel documents; sample={missing[:20]}")
 
+    mongo_fingerprint = _fingerprint_ids(_mongo_chunk_ids(coll, org_id))
+    if mongo_fingerprint["count"] != total_chunks:
+        raise RuntimeError("Mongo chunk fingerprint count changed during verification")
+
     bm25_info = runtime.get("bm25") or {}
     hnsw_info = runtime.get("hnsw") or {}
+    if bm25_info.get("backend") != "sqlite-fts5-bm25":
+        raise RuntimeError(f"Unexpected BM25 backend: {bm25_info.get('backend')!r}")
+    if hnsw_info.get("mapping_backend") != "sqlite":
+        raise RuntimeError(f"Unexpected HNSW mapping backend: {hnsw_info.get('mapping_backend')!r}")
+    if hnsw_info.get("embedding_model") != EXPECTED_EMBEDDING:
+        raise RuntimeError("HNSW manifest embedding model does not match full runtime")
+    if int(hnsw_info.get("embedding_dim") or 0) != settings.active_embedding_dimension():
+        raise RuntimeError("HNSW manifest embedding dimension does not match full runtime")
+
     fts_path = Path(str(bm25_info.get("path") or ""))
     index_path = Path(str(hnsw_info.get("index_path") or settings.HNSW_INDEX_PATH))
     mapping_path = Path(str(hnsw_info.get("mapping_path") or settings.HNSW_MAPPING_PATH))
-    fts_rows = _fts_count(fts_path)
-    mapping_rows = _mapping_count(mapping_path)
+    fts_rows, fts_fingerprint = _fts_integrity(fts_path, org_id)
+    mapping_rows, mapping_fingerprint, label_bounds = _mapping_integrity(mapping_path)
     hnsw_vectors = _hnsw_count(index_path, settings.active_embedding_dimension())
+
     if fts_rows != total_chunks:
         raise RuntimeError(f"BM25 FTS rows={fts_rows:,}, corpus chunks={total_chunks:,}")
     if mapping_rows != total_chunks:
         raise RuntimeError(f"HNSW mapping rows={mapping_rows:,}, corpus chunks={total_chunks:,}")
     if hnsw_vectors != total_chunks:
         raise RuntimeError(f"HNSW vectors={hnsw_vectors:,}, corpus chunks={total_chunks:,}")
+    if fts_fingerprint != mongo_fingerprint:
+        raise RuntimeError("BM25 FTS chunk-ID fingerprint does not match Mongo benchmark corpus")
+    if mapping_fingerprint != mongo_fingerprint:
+        raise RuntimeError("HNSW mapping chunk-ID fingerprint does not match Mongo benchmark corpus")
 
     verification = {
         "strict_pass": True,
@@ -247,9 +334,13 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
         "embedding_space": settings.active_embedding_space(),
         "embedding_dimension": settings.active_embedding_dimension(),
         "corpus_embedding_input_type": "document",
+        "chunk_id_fingerprint": mongo_fingerprint,
         "bm25_rows": fts_rows,
+        "bm25_chunk_id_fingerprint": fts_fingerprint,
         "hnsw_vectors": hnsw_vectors,
         "hnsw_mapping_rows": mapping_rows,
+        "hnsw_mapping_label_bounds": label_bounds,
+        "hnsw_mapping_chunk_id_fingerprint": mapping_fingerprint,
         "cases_path": str(cases_path.resolve()),
         "runtime_manifest": str(runtime_path.resolve()),
     }
@@ -269,9 +360,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     runtime = _load_json(MANIFEST_DIR / f"full-trec-runtime-{args.org_id}.json")
-    cases_path = Path(args.cases_path or runtime.get("cases_path") or "")
-    if not str(cases_path):
+    cases_value = args.cases_path or runtime.get("cases_path") or ""
+    if not str(cases_value).strip():
         raise RuntimeError("No full TREC cases path is configured")
+    cases_path = Path(str(cases_value))
     result = verify(args.org_id, cases_path)
     print(json.dumps(result, indent=2, default=str))
     return 0
