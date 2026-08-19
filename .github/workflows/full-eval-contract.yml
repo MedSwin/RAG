@@ -45,6 +45,14 @@ jobs:
           grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE.*query' eval/scripts/run_full_matrix.py
           grep -q 'EXPECTED_MAC_AGENTS = {"emr", "guideline", "safety", "quality", "critic"}' eval/scripts/run_full_matrix.py
           grep -q 'verify_full_trec_runtime.py' scripts/start-local.sh
+      - name: Assert benchmark isolation
+        run: |
+          grep -q '^CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=$' env.example
+          grep -q 'FULL_EVAL_DATA_DIR' env.example
+          grep -q 'full-trec-benchmark' scripts/start-local.sh
+          grep -q 'FULL_EVAL_LLM_TIMEOUT_S' scripts/start-local.sh
+          grep -q 'HNSW_MAPPING_PATH=.*hnsw_mapping.sqlite' scripts/start-local.sh
+          grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query' scripts/start-local.sh
       - name: Assert provider-safe configuration
         run: |
           grep -q 'CLOUD_EMBEDDING_URI: Optional\[str\] = None' app/core/config.py
