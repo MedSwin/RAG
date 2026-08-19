@@ -10,6 +10,7 @@ from eval.scripts.run_full_matrix import (
     _strict_naive_errors,
     _validate_local_health,
 )
+from eval.scripts.verify_full_trec_runtime import _fingerprint_ids
 
 
 def _full_response():
@@ -71,28 +72,19 @@ def test_full_contract_accepts_complete_two_stage_mac_trace():
 def test_full_contract_rejects_bm25_only_when_ann_stage_is_missing():
     trace = _full_trace()
     trace["retrieval_traces"][0]["dense_count"] = 0
-
-    errors = _strict_full_errors(_full_response(), trace)
-
-    assert "dense_ann_stage_missing" in errors
+    assert "dense_ann_stage_missing" in _strict_full_errors(_full_response(), trace)
 
 
 def test_full_contract_rejects_ann_only_when_bm25_stage_is_missing():
     trace = _full_trace()
     trace["retrieval_traces"][0]["lexical_count"] = 0
-
-    errors = _strict_full_errors(_full_response(), trace)
-
-    assert "bm25_stage_missing" in errors
+    assert "bm25_stage_missing" in _strict_full_errors(_full_response(), trace)
 
 
 def test_full_contract_rejects_reranker_fail_open_marker():
     trace = _full_trace()
     trace["rerank_traces"][0]["calibration_version"] = "identity:rerank-error"
-
-    errors = _strict_full_errors(_full_response(), trace)
-
-    assert "reranker_failed_open" in errors
+    assert "reranker_failed_open" in _strict_full_errors(_full_response(), trace)
 
 
 def test_full_contract_rejects_missing_mac_specialist():
@@ -100,10 +92,7 @@ def test_full_contract_rejects_missing_mac_specialist():
     trace["tool_calls"] = [
         item for item in trace["tool_calls"] if item.get("tool_name") != "agent.critic"
     ]
-
-    errors = _strict_full_errors(_full_response(), trace)
-
-    assert "mac_agents_missing:critic" in errors
+    assert "mac_agents_missing:critic" in _strict_full_errors(_full_response(), trace)
 
 
 def test_naive_contract_requires_ann_and_forbids_full_system_artifacts():
@@ -189,3 +178,15 @@ def test_sqlite_hnsw_label_mapping_is_lazy_and_exact(tmp_path):
         assert mapping.get("not-a-label") is None
     finally:
         mapping.close()
+
+
+def test_cross_store_fingerprint_is_order_independent_but_identity_sensitive():
+    forward = _fingerprint_ids(["chunk-a", "chunk-b", "chunk-c"])
+    reverse = _fingerprint_ids(["chunk-c", "chunk-b", "chunk-a"])
+    substituted = _fingerprint_ids(["chunk-a", "chunk-b", "chunk-x"])
+    duplicated = _fingerprint_ids(["chunk-a", "chunk-b", "chunk-b"])
+
+    assert forward == reverse
+    assert forward != substituted
+    assert forward != duplicated
+    assert forward["count"] == 3
