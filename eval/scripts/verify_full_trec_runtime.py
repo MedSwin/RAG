@@ -4,8 +4,10 @@
 This verifier is intentionally independent of the ingestion checkpoint. It
 proves that the *current persisted runtime* still represents all 1,255,260 PMC
 collection documents and all 30 benchmark EMR cases; that the MedSwin Document
-and Chunk layers agree; and that every persisted chunk is represented in the
-active Cohere Embed v4 vector space, SQLite BM25 index, and HNSW label mapping.
+and Chunk layers agree; that the runtime was built with the current chunking
+implementation/preparation contract; and that every persisted chunk is
+represented in the active Cohere Embed v4 vector space, SQLite BM25 index, and
+HNSW label mapping.
 
 Counts alone are insufficient: equal-size stores can contain different IDs. We
 therefore compute order-independent cryptographic multiset fingerprints over
@@ -32,12 +34,14 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVAL_ROOT = REPO_ROOT / "eval"
-for root in (REPO_ROOT, EVAL_ROOT):
+SCRIPTS_ROOT = EVAL_ROOT / "scripts"
+for root in (REPO_ROOT, EVAL_ROOT, SCRIPTS_ROOT):
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
 from app.core.config import settings
 from app.core.database import get_sync_database
+from prepare_full_trec_runtime import PREPARATION_CONTRACT_VERSION, _chunker_sha256
 
 EXPECTED_DATASET = "pmc/v2/trec-cds-2016"
 EXPECTED_DOCS = 1_255_260
@@ -45,6 +49,7 @@ EXPECTED_QUERIES = 30
 EXPECTED_QRELS = 37_707
 EXPECTED_EMR_DOCS = 30
 EXPECTED_EMBEDDING = "embed-v-4-0"
+EXPECTED_CHUNKING_CONTRACT = "app.medswin.chunking.section_chunks/full-body"
 MANIFEST_DIR = REPO_ROOT / "data" / "eval-warmup"
 _FINGERPRINT_MASK = (1 << 256) - 1
 
@@ -262,8 +267,6 @@ def _hnsw_vector_alignment(
             stored = np.asarray(index.get_items([label])[0], dtype=np.float32)
             similarity = _cosine(stored, np.asarray(embedding, dtype=np.float32))
             min_cosine = min(min_cosine, similarity)
-            # hnswlib normalizes stored vectors for cosine space, so cosine
-            # equivalence rather than element-wise equality is the correct check.
             if similarity < 0.9999:
                 raise RuntimeError(
                     f"HNSW label/vector alignment mismatch for label={label} chunk_id={chunk_id}: cosine={similarity:.6f}"
@@ -285,6 +288,7 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
     runtime_path = MANIFEST_DIR / f"full-trec-runtime-{org_id}.json"
     runtime = _load_json(runtime_path)
     rows, gold_doc_ids = _cases(cases_path)
+    current_chunker_sha = _chunker_sha256()
 
     if runtime.get("complete") is not True:
         raise RuntimeError("Full runtime manifest is not marked complete")
@@ -308,8 +312,14 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
         )
     if int(runtime.get("embedding_dim") or 0) != settings.active_embedding_dimension():
         raise RuntimeError("Runtime embedding dimension does not match the active evaluation dimension")
-    if runtime.get("chunking") != "app.medswin.chunking.section_chunks/full-body":
-        raise RuntimeError(f"Unexpected full-corpus chunking contract: {runtime.get('chunking')!r}")
+    if runtime.get("chunking_contract") != EXPECTED_CHUNKING_CONTRACT:
+        raise RuntimeError(f"Unexpected full-corpus chunking contract: {runtime.get('chunking_contract')!r}")
+    if runtime.get("preparation_contract_version") != PREPARATION_CONTRACT_VERSION:
+        raise RuntimeError(
+            f"Runtime preparation contract {runtime.get('preparation_contract_version')!r} != current {PREPARATION_CONTRACT_VERSION!r}"
+        )
+    if runtime.get("chunker_sha256") != current_chunker_sha:
+        raise RuntimeError("Runtime manifest was built with a different app/medswin/chunking.py revision")
 
     db = get_sync_database()
     coll = db["chunks"]
@@ -325,6 +335,21 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
         raise RuntimeError(
             f"Benchmark chunk corpus contains unsupported extra source types: total={total_chunks:,}, "
             f"LIT+EMR={lit_chunks + emr_chunks:,}"
+        )
+
+    wrong_chunk_contract = coll.count_documents(
+        {
+            "org_id": org_id,
+            "$or": [
+                {"metadata.full_trec_runtime": {"$ne": True}},
+                {"metadata.preparation_contract_version": {"$ne": PREPARATION_CONTRACT_VERSION}},
+                {"metadata.chunker_sha256": {"$ne": current_chunker_sha}},
+            ],
+        }
+    )
+    if wrong_chunk_contract:
+        raise RuntimeError(
+            f"{wrong_chunk_contract:,} benchmark chunks were created by a different preparation/chunking contract"
         )
 
     literature_docs = _distinct_count(coll, {**base, "source_type": "LIT"}, "doc_id")
@@ -425,6 +450,10 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
         raise RuntimeError("HNSW manifest embedding model does not match full runtime")
     if int(hnsw_info.get("embedding_dim") or 0) != settings.active_embedding_dimension():
         raise RuntimeError("HNSW manifest embedding dimension does not match full runtime")
+    if hnsw_info.get("preparation_contract_version") != PREPARATION_CONTRACT_VERSION:
+        raise RuntimeError("HNSW manifest preparation contract does not match the current runtime contract")
+    if hnsw_info.get("chunker_sha256") != current_chunker_sha:
+        raise RuntimeError("HNSW manifest chunker hash does not match the current runtime chunker")
 
     fts_path = Path(str(bm25_info.get("path") or ""))
     index_path = Path(str(hnsw_info.get("index_path") or settings.HNSW_INDEX_PATH))
@@ -458,6 +487,10 @@ def verify(org_id: str, cases_path: Path) -> dict[str, Any]:
         "verified_at": _now(),
         "dataset": EXPECTED_DATASET,
         "org_id": org_id,
+        "preparation_contract_version": PREPARATION_CONTRACT_VERSION,
+        "chunking_contract": EXPECTED_CHUNKING_CONTRACT,
+        "chunker_sha256": current_chunker_sha,
+        "wrong_preparation_contract_chunks": wrong_chunk_contract,
         "expected_documents": EXPECTED_DOCS,
         "persisted_literature_documents": literature_docs,
         "queries": len(rows),
