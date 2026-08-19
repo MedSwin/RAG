@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # Server settings
     APP_HOST: str = "0.0.0.0"
-    APP_PORT: int = 8100  # Changed from 8000 to avoid conflict with supervisor
+    APP_PORT: int = 8100
     HOST: str = "0.0.0.0"  # Legacy alias
     PORT: int = 8100  # Legacy alias
 
@@ -38,23 +38,26 @@ class Settings(BaseSettings):
     EMBEDDING_URL: str = "http://localhost:8005/embeddings"
 
     # Cloud mode with Azure AI Foundry
-    # `FOUNDRY_MODEL` is the canonical generation deployment. `CLOUD_MODEL` is
-    # retained as a backward-compatible alias for older .env files/callers.
     CLOUD_MODE: bool = False
     FOUNDRY_MODEL: str = "gpt-5.4"
-    CLOUD_MODEL: str = "gpt-5.4"
+    CLOUD_MODEL: str = "gpt-5.4"  # Backward-compatible alias
     CLOUD_EMBEDDING: str = "embed-v-4-0"
     CLOUD_EMBEDDING_DIMENSION: Optional[int] = None
     CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE: Optional[str] = None
     CLOUD_RERANKER: str = "Cohere-rerank-v4.0-fast"
     AZURE_AI_FOUNDRY_ENDPOINT: Optional[str] = None
     AZURE_AI_FOUNDRY_API_KEY: Optional[str] = None
-    # Provider-specific overrides are optional. Leaving them blank derives the
-    # correct routes from AZURE_AI_FOUNDRY_ENDPOINT and avoids embedding a
-    # project/account-specific endpoint in source control.
     CLOUD_EMBEDDING_URI: Optional[str] = None
     CLOUD_RERANKER_URI: Optional[str] = None
     CLOUD_MODEL_INFERENCE_API_VERSION: str = "2024-05-01-preview"
+
+    # Generation backend. Retrieval may stay cloud-backed while generation is
+    # switched between Azure Foundry GPT-5.4 and the local MedSwin 7B server.
+    GENERATION_BACKEND: Optional[str] = None
+    MEDSWIN_MODEL_REPO: str = "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
+    MEDSWIN_MODEL_PATH: str = "./models/MedSwin-DaRE-TIES-KD-0.7"
+    MEDSWIN_LLM_MODEL: str = "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
+    MEDSWIN_LLM_URL: str = "http://127.0.0.1:8000/v1/chat/completions"
 
     # Service timeouts
     LLM_TIMEOUT_S: int = 60
@@ -83,7 +86,6 @@ class Settings(BaseSettings):
 
     # Retrieval settings
     DEFAULT_TOP_K: int = 5
-    # Naive-RAG baseline: dense top-K only (no BM25, rerank, MAC, or gate)
     NAIVE_TOP_K: int = 5
     NAIVE_MAX_CONTEXT_CHARS: int = 8000
     NAIVE_ENABLE_MONGO_FALLBACK: bool = True
@@ -96,7 +98,7 @@ class Settings(BaseSettings):
     DEFAULT_INDEX_TYPE: str = "hnsw"
     INDEX_STRATEGY_MODE: str = "dynamic"
 
-    # Legacy retrieval settings (for backward compatibility)
+    # Legacy retrieval settings
     MAX_TOP_K: int = 20
     RERANK_TOP_K: int = 10
     FINAL_TOP_K: int = 3
@@ -119,7 +121,7 @@ class Settings(BaseSettings):
     AUTH_JWT_SECRET: Optional[str] = None
     AUTH_JWT_ALGORITHM: str = "HS256"
 
-    # Fusion score weights (must sum to 1.0)
+    # Fusion score weights
     W_RERANK: float = 0.45
     W_DENSE: float = 0.25
     W_LEX: float = 0.10
@@ -166,7 +168,7 @@ class Settings(BaseSettings):
     BATCH_SIZE: int = 64
 
     # File upload settings
-    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
+    MAX_FILE_SIZE: int = 100 * 1024 * 1024
     ALLOWED_FILE_TYPES: List[str] = [".csv", ".json", ".txt", ".pdf"]
 
     # Cloud embedding batch control
@@ -180,7 +182,7 @@ class Settings(BaseSettings):
     # Hugging Face settings
     HF_TOKEN: Optional[str] = None
 
-    # AWS settings (for EC2 deployment)
+    # AWS settings
     AWS_REGION: str = "us-east-1"
     EC2_INSTANCE_TYPE: str = "g4dn.xlarge"
 
@@ -272,38 +274,28 @@ class Settings(BaseSettings):
         if self.CLOUD_MODE:
             if self.CLOUD_EMBEDDING_DIMENSION:
                 return self.CLOUD_EMBEDDING_DIMENSION
-            known_cloud_dims = {
-                "embed-v-4-0": 1536,
-            }
+            known_cloud_dims = {"embed-v-4-0": 1536}
             return known_cloud_dims.get(self.CLOUD_EMBEDDING, self.EMBEDDING_DIMENSION)
         return self.EMBEDDING_DIMENSION
 
 
 def _path_is_under_app_root(path_value: str) -> bool:
-    """Return True when a configured path targets the Docker /app tree."""
     return path_value.startswith("/app/")
 
 
 def _local_runtime_path(path_value: str) -> str:
-    """Map a Docker-only /app path to the equivalent local workspace path."""
     return "." + path_value[4:]
 
 
 def _normalize_runtime_paths(settings: Settings) -> None:
-    """Keep Docker defaults portable in local dev.
-
-    Root Cause vs Logic: the repo ships Docker-oriented defaults under /app,
-    but local imports run from the checkout and cannot create directories in
-    that read-only filesystem. We preserve the same relative layout while
-    rewriting only the /app paths to local workspace equivalents outside
-    containers.
-    """
+    """Keep Docker defaults portable in local dev."""
     if os.access("/app", os.W_OK):
         return
 
     path_fields = [
         "EMBEDDING_MODEL_PATH",
         "RERANKER_MODEL_PATH",
+        "MEDSWIN_MODEL_PATH",
         "HNSW_INDEX_PATH",
         "HNSW_MAPPING_PATH",
         "FAISS_INDEX_PATH",
@@ -313,18 +305,15 @@ def _normalize_runtime_paths(settings: Settings) -> None:
         "DATA_DIR",
         "LOG_FILE",
     ]
-
     for field_name in path_fields:
         current_value = getattr(settings, field_name)
         if isinstance(current_value, str) and _path_is_under_app_root(current_value):
             setattr(settings, field_name, _local_runtime_path(current_value))
 
 
-# Create settings instance
 settings = Settings()
 _normalize_runtime_paths(settings)
 
-# Validate fusion weights on startup
 if not settings.validate_fusion_weights():
     import warnings
 
@@ -343,12 +332,12 @@ def ensure_directories():
         Path(settings.DATA_DIR),
         Path(settings.EMBEDDING_MODEL_PATH).parent,
         Path(settings.RERANKER_MODEL_PATH).parent,
+        Path(settings.MEDSWIN_MODEL_PATH).parent,
         Path(settings.LOG_FILE).parent,
         Path("./models"),
         Path("./data"),
         Path("./logs"),
     ]
-
     for directory in directories:
         try:
             directory.mkdir(parents=True, exist_ok=True)
@@ -358,5 +347,4 @@ def ensure_directories():
             warnings.warn(f"Could not create configured directory {directory}: {exc}")
 
 
-# Initialize directories
 ensure_directories()
