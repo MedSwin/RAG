@@ -15,6 +15,7 @@ envelope to both MedSwin and GPT-5.4.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import uuid
@@ -72,6 +73,19 @@ class ChatResponse(BaseModel):
     prompt_truncated: bool = False
 
 
+def _snapshot_revision() -> str:
+    marker = MODEL_PATH / ".medswin_snapshot.json"
+    if not marker.exists():
+        return ""
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if payload.get("model_id") != MODEL_ID:
+        return ""
+    return str(payload.get("revision") or "").strip()
+
+
 def _load() -> tuple[Any, Any, Any]:
     global _tokenizer, _model, _device
     if _model is not None:
@@ -79,6 +93,11 @@ def _load() -> tuple[Any, Any, Any]:
     if not MODEL_PATH.exists():
         raise RuntimeError(
             f"MedSwin model is missing at {MODEL_PATH}; run scripts/warmup-eval.py first"
+        )
+    if not _snapshot_revision():
+        raise RuntimeError(
+            f"MedSwin snapshot revision marker is missing/invalid at {MODEL_PATH}; "
+            "run scripts/warmup-eval.py so the publication model revision is pinned"
         )
 
     _tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
@@ -138,6 +157,7 @@ async def health() -> dict[str, Any]:
     return {
         "status": "healthy",
         "model": MODEL_ID,
+        "model_revision": _snapshot_revision(),
         "model_path": str(MODEL_PATH),
         "device": str(device),
         "vocab_size": getattr(tokenizer, "vocab_size", None),
