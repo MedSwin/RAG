@@ -33,8 +33,22 @@ jobs:
           test -f scripts/warmup-eval.py
           test -f scripts/serve-medswin-llm.py
           test -f eval/scripts/prepare_full_trec_runtime.py
+          test -f eval/scripts/verify_full_trec_runtime.py
           test -f eval/scripts/run_full_matrix.py
+          test -f eval/FULL_EVALUATION.md
+          grep -q 'EXPECTED_DOCS = 1_255_260' scripts/warmup-eval.py
           grep -q 'EXPECTED_DOCS = 1_255_260' eval/scripts/prepare_full_trec_runtime.py
+          grep -q 'EXPECTED_DOCS = 1_255_260' eval/scripts/verify_full_trec_runtime.py
           grep -q 'EXPECTED_QUERIES = 30' eval/scripts/run_full_matrix.py
+          grep -q 'EXPECTED_QRELS = 37_707' eval/scripts/verify_full_trec_runtime.py
           grep -q 'input_type="document"' eval/scripts/prepare_full_trec_runtime.py
           grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE.*query' eval/scripts/run_full_matrix.py
+          grep -q 'EXPECTED_MAC_AGENTS = {"emr", "guideline", "safety", "quality", "critic"}' eval/scripts/run_full_matrix.py
+          grep -q 'verify_full_trec_runtime.py' scripts/start-local.sh
+      - name: Assert provider-safe configuration
+        run: |
+          grep -q 'CLOUD_EMBEDDING_URI: Optional\[str\] = None' app/core/config.py
+          grep -q 'CLOUD_RERANKER_URI: Optional\[str\] = None' app/core/config.py
+          grep -q 'providers/cohere/v2/rerank' app/core/config.py
+          grep -q 'Authorization.*Bearer' app/services/adapters/reranker.py
+          ! grep -q 'parth-pandya' app/core/config.py
