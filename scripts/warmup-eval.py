@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Idempotent MedSwin evaluation warmup.
+"""Idempotent MedSwin publication-evaluation warmup.
 
 Warmup invariants:
 1. The exact MedSwin generator snapshot is present locally and pinned to a
    concrete Hugging Face revision.
 2. The complete ir_datasets TREC-CDS 2016 PMC corpus has been materialized and
-   counted (not a judged pool or reservoir sample).
-3. Azure Foundry chat, Cohere Embed v4, and Cohere Rerank v4 deployments are
-   live through the same adapters used by the runtime.
+   exact-count verified (not a judged pool or reservoir sample).
+3. The exact requested Azure Foundry GPT, Cohere Embed v4, and Cohere Rerank v4
+   deployments are live through the same adapters used by the runtime.
 
-The script writes machine-readable manifests under data/eval-warmup so later
-full-corpus preparation can fail fast instead of silently running a smoke setup.
+The script writes machine-readable manifests under ``data/eval-warmup``. Every
+probe is fail-closed: a non-empty-but-wrong GPT response, wrong model identity,
+wrong embedding dimension, malformed rerank result, or incomplete corpus does
+not count as a successful warmup.
 """
 
 from __future__ import annotations
@@ -28,6 +30,10 @@ EXPECTED_TREC_QUERIES = 30
 EXPECTED_TREC_QRELS = 37_707
 DEFAULT_DATASET = "pmc/v2/trec-cds-2016"
 DEFAULT_MODEL_ID = "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
+EXPECTED_FOUNDRY_MODEL = "gpt-5.4"
+EXPECTED_EMBEDDING_MODEL = "embed-v-4-0"
+EXPECTED_RERANKER_MODEL = "Cohere-rerank-v4.0-fast"
+FOUNDRY_PROBE_MARKER = "MEDSWIN_FOUNDRY_OK"
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_DIR = ROOT / "data" / "eval-warmup"
 
@@ -49,7 +55,14 @@ def _weight_files(target: Path) -> list[str]:
 
 
 def warm_model(model_id: str, target: Path, force: bool) -> dict[str, Any]:
+    """Materialize and pin the exact local MedSwin generator snapshot."""
     from huggingface_hub import HfApi, snapshot_download
+
+    if model_id != DEFAULT_MODEL_ID:
+        raise RuntimeError(
+            f"Publication warmup requires {DEFAULT_MODEL_ID}; got {model_id}. "
+            "Use a separate experiment profile for other generator models."
+        )
 
     target.mkdir(parents=True, exist_ok=True)
     marker = target / ".medswin_snapshot.json"
@@ -57,8 +70,9 @@ def warm_model(model_id: str, target: Path, force: bool) -> dict[str, Any]:
         cached = json.loads(marker.read_text(encoding="utf-8"))
         cached_weights = _weight_files(target)
         if (
-            cached.get("model_id") == model_id
-            and cached.get("revision")
+            cached.get("complete") is True
+            and cached.get("model_id") == model_id
+            and str(cached.get("revision") or "").strip()
             and (target / "config.json").exists()
             and cached_weights
         ):
@@ -101,13 +115,18 @@ def warm_model(model_id: str, target: Path, force: bool) -> dict[str, Any]:
 
 
 def warm_trec(dataset_name: str, force: bool) -> dict[str, Any]:
+    """Materialize and exact-count verify the complete TREC-CDS 2016 collection."""
     import ir_datasets
+
+    if dataset_name != DEFAULT_DATASET:
+        raise RuntimeError(f"Publication warmup requires {DEFAULT_DATASET}; got {dataset_name}")
 
     marker = MANIFEST_DIR / "trec-cds-2016-materialized.json"
     if marker.exists() and not force:
         cached = json.loads(marker.read_text(encoding="utf-8"))
         if (
-            cached.get("dataset") == dataset_name
+            cached.get("complete") is True
+            and cached.get("dataset") == dataset_name
             and cached.get("docs") == EXPECTED_TREC_DOCS
             and cached.get("queries") == EXPECTED_TREC_QUERIES
             and cached.get("qrels") == EXPECTED_TREC_QRELS
@@ -124,7 +143,7 @@ def warm_trec(dataset_name: str, force: bool) -> dict[str, Any]:
         raise RuntimeError(f"Expected {EXPECTED_TREC_QRELS} TREC qrels, found {qrel_count}")
 
     # Iterating the complete collection forces ir_datasets to download/cache the
-    # PMC v2 collection and proves that every advertised document is readable.
+    # PMC v2 collection and proves every advertised collection member is readable.
     doc_count = 0
     for doc_count, _doc in enumerate(dataset.docs_iter(), start=1):
         if doc_count % 25_000 == 0:
@@ -146,6 +165,7 @@ def warm_trec(dataset_name: str, force: bool) -> dict[str, Any]:
 
 
 async def warm_foundry() -> dict[str, Any]:
+    """Probe the exact requested Foundry services through production adapters."""
     from app.core.config import settings
     from app.services.adapters.embedding import EmbeddingClient
     from app.services.adapters.llm import LLMClient
@@ -158,9 +178,15 @@ async def warm_foundry() -> dict[str, Any]:
             "AZURE_AI_FOUNDRY_ENDPOINT and AZURE_AI_FOUNDRY_API_KEY are required for evaluation warmup"
         )
 
-    foundry_model = os.getenv("FOUNDRY_MODEL") or settings.FOUNDRY_MODEL or settings.CLOUD_MODEL or "gpt-5.4"
+    foundry_model = os.getenv("FOUNDRY_MODEL") or settings.FOUNDRY_MODEL or settings.CLOUD_MODEL
     expected_embedding = os.getenv("CLOUD_EMBEDDING") or settings.CLOUD_EMBEDDING
     expected_reranker = os.getenv("CLOUD_RERANKER") or settings.CLOUD_RERANKER
+    if foundry_model != EXPECTED_FOUNDRY_MODEL:
+        raise RuntimeError(f"Expected FOUNDRY_MODEL={EXPECTED_FOUNDRY_MODEL}; got {foundry_model}")
+    if expected_embedding != EXPECTED_EMBEDDING_MODEL:
+        raise RuntimeError(f"Expected CLOUD_EMBEDDING={EXPECTED_EMBEDDING_MODEL}; got {expected_embedding}")
+    if expected_reranker != EXPECTED_RERANKER_MODEL:
+        raise RuntimeError(f"Expected CLOUD_RERANKER={EXPECTED_RERANKER_MODEL}; got {expected_reranker}")
 
     embedding = EmbeddingClient(settings.active_embedding_url(), model=expected_embedding, api_key=api_key)
     reranker = RerankerClient(settings.active_reranker_url(), model=expected_reranker, api_key=api_key)
@@ -169,9 +195,9 @@ async def warm_foundry() -> dict[str, Any]:
     os.environ["GENERATION_BACKEND"] = "foundry"
     llm = LLMClient(settings.cloud_chat_url(), model=foundry_model, api_key=api_key)
     try:
-        # Both semantic intents are mandatory evaluation prerequisites. This
-        # catches endpoint-schema/authentication mismatches before the first of
-        # millions of corpus embeddings is requested.
+        # Both semantic intents are mandatory: corpus chunks use document mode,
+        # while online retrieval uses query mode. A route that only supports one
+        # of them cannot be certified for the complete evaluation.
         query_vec = (await embedding.embed(["aspirin myocardial infarction"], input_type="query"))[0]
         doc_vec = (await embedding.embed(["Aspirin reduces platelet aggregation."], input_type="document"))[0]
         expected_dim = settings.active_embedding_dimension()
@@ -186,20 +212,24 @@ async def warm_foundry() -> dict[str, Any]:
             "aspirin antiplatelet therapy",
             ["Aspirin inhibits platelet aggregation.", "The moon orbits Earth."],
         )
-        if len(ranks) != 2 or {item.get("index") for item in ranks} != {0, 1}:
+        if len(ranks) != 2 or {int(item.get("index", -1)) for item in ranks} != {0, 1}:
             raise RuntimeError("Cohere reranker warmup returned an invalid result set")
-        if int(ranks[0].get("index") or 0) != 0:
+        if int(ranks[0].get("index", -1)) != 0:
             raise RuntimeError("Cohere reranker warmup did not rank the clinically relevant passage first")
-        if float(ranks[0].get("score") or 0.0) == float(ranks[1].get("score") or 0.0):
-            raise RuntimeError("Cohere reranker warmup returned indistinguishable scores")
+        if float(ranks[0].get("score") or 0.0) <= float(ranks[1].get("score") or 0.0):
+            raise RuntimeError("Cohere reranker warmup did not assign a strictly higher relevant-passage score")
 
         completion = await llm.call_llm(
-            [{"role": "user", "content": "Reply with exactly: MEDSWIN_FOUNDRY_OK"}],
+            [{"role": "user", "content": f"Reply with exactly: {FOUNDRY_PROBE_MARKER}"}],
             max_tokens=32,
             temperature=0.0,
         )
-        if not completion.get("content"):
-            raise RuntimeError("Foundry GPT warmup returned empty content")
+        completion_text = str(completion.get("content") or "").strip()
+        if completion_text != FOUNDRY_PROBE_MARKER:
+            raise RuntimeError(
+                f"Foundry GPT identity/behavior probe returned {completion_text!r}; "
+                f"expected exactly {FOUNDRY_PROBE_MARKER!r}"
+            )
     finally:
         await embedding.close()
         await reranker.close()
@@ -212,12 +242,16 @@ async def warm_foundry() -> dict[str, Any]:
     payload = {
         "endpoint_host": endpoint.split("//", 1)[-1].split("/", 1)[0],
         "foundry_model": foundry_model,
+        "foundry_probe_marker": FOUNDRY_PROBE_MARKER,
+        "foundry_probe_exact": True,
         "embedding_model": expected_embedding,
         "embedding_dimension": expected_dim,
         "embedding_protocol": embedding.protocol,
+        "embedding_auth_scheme": os.getenv("CLOUD_EMBEDDING_AUTH_SCHEME", "bearer"),
         "embedding_input_types_verified": ["query", "document"],
         "embedding_uri_host": embedding.base_url.split("//", 1)[-1].split("/", 1)[0],
         "reranker_model": expected_reranker,
+        "reranker_auth_scheme": os.getenv("CLOUD_RERANKER_AUTH_SCHEME", "bearer"),
         "reranker_uri_host": reranker.base_url.split("//", 1)[-1].split("/", 1)[0],
         "complete": True,
         "completed_at": datetime.now(timezone.utc).isoformat(),
