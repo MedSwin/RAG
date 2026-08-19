@@ -2,7 +2,8 @@
 """Idempotent MedSwin evaluation warmup.
 
 Warmup invariants:
-1. The exact MedSwin generator snapshot is present locally.
+1. The exact MedSwin generator snapshot is present locally and pinned to a
+   concrete Hugging Face revision.
 2. The complete ir_datasets TREC-CDS 2016 PMC corpus has been materialized and
    counted (not a judged pool or reservoir sample).
 3. Azure Foundry chat, Cohere Embed v4, and Cohere Rerank v4 deployments are
@@ -38,38 +39,64 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     temp.replace(path)
 
 
+def _weight_files(target: Path) -> list[str]:
+    return sorted(
+        str(path.relative_to(target))
+        for pattern in ("*.safetensors", "*.bin")
+        for path in target.rglob(pattern)
+        if path.is_file()
+    )
+
+
 def warm_model(model_id: str, target: Path, force: bool) -> dict[str, Any]:
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import HfApi, snapshot_download
 
     target.mkdir(parents=True, exist_ok=True)
     marker = target / ".medswin_snapshot.json"
     if marker.exists() and not force:
         cached = json.loads(marker.read_text(encoding="utf-8"))
-        if cached.get("model_id") == model_id and (target / "config.json").exists():
-            print(f"[warmup] MedSwin model ready: {target}")
+        cached_weights = _weight_files(target)
+        if (
+            cached.get("model_id") == model_id
+            and cached.get("revision")
+            and (target / "config.json").exists()
+            and cached_weights
+        ):
+            cached["weight_file_count"] = len(cached_weights)
+            print(
+                f"[warmup] MedSwin model ready: {target} "
+                f"revision={cached.get('revision')} weights={len(cached_weights)}"
+            )
             return cached
 
+    token = os.getenv("HF_TOKEN") or None
+    model_info = HfApi(token=token).model_info(model_id)
+    revision = str(model_info.sha or "").strip()
+    if not revision:
+        raise RuntimeError(f"Hugging Face did not return a concrete revision for {model_id}")
     resolved = snapshot_download(
         repo_id=model_id,
+        revision=revision,
         local_dir=str(target),
-        token=os.getenv("HF_TOKEN") or None,
+        token=token,
     )
-    weight_files = sorted(
-        str(path.relative_to(target))
-        for pattern in ("*.safetensors", "*.bin")
-        for path in target.rglob(pattern)
-    )
+    weight_files = _weight_files(target)
     if not (target / "config.json").exists() or not weight_files:
         raise RuntimeError(f"Hugging Face snapshot at {target} is incomplete")
     payload = {
         "model_id": model_id,
+        "revision": revision,
         "target": str(target),
         "resolved_path": str(resolved),
         "weight_file_count": len(weight_files),
+        "complete": True,
         "completed_at": datetime.now(timezone.utc).isoformat(),
     }
     _write_json(marker, payload)
-    print(f"[warmup] MedSwin model materialized: {target} ({len(weight_files)} weight files)")
+    print(
+        f"[warmup] MedSwin model materialized: {target} "
+        f"revision={revision} ({len(weight_files)} weight files)"
+    )
     return payload
 
 
@@ -161,6 +188,8 @@ async def warm_foundry() -> dict[str, Any]:
         )
         if len(ranks) != 2 or {item.get("index") for item in ranks} != {0, 1}:
             raise RuntimeError("Cohere reranker warmup returned an invalid result set")
+        if int(ranks[0].get("index") or 0) != 0:
+            raise RuntimeError("Cohere reranker warmup did not rank the clinically relevant passage first")
         if float(ranks[0].get("score") or 0.0) == float(ranks[1].get("score") or 0.0):
             raise RuntimeError("Cohere reranker warmup returned indistinguishable scores")
 
