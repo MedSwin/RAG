@@ -1,450 +1,256 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
-import logging
-import json
-import numpy as np
-from pathlib import Path
+"""Tenant-scoped retrieval API backed by the production MedSwin adapters."""
 
-from app.core.state import get_model_manager
+from __future__ import annotations
+
+import logging
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
+
 from app.core.config import settings
-from app.core.database import get_sync_database
-from app.core.indexing import (
-    HNSWIndexBuilder,
-    FAISSIndexBuilder,
-    TreeIndexBuilder,
-    load_hnsw_index,
-    load_faiss_ivf_index,
-    load_tree_index
-)
-from app.services.strategy import (
-    IndexStrategyManager,
-    IndexStrategy,
-    analyze_query_characteristics
-)
+from app.core.indexing.hnsw import HNSWIndexBuilder
+from app.retrieval.dense import DenseRetriever
+from app.schemas.enums import SourceType
+from app.schemas.evidence import CandidatePassage
+from app.services.adapters.embedding import EmbeddingClient
+from app.services.adapters.reranker import RerankerClient
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
 class QueryRequest(BaseModel):
-    """Request model for document retrieval."""
-    query: str
+    query: str = Field(min_length=1)
+    org_id: str = Field(min_length=1)
+    patient_id: Optional[str] = None
     top_k: Optional[int] = None
     use_reranking: bool = True
     initial_top_k: Optional[int] = None
     final_top_k: Optional[int] = None
+    source_type: Optional[SourceType] = None
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+
 
 class DocumentResponse(BaseModel):
-    """Response model for retrieved documents."""
     chunk_id: str
+    doc_id: str
+    source_type: str
     content: str
     metadata: Dict[str, Any]
     distance: float
     rerank_score: Optional[float] = None
-    # QCA format fields
     question: Optional[str] = None
     context: Optional[str] = None
     answer: Optional[str] = None
 
+
 class RetrievalResponse(BaseModel):
-    """Response model for retrieval results."""
     query: str
+    org_id: str
     documents: List[DocumentResponse]
     total_documents: int
     retrieval_time: float
     used_reranking: bool
 
+
 class IndexInfo(BaseModel):
-    """Model for index information."""
     index_path: str
     mapping_path: str
     dimension: int
     total_vectors: int
     index_type: str
+    mapping_backend: str
 
-def get_embedding_model():
-    """Dependency to get embedding model."""
+
+def _to_response(passage: CandidatePassage) -> DocumentResponse:
+    qca = _extract_qca_from_text(passage.text, passage.metadata or {})
+    # DenseRetriever exposes cosine-like relevance, while the historical API
+    # called the field distance. Preserve the response field but return a
+    # distance-like value so old clients still sort ascending if they need to.
+    dense_score = float(passage.dense_score or 0.0)
+    distance = max(0.0, 1.0 - dense_score)
+    return DocumentResponse(
+        chunk_id=passage.chunk_id,
+        doc_id=passage.doc_id,
+        source_type=passage.source_type.value,
+        content=passage.text,
+        metadata=passage.metadata or {},
+        distance=distance,
+        rerank_score=passage.rerank_score,
+        question=qca.get("question"),
+        context=qca.get("context"),
+        answer=qca.get("answer"),
+    )
+
+
+async def _search(request: QueryRequest) -> RetrievalResponse:
+    started = time.perf_counter()
+    top_k = max(1, min(int(request.top_k or settings.DEFAULT_TOP_K), settings.MAX_TOP_K))
+    initial_top_k = max(
+        top_k,
+        min(int(request.initial_top_k or settings.RERANK_TOP_K), settings.MAX_TOP_K),
+    )
+    final_top_k = max(1, min(int(request.final_top_k or settings.FINAL_TOP_K), top_k))
+
+    embedding_client = EmbeddingClient(settings.active_embedding_url())
+    reranker_client = RerankerClient(settings.active_reranker_url()) if request.use_reranking else None
     try:
-        return get_model_manager().get_embedding_model()
-    except Exception as e:
-        logger.error(f"Failed to get embedding model: {e}")
-        raise HTTPException(status_code=503, detail="Embedding model not available")
-
-def get_reranker_model():
-    """Dependency to get reranker model."""
-    return get_model_manager().get_reranker_model()
-
-@router.post("/search", response_model=RetrievalResponse)
-async def search_documents(
-    request: QueryRequest,
-    embedding_model = Depends(get_embedding_model),
-    reranker_model = Depends(get_reranker_model)
-):
-    """Search for relevant documents."""
-    import time
-    start_time = time.time()
-    
-    try:
-        # Set parameters
-        top_k = request.top_k or settings.DEFAULT_TOP_K
-        top_k = min(top_k, settings.MAX_TOP_K)
-        
-        initial_top_k = request.initial_top_k or settings.RERANK_TOP_K
-        final_top_k = request.final_top_k or settings.FINAL_TOP_K
-        
-        # Get embedding model components
-        tokenizer, embed_model, device, embedding_dim = embedding_model
-        
-        # Generate query embedding
-        query_embedding = await _embed_query(
-            request.query, 
-            tokenizer, 
-            embed_model, 
-            device
+        vectors = await embedding_client.embed(
+            [request.query],
+            input_type="query" if settings.CLOUD_MODE else None,
         )
-        
-        # Select index strategy based on query characteristics
-        strategy_manager = IndexStrategyManager()
-        query_char = analyze_query_characteristics(
-            request.query,
-            top_k,
-            request.use_reranking
+        if not vectors:
+            raise RuntimeError("Embedding service returned no query vector")
+
+        dense = DenseRetriever()
+        candidates = await dense.retrieve(
+            vectors[0],
+            request.org_id,
+            initial_top_k if request.use_reranking else top_k,
+            request.source_type,
+            request.patient_id,
+            request.constraints,
         )
-        strategy = strategy_manager.select_retrieval_strategy(query_char)
-        
-        # Load appropriate index
-        index = await _load_index(embedding_dim, strategy)
-        
-        # Retrieve documents
-        if request.use_reranking and reranker_model:
-            # Use reranking
-            documents = await _retrieve_with_reranking(
-                query_embedding,
+
+        used_reranking = False
+        if request.use_reranking and reranker_client and candidates:
+            results = await reranker_client.rerank(
                 request.query,
-                index,
-                reranker_model,
-                initial_top_k,
-                final_top_k
+                [candidate.text for candidate in candidates],
+                return_logits=True,
             )
-            used_reranking = True
+            scored: List[CandidatePassage] = []
+            for result in results:
+                index = int(result.get("index", -1))
+                if index < 0 or index >= len(candidates):
+                    continue
+                candidate = candidates[index]
+                score = float(result.get("p_hat", result.get("relevance_score", 0.0)) or 0.0)
+                candidate.rerank_score = score
+                candidate.calibrated_score = score
+                scored.append(candidate)
+            if scored:
+                scored.sort(key=lambda item: item.rerank_score or 0.0, reverse=True)
+                candidates = scored[:final_top_k]
+                used_reranking = True
+            else:
+                # Do not silently claim reranking if the provider returned no
+                # usable results. A caller requested this stage explicitly.
+                raise RuntimeError("Reranker returned no usable ranked candidates")
         else:
-            # Use simple retrieval
-            documents = await _retrieve_simple(
-                query_embedding,
-                index,
-                top_k
-            )
-            used_reranking = False
-        
-        retrieval_time = time.time() - start_time
-        
+            candidates = candidates[:top_k]
+
+        documents = [_to_response(candidate) for candidate in candidates]
         return RetrievalResponse(
             query=request.query,
+            org_id=request.org_id,
             documents=documents,
             total_documents=len(documents),
-            retrieval_time=retrieval_time,
-            used_reranking=used_reranking
+            retrieval_time=time.perf_counter() - started,
+            used_reranking=used_reranking,
         )
-        
-    except Exception as e:
-        logger.error(f"Error searching documents: {e}")
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+    finally:
+        await embedding_client.close()
+        if reranker_client is not None:
+            await reranker_client.close()
+
+
+@router.post("/search", response_model=RetrievalResponse)
+async def search_documents(request: QueryRequest):
+    """Search one organization's active ANN corpus and optionally rerank it."""
+    try:
+        return await _search(request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Retrieval search failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Search failed: {exc}")
+
 
 @router.get("/search", response_model=RetrievalResponse)
 async def search_documents_get(
-    query: str = Query(..., description="Search query"),
+    query: str = Query(..., min_length=1),
+    org_id: str = Query(..., min_length=1),
+    patient_id: Optional[str] = Query(None),
     top_k: int = Query(settings.DEFAULT_TOP_K, ge=1, le=settings.MAX_TOP_K),
-    use_reranking: bool = Query(True, description="Use reranking"),
-    initial_top_k: int = Query(settings.RERANK_TOP_K, ge=1, le=50),
-    final_top_k: int = Query(settings.FINAL_TOP_K, ge=1, le=20),
-    embedding_model = Depends(get_embedding_model),
-    reranker_model = Depends(get_reranker_model)
+    use_reranking: bool = Query(True),
+    initial_top_k: int = Query(settings.RERANK_TOP_K, ge=1, le=settings.MAX_TOP_K),
+    final_top_k: int = Query(settings.FINAL_TOP_K, ge=1, le=settings.MAX_TOP_K),
+    source_type: Optional[SourceType] = Query(None),
 ):
-    """Search for relevant documents using GET method."""
-    request = QueryRequest(
-        query=query,
-        top_k=top_k,
-        use_reranking=use_reranking,
-        initial_top_k=initial_top_k,
-        final_top_k=final_top_k
+    return await search_documents(
+        QueryRequest(
+            query=query,
+            org_id=org_id,
+            patient_id=patient_id,
+            top_k=top_k,
+            use_reranking=use_reranking,
+            initial_top_k=initial_top_k,
+            final_top_k=final_top_k,
+            source_type=source_type,
+        )
     )
-    
-    return await search_documents(request, embedding_model, reranker_model)
+
 
 @router.get("/index/info", response_model=IndexInfo)
 async def get_index_info():
-    """Get information about the HNSW index."""
+    """Read the active HNSW artifact using JSON or SQLite label mappings."""
+    index_path = Path(settings.HNSW_INDEX_PATH)
+    mapping_path = Path(settings.HNSW_MAPPING_PATH)
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="HNSW index not found")
+    if not mapping_path.exists():
+        raise HTTPException(status_code=404, detail="HNSW mapping not found")
+
+    builder = HNSWIndexBuilder(settings.active_embedding_dimension())
     try:
-        index_path = Path(settings.HNSW_INDEX_PATH)
-        mapping_path = Path(settings.HNSW_MAPPING_PATH)
-        
-        if not index_path.exists():
-            raise HTTPException(status_code=404, detail="HNSW index not found")
-        
-        if not mapping_path.exists():
-            raise HTTPException(status_code=404, detail="HNSW mapping not found")
-        
-        # Load mapping to get total vectors
-        with open(mapping_path, 'r') as f:
-            mapping = json.load(f)
-        
-        # Get embedding dimension from model
-        try:
-            _, _, _, embedding_dim = get_model_manager().get_embedding_model()
-        except:
-            embedding_dim = settings.EMBEDDING_DIMENSION
-        
+        if not builder.load(str(index_path), str(mapping_path)):
+            raise RuntimeError("Failed to load HNSW index")
+        info = builder.get_index_info()
         return IndexInfo(
             index_path=str(index_path),
             mapping_path=str(mapping_path),
-            dimension=embedding_dim,
-            total_vectors=len(mapping),
-            index_type="HNSW"
+            dimension=int(info["dimension"]),
+            total_vectors=int(info["total_vectors"]),
+            index_type="HNSW",
+            mapping_backend=str(info.get("mapping_backend") or "unknown"),
         )
-        
-    except Exception as e:
-        logger.error(f"Error getting index info: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get index info: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to read index info: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get index info: {exc}")
+    finally:
+        if hasattr(builder.mapping, "close"):
+            builder.mapping.close()
 
-async def _embed_query(query: str, tokenizer, embed_model, device) -> np.ndarray:
-    """Embed a query string."""
-    import torch
-    import torch.nn.functional as F
-    
-    inputs = tokenizer(
-        [query],
-        truncation=True,
-        padding=True,
-        max_length=settings.MAX_SEQUENCE_LENGTH,
-        return_tensors="pt"
-    )
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-    
-    with torch.no_grad():
-        outputs = embed_model(**inputs)
-        attention_mask = inputs['attention_mask']
-        query_embedding = _mean_pooling(outputs.last_hidden_state, attention_mask)
-        query_embedding = F.normalize(query_embedding, p=2, dim=1)
-    
-    return query_embedding.cpu().numpy().astype(np.float64)
 
-async def _load_index(
-    embedding_dim: int,
-    strategy: IndexStrategy = IndexStrategy.HNSW_ONLY
-) -> Any:
-    """
-    Load index based on strategy.
-    
-    Args:
-        embedding_dim: Dimension of embeddings
-        strategy: Index strategy to use
-        
-    Returns:
-        Loaded index builder
-    """
-    index_path = Path(settings.HNSW_INDEX_PATH)
-    mapping_path = Path(settings.HNSW_MAPPING_PATH)
-    
-    if not index_path.exists():
-        raise HTTPException(status_code=404, detail="Index not found")
-    
-    # Load appropriate index based on strategy
-    if strategy in [IndexStrategy.HNSW_ONLY, IndexStrategy.HNSW_FAISS]:
-        builder = HNSWIndexBuilder(embedding_dim)
-        if builder.load(str(index_path), str(mapping_path)):
-            return builder
-        else:
-            raise HTTPException(status_code=500, detail="Failed to load HNSW index")
-    
-    elif strategy == IndexStrategy.FAISS_ONLY:
-        builder = FAISSIndexBuilder(embedding_dim)
-        if builder.load(str(index_path), str(mapping_path)):
-            return builder
-        else:
-            raise HTTPException(status_code=500, detail="Failed to load FAISS index")
-    
-    elif strategy == IndexStrategy.TREE_ONLY:
-        builder = TreeIndexBuilder(embedding_dim)
-        if builder.load(str(index_path), str(mapping_path)):
-            return builder
-        else:
-            raise HTTPException(status_code=500, detail="Failed to load Tree index")
-    
-    else:
-        # Default to HNSW
-        builder = HNSWIndexBuilder(embedding_dim)
-        if builder.load(str(index_path), str(mapping_path)):
-            return builder
-        else:
-            raise HTTPException(status_code=500, detail="Failed to load index")
+def _extract_qca_from_text(content: str, metadata: Dict[str, Any]) -> Dict[str, str]:
+    """Preserve legacy Q/C/A convenience fields without changing chunk schema."""
+    if all(key in metadata for key in ("question", "context", "answer")):
+        return {
+            "question": str(metadata["question"]),
+            "context": str(metadata["context"]),
+            "answer": str(metadata["answer"]),
+        }
 
-async def _retrieve_simple(
-    query_embedding: np.ndarray,
-    index: Any,  # Can be HNSWIndexBuilder, FAISSIndexBuilder, or TreeIndexBuilder
-    top_k: int
-) -> List[DocumentResponse]:
-    """Simple retrieval without reranking."""
-    # Search index
-    labels, distances = index.query(query_embedding, top_k)
-    
-    # Get mapping from the index builder
-    mapping = index.mapping
-    
-    # Get database
-    db = get_sync_database()
-    coll = db['chunks']
-    
-    # Retrieve documents
-    documents = []
-    for label, distance in zip(labels[0], distances[0]):
-        chunk_id = mapping.get(str(int(label)))
-        if not chunk_id:
-            continue
-        
-        chunk = coll.find_one(
-            {"chunk_id": chunk_id}, 
-            {"chunk_id": 1, "content": 1, "metadata": 1}
-        )
-        
-        if chunk:
-            # Extract QCA format from chunk content
-            qca_data = _extract_qca_from_chunk(chunk)
-            
-            documents.append(DocumentResponse(
-                chunk_id=chunk["chunk_id"],
-                content=chunk["content"],
-                metadata=chunk["metadata"],
-                distance=float(distance),
-                question=qca_data.get("question"),
-                context=qca_data.get("context"),
-                answer=qca_data.get("answer")
-            ))
-    
-    return documents
-
-async def _retrieve_with_reranking(
-    query_embedding: np.ndarray,
-    query: str,
-    index: Any,  # Can be HNSWIndexBuilder, FAISSIndexBuilder, or TreeIndexBuilder
-    reranker_model,
-    initial_top_k: int,
-    final_top_k: int
-) -> List[DocumentResponse]:
-    """Retrieve documents with reranking."""
-    # First, retrieve more documents
-    labels, distances = index.query(query_embedding, initial_top_k)
-    
-    # Get mapping from the index builder
-    mapping = index.mapping
-    
-    # Get database
-    db = get_sync_database()
-    coll = db['chunks']
-    
-    # Retrieve initial documents
-    initial_docs = []
-    for label, distance in zip(labels[0], distances[0]):
-        chunk_id = mapping.get(str(int(label)))
-        if not chunk_id:
-            continue
-        
-        chunk = coll.find_one(
-            {"chunk_id": chunk_id}, 
-            {"chunk_id": 1, "content": 1, "metadata": 1}
-        )
-        
-        if chunk:
-            initial_docs.append({
-                "chunk_id": chunk["chunk_id"],
-                "content": chunk["content"],
-                "metadata": chunk["metadata"],
-                "distance": float(distance)
-            })
-    
-    # Rerank documents
-    reranked_docs = reranker_model.rerank_documents(
-        query=query,
-        documents=initial_docs,
-        top_k=final_top_k
-    )
-    
-    # Convert to response format
-    documents = []
-    for doc in reranked_docs:
-        # Extract QCA format from chunk content
-        qca_data = _extract_qca_from_chunk(doc)
-        
-        documents.append(DocumentResponse(
-            chunk_id=doc["chunk_id"],
-            content=doc["content"],
-            metadata=doc["metadata"],
-            distance=doc["distance"],
-            rerank_score=doc.get("rerank_score"),
-            question=qca_data.get("question"),
-            context=qca_data.get("context"),
-            answer=qca_data.get("answer")
-        ))
-    
-    return documents
-
-def _extract_qca_from_chunk(chunk: Dict[str, Any]) -> Dict[str, str]:
-    """Extract Question, Context, Answer from chunk content."""
     try:
-        content = chunk.get("content", "")
-        metadata = chunk.get("metadata", {})
-        
-        # Try to extract from metadata first (if stored separately)
-        if "question" in metadata and "context" in metadata and "answer" in metadata:
-            return {
-                "question": metadata["question"],
-                "context": metadata["context"],
-                "answer": metadata["answer"]
-            }
-        
-        # Parse from content using patterns
         import re
-        
-        # Look for QCA patterns in content
+
         question_pattern = r"(?:Question|Patient Question|Input):\s*(.*?)(?=(?:Context|Answer|Output|Doctor Response):|$)"
         context_pattern = r"(?:Context|Patient Question \(continued\)):\s*(.*?)(?=(?:Answer|Output|Doctor Response):|$)"
         answer_pattern = r"(?:Answer|Output|Doctor Response|Doctor Response \(continued\)):\s*(.*?)$"
-        
-        question_match = re.search(question_pattern, content, re.DOTALL | re.IGNORECASE)
-        context_match = re.search(context_pattern, content, re.DOTALL | re.IGNORECASE)
-        answer_match = re.search(answer_pattern, content, re.DOTALL | re.IGNORECASE)
-        
-        question = question_match.group(1).strip() if question_match else ""
-        context = context_match.group(1).strip() if context_match else ""
-        answer = answer_match.group(1).strip() if answer_match else ""
-        
-        # If no patterns found, try to split by common separators
-        if not question and not context and not answer:
-            parts = content.split("\n\n")
-            if len(parts) >= 2:
-                question = parts[0].strip()
-                answer = parts[-1].strip()
-                context = "\n\n".join(parts[1:-1]).strip() if len(parts) > 2 else ""
-        
+        question = re.search(question_pattern, content or "", re.DOTALL | re.IGNORECASE)
+        context = re.search(context_pattern, content or "", re.DOTALL | re.IGNORECASE)
+        answer = re.search(answer_pattern, content or "", re.DOTALL | re.IGNORECASE)
         return {
-            "question": question or "No question found",
-            "context": context or "No additional context",
-            "answer": answer or "No answer found"
+            "question": question.group(1).strip() if question else "",
+            "context": context.group(1).strip() if context else "",
+            "answer": answer.group(1).strip() if answer else "",
         }
-        
-    except Exception as e:
-        logger.warning(f"Error extracting QCA from chunk: {e}")
-        return {
-            "question": "Error extracting question",
-            "context": "Error extracting context", 
-            "answer": "Error extracting answer"
-        }
-
-def _mean_pooling(token_embeddings, attention_mask):
-    """Mean pooling function."""
-    import torch
-    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    masked_embeddings = token_embeddings * input_mask_expanded
-    summed_embeddings = torch.sum(masked_embeddings, 1)
-    summed_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-    mean_embeddings = summed_embeddings / summed_mask
-    return mean_embeddings
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("QCA extraction failed: %s", exc)
+        return {"question": "", "context": "", "answer": ""}
