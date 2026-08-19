@@ -7,7 +7,7 @@ from app.core.config import Settings, settings
 from app.models.medswin import CandidatePassage, EvidenceBundle, SourceType
 from app.services.adapters.embedding import EmbeddingClient
 from app.services.adapters.llm import LLMClient
-from app.services.adapters.reranker import RerankerClient
+from app.services.adapters.reranker import RerankerClient, _cohere_auth_headers
 from app.services.medswin.orchestrator import MedSwinOrchestrator
 from app.services.storage import StorageService
 from app.services.prompts import answer, emr, guideline, query, safety
@@ -62,6 +62,8 @@ async def test_llm_client_injects_schema_once_and_uses_cloud_headers():
 
 @pytest.mark.asyncio
 async def test_cloud_embedding_payload_uses_deployment_model_and_api_key():
+    # Local/non-cloud compatibility path remains OpenAI-shaped when cloud mode
+    # is not enabled for the process.
     seen = {}
     client = EmbeddingClient("https://example.test/openai/v1/embeddings", model="embed-v-4-0", api_key="key")
 
@@ -71,10 +73,36 @@ async def test_cloud_embedding_payload_uses_deployment_model_and_api_key():
         return FakeResponse({"data": [{"embedding": [0.1, 0.2, 0.3]}]})
 
     client.client.post = fake_post
-
     embeddings = await client.embed(["sample"])
 
     assert seen["json"] == {"input": ["sample"], "model": "embed-v-4-0"}
+    assert seen["headers"]["api-key"] == "key"
+    assert embeddings[0].tolist() == pytest.approx([0.1, 0.2, 0.3])
+
+
+@pytest.mark.asyncio
+async def test_foundry_embedding_payload_preserves_document_intent(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(settings, "CLOUD_MODE", True)
+    monkeypatch.setattr(settings, "CLOUD_EMBEDDING", "embed-v-4-0")
+    monkeypatch.setattr(settings, "CLOUD_EMBEDDING_DIMENSION", 3)
+    monkeypatch.setattr(settings, "CLOUD_EMBEDDING_URI", "https://example.test/models/embeddings?api-version=2024-05-01-preview")
+
+    client = EmbeddingClient("ignored", model="embed-v-4-0", api_key="key")
+
+    async def fake_post(url, json, headers):
+        seen["url"] = url
+        seen["json"] = json
+        seen["headers"] = headers
+        return FakeResponse({"data": [{"embedding": [0.1, 0.2, 0.3]}]})
+
+    client.client.post = fake_post
+    embeddings = await client.embed(["document text"], input_type="document")
+
+    assert seen["url"].startswith("https://example.test/models/embeddings")
+    assert seen["json"]["model"] == "embed-v-4-0"
+    assert seen["json"]["input_type"] == "document"
+    assert seen["json"]["dimensions"] == 3
     assert seen["headers"]["api-key"] == "key"
     assert embeddings[0].tolist() == pytest.approx([0.1, 0.2, 0.3])
 
@@ -96,7 +124,6 @@ async def test_embedding_client_retries_after_rate_limit_cooldown(monkeypatch):
         return FakeResponse({"data": [{"embedding": [0.4, 0.5]}]})
 
     client.client.post = fake_post
-
     embeddings = await client.embed(["sample"])
 
     assert calls == 2
@@ -104,9 +131,15 @@ async def test_embedding_client_retries_after_rate_limit_cooldown(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cohere_reranker_response_maps_relevance_scores():
+async def test_cohere_reranker_response_maps_relevance_scores(monkeypatch):
     seen = {}
-    client = RerankerClient("https://example.test/providers/cohere/v2/rerank", model="Cohere-rerank-v4.0-fast", api_key="key", provider="cohere")
+    monkeypatch.delenv("CLOUD_RERANKER_AUTH_SCHEME", raising=False)
+    client = RerankerClient(
+        "https://example.test/providers/cohere/v2/rerank",
+        model="Cohere-rerank-v4.0-fast",
+        api_key="key",
+        provider="cohere",
+    )
 
     async def fake_post(url, json, headers):
         seen["json"] = json
@@ -114,15 +147,21 @@ async def test_cohere_reranker_response_maps_relevance_scores():
         return FakeResponse({"results": [{"index": 1, "relevance_score": 0.91}, {"index": 0, "relevance_score": 0.42}]})
 
     client.client.post = fake_post
-
     results = await client.rerank("query", ["a", "b"])
 
     assert seen["json"]["model"] == "Cohere-rerank-v4.0-fast"
     assert seen["json"]["documents"] == ["a", "b"]
-    assert seen["headers"]["api-key"] == "key"
+    assert seen["headers"]["Authorization"] == "Bearer key"
     assert results[0]["index"] == 1
     assert results[0]["p_hat"] == 0.91
     assert results[0]["calibration_version"] == "identity:cohere-v2"
+
+
+def test_cohere_reranker_auth_scheme_is_explicitly_configurable(monkeypatch):
+    monkeypatch.setenv("CLOUD_RERANKER_AUTH_SCHEME", "api-key")
+    assert _cohere_auth_headers("secret") == {"api-key": "secret"}
+    monkeypatch.setenv("CLOUD_RERANKER_AUTH_SCHEME", "raw")
+    assert _cohere_auth_headers("secret") == {"Authorization": "secret"}
 
 
 def test_prompt_modules_have_direct_system_prompts_and_schemas():
@@ -149,6 +188,8 @@ def test_settings_accept_azure_and_cloud_defaults_without_env_file():
     assert config.CLOUD_MODEL == "gpt-5.4"
     assert config.CLOUD_EMBEDDING == "embed-v-4-0"
     assert config.cloud_chat_url() == "https://example.services.ai.azure.com/openai/v1/chat/completions"
+    assert config.cloud_embedding_url().startswith("https://example.services.ai.azure.com/models/embeddings")
+    assert config.cloud_reranker_url() == "https://example.services.ai.azure.com/providers/cohere/v2/rerank"
 
 
 def test_storage_filters_stale_cloud_embedding_space(monkeypatch):
