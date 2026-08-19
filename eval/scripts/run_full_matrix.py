@@ -12,6 +12,11 @@ Every API process uses Cohere Embed v4 query embeddings against that same
 ``input_type=document`` index. The runner fails a cell when a naive request
 falls back from ANN, when the full system silently skips/fails reranking, or
 when the expected MAC specialists did not actually execute.
+
+Generator comparison uses one shared context/output envelope for both local
+MedSwin and GPT-5.4. This prevents the cloud model's larger context window from
+receiving more evidence merely because of backend capacity; the local server
+fails rather than silently truncating if the shared envelope is still too large.
 """
 
 from __future__ import annotations
@@ -38,11 +43,9 @@ for root in (REPO_ROOT, EVAL_ROOT):
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
-from app.core.config import settings as app_settings
 from app.core.database import get_sync_database
 from eval.app.audit import aggregate_run, audit_case
 from eval.app.client import MedSwinClient
-from eval.app.config import Settings as EvalSettings
 from eval.app.schemas import BenchmarkCase, RunAudit
 
 EXPECTED_DATASET = "pmc/v2/trec-cds-2016"
@@ -51,6 +54,14 @@ EXPECTED_QUERIES = 30
 EXPECTED_MAC_AGENTS = {"emr", "guideline", "safety", "quality", "critic"}
 MANIFEST_DIR = REPO_ROOT / "data" / "eval-warmup"
 DEFAULT_CASES = EVAL_ROOT / "data" / "trec-cds-2016" / "full" / "cases.jsonl"
+
+# These are intentionally conservative defaults for a LLaMA-family 7B context.
+# All four cells receive the same values. They remain environment-overridable
+# and are recorded in every audit so a paper can state the exact envelope.
+DEFAULT_SHARED_TOKEN_BUDGET = 700
+DEFAULT_AGENT_PASSAGE_LIMIT = 4
+DEFAULT_AGENT_PASSAGE_MAX_CHARS = 500
+DEFAULT_GENERATION_MAX_TOKENS = 384
 
 
 def _now() -> str:
@@ -95,7 +106,11 @@ def _validate_runtime_manifest(org_id: str) -> dict[str, Any]:
     if failed:
         raise RuntimeError("Full runtime manifest failed: " + ", ".join(failed))
 
-    for field in ((manifest.get("bm25") or {}).get("path"), (manifest.get("hnsw") or {}).get("index_path"), (manifest.get("hnsw") or {}).get("mapping_path")):
+    for field in (
+        (manifest.get("bm25") or {}).get("path"),
+        (manifest.get("hnsw") or {}).get("index_path"),
+        (manifest.get("hnsw") or {}).get("mapping_path"),
+    ):
         if not field or not Path(field).exists():
             raise RuntimeError(f"Required full-runtime artifact is missing: {field}")
     return manifest
@@ -277,6 +292,8 @@ def _start_local_medswin() -> tuple[subprocess.Popen[Any] | None, dict[str, Any]
         health = _wait_http(health_url, None, 2.0)
         if health.get("model") != "MedSwin/MedSwin-DaRE-TIES-KD-0.7":
             raise RuntimeError(f"Port already serves the wrong model: {health.get('model')}")
+        if not health.get("context_window"):
+            raise RuntimeError("Existing MedSwin server does not report its context window")
         return None, health
     except Exception:
         pass
@@ -299,11 +316,31 @@ def _start_local_medswin() -> tuple[subprocess.Popen[Any] | None, dict[str, Any]
     if health.get("model") != "MedSwin/MedSwin-DaRE-TIES-KD-0.7":
         _terminate(process)
         raise RuntimeError(f"Local generator health reported unexpected model {health.get('model')}")
+    if not health.get("context_window"):
+        _terminate(process)
+        raise RuntimeError("Local MedSwin server did not report a context window")
     return process, health
+
+
+def _shared_eval_envelope() -> dict[str, int]:
+    values = {
+        "token_budget": int(os.getenv("FULL_EVAL_TOKEN_BUDGET_B", str(DEFAULT_SHARED_TOKEN_BUDGET))),
+        "agent_passage_limit": int(os.getenv("FULL_EVAL_AGENT_PASSAGE_LIMIT", str(DEFAULT_AGENT_PASSAGE_LIMIT))),
+        "agent_passage_max_chars": int(
+            os.getenv("FULL_EVAL_AGENT_PASSAGE_MAX_CHARS", str(DEFAULT_AGENT_PASSAGE_MAX_CHARS))
+        ),
+        "generation_max_tokens": int(
+            os.getenv("FULL_EVAL_GENERATION_MAX_TOKENS", str(DEFAULT_GENERATION_MAX_TOKENS))
+        ),
+    }
+    if any(value <= 0 for value in values.values()):
+        raise RuntimeError(f"Invalid full-eval shared prompt envelope: {values}")
+    return values
 
 
 def _api_env(generator: str, port: int, org_id: str) -> dict[str, str]:
     env = os.environ.copy()
+    envelope = _shared_eval_envelope()
     env.update(
         {
             "CLOUD_MODE": "true",
@@ -317,6 +354,10 @@ def _api_env(generator: str, port: int, org_id: str) -> dict[str, str]:
             "BENCHMARK_ORG_ID": org_id,
             "MEDSWIN_BASE_URL": f"http://127.0.0.1:{port}",
             "NAIVE_ENABLE_MONGO_FALLBACK": "false",
+            "TOKEN_BUDGET_B": str(envelope["token_budget"]),
+            "AGENT_PASSAGE_LIMIT": str(envelope["agent_passage_limit"]),
+            "AGENT_PASSAGE_MAX_CHARS": str(envelope["agent_passage_max_chars"]),
+            "LLM_DEFAULT_MAX_TOKENS": str(envelope["generation_max_tokens"]),
         }
     )
     return env
@@ -357,6 +398,7 @@ async def _run_cell(
     timeout_s: float,
 ) -> RunAudit:
     run_id = f"full-{pipeline}-{generator}-{uuid.uuid4().hex[:10]}"
+    envelope = _shared_eval_envelope()
     run = RunAudit(
         run_id=run_id,
         dataset=EXPECTED_DATASET,
@@ -364,7 +406,9 @@ async def _run_cell(
             "pipeline": pipeline,
             "generator": generator,
             "generator_model": (
-                "MedSwin/MedSwin-DaRE-TIES-KD-0.7" if generator == "medswin_local" else os.getenv("FOUNDRY_MODEL", "gpt-5.4")
+                "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
+                if generator == "medswin_local"
+                else os.getenv("FOUNDRY_MODEL", "gpt-5.4")
             ),
             "embedding_model": "embed-v-4-0",
             "embedding_input_type": "query",
@@ -372,6 +416,7 @@ async def _run_cell(
             "cases": len(cases),
             "top_k": top_k,
             "strict_full_corpus": True,
+            "shared_generation_envelope": envelope,
         },
     )
     base_url = f"http://127.0.0.1:{port}"
@@ -492,6 +537,14 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
             finally:
                 _terminate(api_process)
                 await asyncio.sleep(1.0)
+
+            # If this runner owns the local 7B process, release its GPU memory
+            # before launching the GPT-only cells. An externally managed server
+            # is never killed by the benchmark runner.
+            if generator == "medswin_local" and local_process is not None:
+                _terminate(local_process)
+                local_process = None
+                await asyncio.sleep(1.0)
     finally:
         _terminate(local_process)
 
@@ -499,6 +552,7 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
         "created_at": _now(),
         "complete_trec_runtime": manifest,
         "local_medswin_health": local_health,
+        "shared_generation_envelope": _shared_eval_envelope(),
         "cells": {
             key: {
                 "run_id": run.run_id,
