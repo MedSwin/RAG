@@ -8,6 +8,10 @@ on:
       - "scripts/**"
       - "tests/**"
       - "web/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker-compose.yml"
+      - "nginx/**"
       - "requirements.txt"
       - "pytest.ini"
       - "env.example"
@@ -72,6 +76,7 @@ jobs:
           grep -q 'hnsw_vector_alignment' eval/scripts/verify_full_trec_runtime.py
           grep -q 'FULL_VERIFY_HNSW_SAMPLES' eval/scripts/verify_full_trec_runtime.py
           grep -q 'chunk_id_fingerprint' eval/scripts/verify_full_trec_runtime.py
+          grep -q 'input_type="document" if settings.CLOUD_MODE else None' app/api/v1/endpoints/medswin.py
       - name: Assert retrieval metric separation and budget fairness
         run: |
           grep -q 'retrieval_ndcg_at_10' eval/app/schemas.py
@@ -177,3 +182,18 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Type-check and build clinician UI
         run: npm run build
+
+  container-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate Compose graph
+        run: |
+          docker compose config > /tmp/medswin-compose.yml
+          grep -q '8100:8100' /tmp/medswin-compose.yml
+          grep -q 'medswin-api' /tmp/medswin-compose.yml
+          grep -q 'medswin-mongodb' /tmp/medswin-compose.yml
+          ! grep -q 'medical_rag_db' /tmp/medswin-compose.yml
+      - name: Build supported container image
+        run: docker build --progress=plain -t medswin-ci .
