@@ -203,8 +203,6 @@ EVAL_PORT="${EVAL_PORT:-8200}"
 BASE_URL="${MEDSWIN_BASE_URL:-http://127.0.0.1:${APP_PORT}}"
 EVAL_URL="${EVAL_BASE_URL:-http://127.0.0.1:${EVAL_PORT}}"
 
-# Canonical evaluation model identities. Explicit .env values may override only
-# where the caller deliberately wants a different deployment name/endpoint.
 export FOUNDRY_MODEL="${FOUNDRY_MODEL:-gpt-5.4}"
 export CLOUD_MODEL="${CLOUD_MODEL:-$FOUNDRY_MODEL}"
 export CLOUD_EMBEDDING="${CLOUD_EMBEDDING:-embed-v-4-0}"
@@ -331,6 +329,9 @@ run_full_eval() {
     echo -e "${YELLOW}Preparing complete TREC-CDS runtime corpus and indexes ...${NC}"
     CLOUD_MODE=true CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query \
         python3 eval/scripts/prepare_full_trec_runtime.py "${prep_args[@]}"
+    echo -e "${YELLOW}Verifying persisted 100% TREC corpus, embeddings, BM25 and HNSW ...${NC}"
+    CLOUD_MODE=true CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query \
+        python3 eval/scripts/verify_full_trec_runtime.py --org-id "$bench_org"
     echo -e "${YELLOW}Running strict naive/full × MedSwin/GPT-5.4 matrix ...${NC}"
     CLOUD_MODE=true CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query \
         python3 eval/scripts/run_full_matrix.py --org-id "$bench_org"
