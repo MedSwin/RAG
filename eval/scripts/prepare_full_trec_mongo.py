@@ -12,6 +12,10 @@ the checkpoint after a crash because deterministic upserts can be replayed. If
 the final literature flush succeeded but the terminal completion flag was not
 sealed, this preflight verifies the full LIT corpus and repairs only that flag;
 the normal preparer then re-materializes the 30 EMR notes and rebuilds indexes.
+
+An incompatible checkpoint is reported but not mutated here. The corpus builder
+remains authoritative: a normal resume fails closed on the mismatch, while an
+operator-requested ``--reset-full-corpus`` can still discard the old state.
 """
 
 from __future__ import annotations
@@ -112,6 +116,7 @@ def _validate_resume_checkpoint(chunks, org_id: str) -> dict[str, Any]:
     if not path.exists():
         return {
             "checkpoint_present": False,
+            "contract_mismatches": [],
             "next_doc_ordinal": 0,
             "prefix_documents": 0,
             "prefix_ordinals": 0,
@@ -123,11 +128,18 @@ def _validate_resume_checkpoint(chunks, org_id: str) -> dict[str, Any]:
     expected = _expected_checkpoint_contract(org_id)
     mismatches = [key for key, value in expected.items() if checkpoint.get(key) != value]
     if mismatches:
-        raise RuntimeError(
-            "Existing full-TREC checkpoint does not match the active preparation contract: "
-            + ", ".join(mismatches)
-            + ". Use --reset-full-corpus rather than mixing corpus generations."
-        )
+        # Do not mutate or inspect the incompatible corpus here. A normal run
+        # will fail closed in prepare_full_trec_runtime._validate_checkpoint;
+        # an explicit --reset-full-corpus is allowed to delete it there.
+        return {
+            "checkpoint_present": True,
+            "contract_mismatches": mismatches,
+            "next_doc_ordinal": int(checkpoint.get("next_doc_ordinal") or 0),
+            "prefix_documents": 0,
+            "prefix_ordinals": 0,
+            "ahead_documents": 0,
+            "terminal_repaired": False,
+        }
 
     next_ordinal = int(checkpoint.get("next_doc_ordinal") or 0)
     if next_ordinal < 0 or next_ordinal > EXPECTED_DOCUMENTS:
@@ -139,6 +151,7 @@ def _validate_resume_checkpoint(chunks, org_id: str) -> dict[str, Any]:
     if next_ordinal == 0:
         return {
             "checkpoint_present": True,
+            "contract_mismatches": [],
             "next_doc_ordinal": 0,
             "prefix_documents": 0,
             "prefix_ordinals": 0,
@@ -224,6 +237,7 @@ def _validate_resume_checkpoint(chunks, org_id: str) -> dict[str, Any]:
 
     return {
         "checkpoint_present": True,
+        "contract_mismatches": [],
         "next_doc_ordinal": next_ordinal,
         "prefix_documents": prefix_documents,
         "prefix_ordinals": prefix_ordinals,
