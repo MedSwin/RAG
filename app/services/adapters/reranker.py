@@ -2,12 +2,34 @@
 
 import httpx
 import logging
+import os
 from typing import List, Dict, Any, Optional
 
 from app.core.config import settings
 from app.services.adapters.limiter import request_with_model_rate_limit
 
 logger = logging.getLogger(__name__)
+
+
+def _cohere_auth_headers(api_key: Optional[str]) -> dict[str, str]:
+    """Build an explicit authentication contract for Cohere-compatible routes.
+
+    Azure/Foundry deployments can be exposed through provider-native routes or
+    deployment front doors with different accepted header schemes. Publication
+    evaluation must not guess silently, so the default matches Cohere ClientV2
+    (Bearer) while an operator can explicitly select ``api-key`` or raw
+    ``Authorization`` when their Foundry deployment requires it.
+    """
+    if not api_key:
+        return {}
+    scheme = (os.getenv("CLOUD_RERANKER_AUTH_SCHEME") or "bearer").strip().lower()
+    if scheme in {"bearer", "token"}:
+        return {"Authorization": f"Bearer {api_key}"}
+    if scheme in {"api-key", "api_key", "apikey"}:
+        return {"api-key": api_key}
+    if scheme in {"raw", "authorization"}:
+        return {"Authorization": api_key}
+    raise ValueError(f"Unsupported CLOUD_RERANKER_AUTH_SCHEME={scheme}")
 
 
 class RerankerClient:
@@ -56,15 +78,9 @@ class RerankerClient:
                 "return_logits": return_logits,
             }
 
-        headers = {}
-        if self.api_key:
-            if self.provider == "cohere":
-                # Cohere ClientV2 sends its api_key as a Bearer token. Matching
-                # that wire contract is required for Foundry's provider-specific
-                # /providers/cohere/v2/rerank route.
-                headers["Authorization"] = f"Bearer {self.api_key}"
-            else:
-                headers["api-key"] = self.api_key
+        headers = _cohere_auth_headers(self.api_key) if self.provider == "cohere" else {}
+        if self.api_key and self.provider != "cohere":
+            headers["api-key"] = self.api_key
         if request_id:
             headers["X-Request-ID"] = request_id
 
@@ -117,6 +133,8 @@ class RerankerClient:
                 raise RuntimeError(
                     f"Reranker returned {len(results)} results for {len(passages)} passages"
                 )
+            if {int(item.get("index", -1)) for item in results} != set(range(len(passages))):
+                raise RuntimeError("Reranker result indexes do not cover every supplied passage exactly once")
             return results
         except httpx.HTTPError as exc:
             logger.error("Reranker request failed: %s", exc)
