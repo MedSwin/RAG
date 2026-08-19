@@ -131,7 +131,7 @@ async def warm_foundry() -> dict[str, Any]:
             "AZURE_AI_FOUNDRY_ENDPOINT and AZURE_AI_FOUNDRY_API_KEY are required for evaluation warmup"
         )
 
-    foundry_model = os.getenv("FOUNDRY_MODEL") or settings.CLOUD_MODEL or "gpt-5.4"
+    foundry_model = os.getenv("FOUNDRY_MODEL") or settings.FOUNDRY_MODEL or settings.CLOUD_MODEL or "gpt-5.4"
     expected_embedding = os.getenv("CLOUD_EMBEDDING") or settings.CLOUD_EMBEDDING
     expected_reranker = os.getenv("CLOUD_RERANKER") or settings.CLOUD_RERANKER
 
@@ -142,6 +142,9 @@ async def warm_foundry() -> dict[str, Any]:
     os.environ["GENERATION_BACKEND"] = "foundry"
     llm = LLMClient(settings.cloud_chat_url(), model=foundry_model, api_key=api_key)
     try:
+        # Both semantic intents are mandatory evaluation prerequisites. This
+        # catches endpoint-schema/authentication mismatches before the first of
+        # millions of corpus embeddings is requested.
         query_vec = (await embedding.embed(["aspirin myocardial infarction"], input_type="query"))[0]
         doc_vec = (await embedding.embed(["Aspirin reduces platelet aggregation."], input_type="document"))[0]
         expected_dim = settings.active_embedding_dimension()
@@ -149,12 +152,18 @@ async def warm_foundry() -> dict[str, Any]:
             raise RuntimeError(
                 f"Embedding dimension mismatch: query={len(query_vec)} document={len(doc_vec)} expected={expected_dim}"
             )
+        if not any(float(value) != 0.0 for value in query_vec) or not any(float(value) != 0.0 for value in doc_vec):
+            raise RuntimeError("Embedding warmup returned an all-zero vector")
+
         ranks = await reranker.rerank(
             "aspirin antiplatelet therapy",
             ["Aspirin inhibits platelet aggregation.", "The moon orbits Earth."],
         )
         if len(ranks) != 2 or {item.get("index") for item in ranks} != {0, 1}:
             raise RuntimeError("Cohere reranker warmup returned an invalid result set")
+        if float(ranks[0].get("score") or 0.0) == float(ranks[1].get("score") or 0.0):
+            raise RuntimeError("Cohere reranker warmup returned indistinguishable scores")
+
         completion = await llm.call_llm(
             [{"role": "user", "content": "Reply with exactly: MEDSWIN_FOUNDRY_OK"}],
             max_tokens=32,
@@ -176,14 +185,19 @@ async def warm_foundry() -> dict[str, Any]:
         "foundry_model": foundry_model,
         "embedding_model": expected_embedding,
         "embedding_dimension": expected_dim,
+        "embedding_protocol": embedding.protocol,
+        "embedding_input_types_verified": ["query", "document"],
+        "embedding_uri_host": embedding.base_url.split("//", 1)[-1].split("/", 1)[0],
         "reranker_model": expected_reranker,
+        "reranker_uri_host": reranker.base_url.split("//", 1)[-1].split("/", 1)[0],
         "complete": True,
         "completed_at": datetime.now(timezone.utc).isoformat(),
     }
     _write_json(MANIFEST_DIR / "foundry-services.json", payload)
     print(
         "[warmup] Azure Foundry verified: "
-        f"LLM={foundry_model}, embed={expected_embedding}/{expected_dim}, rerank={expected_reranker}"
+        f"LLM={foundry_model}, embed={expected_embedding}/{expected_dim} protocol={embedding.protocol}, "
+        f"rerank={expected_reranker}"
     )
     return payload
 
