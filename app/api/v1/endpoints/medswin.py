@@ -118,10 +118,10 @@ async def get_session(session_id: str, org_id: str, orchestrator: MedSwinOrchest
         from app.repositories.sessions import SessionRepository
         session_repo = SessionRepository()
         session = await session_repo.get_by_id(session_id, org_id)
-        
+
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
-        
+
         return SessionResponse(
             session_id=session["session_id"],
             user_id=session["user_id"],
@@ -148,13 +148,13 @@ async def get_trace(
     try:
         from app.repositories.traces import TraceRepository
         from datetime import datetime
-        
+
         trace_repo = TraceRepository()
         trace = await trace_repo.get_by_id(trace_id, org_id)
-        
+
         if not trace:
             raise HTTPException(status_code=404, detail="Trace not found")
-        
+
         include_policy_details = include_details and settings.TRACE_INCLUDE_POLICY_DETAILS
         summary = redacted_trace_summary(trace, include_policy_details=include_policy_details)
         return TraceResponse(
@@ -198,42 +198,33 @@ async def ingest_documents(
     orchestrator: MedSwinOrchestrator = Depends(get_orchestrator)
 ):
     """Ingest documents (CPG or EMR).
-    
+
     This endpoint supports ingestion of:
     - CPG documents (pdf/txt/json)
     - EMR notes (structured or unstructured)
-    
+
     Ensures chunk metadata includes source_type, version, patient_id, timestamp.
     """
     try:
-        from app.models.medswin import SourceType, Document, Chunk, EvidenceGrade
+        from app.models.medswin import SourceType, Document, Chunk
         from app.repositories.documents import DocumentRepository
         from app.repositories.chunks import ChunkRepository
-        
-        # Validate source type
+
         try:
             source_type_enum = SourceType(source_type.upper())
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid source_type: {source_type}")
-        
+
         doc_repo = DocumentRepository()
         chunk_repo = ChunkRepository()
-        
-        # Root Cause vs Logic: PMC literature ingest does not require the embedding
-        # model to be loaded up front. The previous implementation fetched the
-        # tokenizer unconditionally, which turned an optional preprocessing path
-        # into a hard 503 for otherwise valid document ingests. We keep the route
-        # resilient and rely on section-aware chunking plus persisted metadata.
 
-        # Root Cause vs Logic: embedding each document immediately forced one
-        # cloud request per article, so judged-pool ingests degenerated into
-        # thousands of single-item calls. We stage the documents first, attach
-        # embeddings in bulk, and then persist the fully prepared records.
+        # Stage the complete request first. In cloud mode a failed embedding call
+        # must not leave metadata-only Documents behind; persistence starts only
+        # after every staged chunk has an active vector.
         staged_documents: list[tuple[Document, list[Chunk]]] = []
         staged_chunks: list[Chunk] = []
         results = []
         for doc_data in documents:
-            # Create document
             doc_id = doc_data.get("doc_id") or str(uuid.uuid4())
             evidence_grade = _coerce_evidence_grade(doc_data.get("evidence_grade"), source_type_enum)
             document = Document(
@@ -255,18 +246,18 @@ async def ingest_documents(
                     "evidence_grade": evidence_grade.model_dump(),
                 }
             )
-            
-            await doc_repo.create(document, org_id)
-            
-            # Chunk document while preserving existing section/offset metadata when provided.
+
             text = doc_data.get("text", doc_data.get("content", ""))
             from app.medswin.chunking import section_chunks
             chunks_data = doc_data.get("chunks") or section_chunks(doc_id, text, doc_data.get("section"))
-            
-            # Create chunks
+
             chunks = []
             for chunk_data in chunks_data:
                 chunk_id = chunk_data.get("chunk_id") or str(uuid.uuid4())
+                chunk_grade = _coerce_evidence_grade(
+                    chunk_data.get("evidence_grade") or doc_data.get("evidence_grade"),
+                    source_type_enum,
+                )
                 chunk = Chunk(
                     chunk_id=chunk_id,
                     doc_id=doc_id,
@@ -279,8 +270,13 @@ async def ingest_documents(
                     guideline_version=doc_data.get("version"),
                     timestamp=chunk_data.get("timestamp") or doc_data.get("timestamp"),
                     org_id=org_id,
-                    evidence_grade=_coerce_evidence_grade(chunk_data.get("evidence_grade") or doc_data.get("evidence_grade"), source_type_enum),
-                    source_reliability=float(chunk_data.get("source_reliability", doc_data.get("source_reliability", evidence_grade.source_reliability))),
+                    evidence_grade=chunk_grade,
+                    source_reliability=float(
+                        chunk_data.get(
+                            "source_reliability",
+                            doc_data.get("source_reliability", evidence_grade.source_reliability),
+                        )
+                    ),
                     metadata={
                         **doc_data.get("metadata", {}),
                         **chunk_data.get("metadata", {}),
@@ -289,10 +285,16 @@ async def ingest_documents(
                         "guideline_version": doc_data.get("version"),
                         "effective_date": doc_data.get("effective_date"),
                         "timestamp": chunk_data.get("timestamp") or doc_data.get("timestamp"),
-                        "source_reliability": float(chunk_data.get("source_reliability", doc_data.get("source_reliability", evidence_grade.source_reliability))),
-                        "evidence_grade": _coerce_evidence_grade(chunk_data.get("evidence_grade") or doc_data.get("evidence_grade"), source_type_enum).model_dump(),
+                        "source_reliability": float(
+                            chunk_data.get(
+                                "source_reliability",
+                                doc_data.get("source_reliability", evidence_grade.source_reliability),
+                            )
+                        ),
+                        "evidence_grade": chunk_grade.model_dump(),
                     },
-                    tokenized_text=chunk_data.get("tokenized_text") or chunk_data.get("text", chunk_data.get("content", "")).lower().split()
+                    tokenized_text=chunk_data.get("tokenized_text")
+                    or chunk_data.get("text", chunk_data.get("content", "")).lower().split()
                 )
                 chunks.append(chunk)
 
@@ -300,10 +302,6 @@ async def ingest_documents(
             staged_chunks.extend(chunks)
 
         if staged_chunks:
-            # Root Cause vs Logic: embeddings were attached only in CLOUD_MODE,
-            # so local ingest stored text-only chunks. Index build then found
-            # zero vectors and naive-RAG silently became LLM-only. Attach in
-            # every mode; local HTTP failures can fall back to ModelManager.
             try:
                 await _attach_active_embeddings(staged_chunks)
             except Exception as exc:
@@ -313,11 +311,6 @@ async def ingest_documents(
 
         for document, chunks in staged_documents:
             await doc_repo.create(document, org_id)
-
-            # Root Cause vs Logic: Some PMC records are metadata-only or have
-            # no recoverable text/section content, which makes the chunk list
-            # empty. Mongo rejects insert_many([]), so we only persist chunks
-            # when there is at least one materialized passage.
             if chunks:
                 await chunk_repo.create_many(chunks, org_id)
 
@@ -326,12 +319,12 @@ async def ingest_documents(
                 "chunks_created": len(chunks),
                 "status": "success"
             })
-        
+
         return {
             "ingested": len(results),
             "results": results
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -358,26 +351,22 @@ def _coerce_evidence_grade(raw: Any, source_type) -> Any:
 
 
 async def _attach_active_embeddings(chunks: List[Any]) -> None:
-    """Attach active cloud embeddings to chunks before persistence.
+    """Attach active embeddings to chunks before persistence.
 
-    Motivation vs Logic: In cloud mode, retrieval depends on the active Azure
-    embedding vector space. Persisting chunks without embeddings leaves them
-    invisible until an external refresh, so ingest attaches embeddings eagerly
-    and the refresh job remains a repair path for stale data.
+    Corpus passages are always embedded with document intent. This is required
+    by Cohere-native semantic search and keeps ordinary API ingest in the same
+    vector-space contract as the complete publication corpus builder.
     """
     client = EmbeddingClient(settings.active_embedding_url())
     try:
-        # Motivation vs Logic: the embeddings service accepts batched input,
-        # so we preserve throughput by attaching vectors in moderate batches
-        # rather than issuing one request per article or one giant payload.
-        # Cloud providers are especially sensitive to oversized embedding
-        # requests, so we cap the batch size lower in cloud mode to favor
-        # reliable corpus builds over peak throughput.
         batch_size = max(1, int(settings.CLOUD_EMBED_BATCH_SIZE if settings.CLOUD_MODE else settings.BATCH_SIZE))
         embeddings = []
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start : start + batch_size]
-            batch_embeddings = await client.embed([chunk.text for chunk in batch])
+            batch_embeddings = await client.embed(
+                [chunk.text for chunk in batch],
+                input_type="document" if settings.CLOUD_MODE else None,
+            )
             embeddings.extend(batch_embeddings)
             if settings.CLOUD_MODE and settings.CLOUD_EMBED_BATCH_DELAY_S > 0 and start + batch_size < len(chunks):
                 await asyncio.sleep(settings.CLOUD_EMBED_BATCH_DELAY_S)
