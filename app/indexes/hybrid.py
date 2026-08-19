@@ -23,7 +23,7 @@ class HybridIndex:
         self._artifact_signature: Optional[Tuple[Any, ...]] = None
 
     @staticmethod
-    def _path_signature(path_value: str) -> Tuple[str, int, int]:
+    def _path_signature(path_value: str | Path) -> Tuple[str, int, int]:
         path = Path(path_value)
         try:
             stat = path.stat()
@@ -31,16 +31,28 @@ class HybridIndex:
         except OSError:
             return str(path.resolve()), 0, 0
 
-    def _current_signature(self) -> Tuple[Any, ...]:
-        hnsw_manifest = f"{settings.HNSW_INDEX_PATH}.manifest.json"
-        faiss_manifest = f"{settings.FAISS_INDEX_PATH}.manifest.json"
+    def _generation_signature(self, index_path: str, mapping_path: str) -> Tuple[Any, ...]:
+        """Use manifest commit point when present, otherwise raw file signatures.
+
+        Both ordinary and publication builders write the sidecar manifest only
+        after index+mapping construction. While a background rebuild is
+        replacing those files, a live process therefore continues using its old
+        in-memory generation until the manifest changes. This prevents loading a
+        new index with an old mapping during the replacement window.
+        """
+        manifest = Path(index_path).with_name(f"{Path(index_path).name}.manifest.json")
+        if manifest.exists():
+            return ("manifest", self._path_signature(manifest))
         return (
-            self._path_signature(settings.HNSW_INDEX_PATH),
-            self._path_signature(settings.HNSW_MAPPING_PATH),
-            self._path_signature(hnsw_manifest),
-            self._path_signature(settings.FAISS_INDEX_PATH),
-            self._path_signature(settings.FAISS_MAPPING_PATH),
-            self._path_signature(faiss_manifest),
+            "files",
+            self._path_signature(index_path),
+            self._path_signature(mapping_path),
+        )
+
+    def _current_signature(self) -> Tuple[Any, ...]:
+        return (
+            self._generation_signature(settings.HNSW_INDEX_PATH, settings.HNSW_MAPPING_PATH),
+            self._generation_signature(settings.FAISS_INDEX_PATH, settings.FAISS_MAPPING_PATH),
         )
 
     @staticmethod
@@ -62,10 +74,6 @@ class HybridIndex:
         ):
             return
 
-        # Preserve the previous in-memory generation until all new loaders have
-        # had a chance to open the staged files. Storage writes the manifest
-        # after index+mapping replacement, so a signature change represents a
-        # completed ordinary generation rather than a partially written file.
         old_hnsw = self._hnsw
         old_faiss = self._faiss
         new_hnsw = None
@@ -92,8 +100,6 @@ class HybridIndex:
             logger.debug("FAISS load skipped/failed: %s", exc)
 
         if new_hnsw is None and new_faiss is None and (old_hnsw is not None or old_faiss is not None):
-            # A transient filesystem race should not take a live retriever from
-            # a valid old generation to no ANN at all. Retry on the next query.
             logger.warning("New ANN generation could not be loaded; retaining previous in-memory generation")
             return
 
