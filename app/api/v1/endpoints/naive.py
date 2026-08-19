@@ -47,6 +47,28 @@ def get_naive_orchestrator() -> NaiveRAGOrchestrator:
     return _naive
 
 
+async def cleanup_naive_orchestrator() -> None:
+    """Close endpoint-owned HTTP/index resources between app lifecycles."""
+    global _naive
+    if _naive is None:
+        return
+    clients = [getattr(_naive, "embedding_client", None), getattr(_naive, "llm", None)]
+    seen = set()
+    for client in clients:
+        if client is None or id(client) in seen:
+            continue
+        seen.add(id(client))
+        close = getattr(client, "close", None)
+        if close is not None:
+            await close()
+    dense = getattr(_naive, "dense", None)
+    hybrid_index = getattr(dense, "index", None)
+    close_index = getattr(hybrid_index, "close", None)
+    if close_index is not None:
+        close_index()
+    _naive = None
+
+
 @router.get("/ready")
 async def naive_ready():
     """Lightweight preflight for the services naive-RAG actually calls."""
