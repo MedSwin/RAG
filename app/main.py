@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
-from app.core.database import init_database
+from app.core.database import init_database, get_database, close_database
 from app.core.state import initialize_services, get_model_manager, get_model_download_service, cleanup_services
 from app.api.v1.router import api_router
 from app.api.auth import AuthMiddleware
@@ -38,6 +38,18 @@ def _disabled(name: str) -> bool:
     return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _strict_benchmark_runtime() -> bool:
+    """Return True for the publication matrix API subprocesses.
+
+    The strict matrix always supplies BENCHMARK_ORG_ID while running in cloud
+    retrieval mode. In that profile a missing database is not a degradable UI
+    concern: starting the API and failing halfway through 30 benchmark cases
+    would invalidate the run and waste model quota. Ordinary developer startup
+    retains the historical permissive behavior.
+    """
+    return bool(str(os.getenv("BENCHMARK_ORG_ID") or "").strip()) and bool(settings.CLOUD_MODE)
+
+
 def _active_generation_identity() -> tuple[str, str]:
     """Return the actual generation backend/model selected by LLMClient."""
     backend = _generation_backend()
@@ -57,6 +69,9 @@ async def lifespan(app: FastAPI):
         await init_database()
         logger.info("Database initialized")
     except Exception as e:
+        if _strict_benchmark_runtime():
+            logger.error("Strict benchmark startup requires MongoDB; refusing to start: %s", e)
+            raise
         logger.warning(f"Database connection failed (this is expected if security group not configured): {e}")
         logger.warning("Application will start but database features may not be available")
 
@@ -117,10 +132,12 @@ async def lifespan(app: FastAPI):
     else:
         asyncio.create_task(preload_datasets())
 
-    yield
-
-    logger.info("Shutting down RAG application...")
-    cleanup_services()
+    try:
+        yield
+    finally:
+        logger.info("Shutting down RAG application...")
+        cleanup_services()
+        await close_database()
 
 
 app = FastAPI(
@@ -159,8 +176,13 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check including the real generation identity used by this process."""
+    """Health check including real database and generation identities."""
     try:
+        # A health response must prove the dependency that every retrieval and
+        # trace path needs, not merely report the state reached during startup.
+        db = get_database()
+        await db.command("ping")
+
         generation_backend, generation_model = _active_generation_identity()
         if settings.CLOUD_MODE:
             refresh = StorageService().get_embedding_refresh_status()
