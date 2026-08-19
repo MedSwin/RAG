@@ -4,19 +4,15 @@
 Cells:
   1. naive_rag + local MedSwin-DaRE-TIES-KD-0.7
   2. naive_rag + Azure Foundry GPT-5.4
-  3. full MedSwin (hybrid + Cohere rerank + MAC + gate) + local MedSwin 7B
+  3. full MedSwin (dense ANN + BM25 -> Cohere rerank -> MAC -> gate) + local MedSwin 7B
   4. full MedSwin + Azure Foundry GPT-5.4
 
-The corpus/index is prepared exactly once by ``prepare_full_trec_runtime.py``.
-Every API process uses Cohere Embed v4 query embeddings against that same
-``input_type=document`` index. The runner fails a cell when a naive request
-falls back from ANN, when the full system silently skips/fails reranking, or
-when the expected MAC specialists did not actually execute.
-
-Generator comparison uses one shared context/output envelope for both local
-MedSwin and GPT-5.4. This prevents the cloud model's larger context window from
-receiving more evidence merely because of backend capacity; the local server
-fails rather than silently truncating if the shared envelope is still too large.
+This runner is fail-closed and self-certifying. It re-verifies the persisted
+complete-TREC runtime before starting any cell, binds every API subprocess to the
+HNSW/SQLite-BM25 artifacts recorded by that verified runtime manifest, validates
+the actual generator identity reported by the API, and rejects any full-system
+case that does not prove both stage-1 retrieval channels, stage-2 reranking, MAC
+specialists, and sufficiency gating executed successfully.
 """
 
 from __future__ import annotations
@@ -39,25 +35,30 @@ import httpx
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVAL_ROOT = REPO_ROOT / "eval"
-for root in (REPO_ROOT, EVAL_ROOT):
+SCRIPTS_ROOT = EVAL_ROOT / "scripts"
+for root in (REPO_ROOT, EVAL_ROOT, SCRIPTS_ROOT):
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
+from app.core.config import settings as app_settings
 from app.core.database import get_sync_database
 from eval.app.audit import aggregate_run, audit_case
 from eval.app.client import MedSwinClient
 from eval.app.schemas import BenchmarkCase, RunAudit
+from verify_full_trec_runtime import verify as verify_full_runtime
 
 EXPECTED_DATASET = "pmc/v2/trec-cds-2016"
 EXPECTED_DOCS = 1_255_260
 EXPECTED_QUERIES = 30
 EXPECTED_MAC_AGENTS = {"emr", "guideline", "safety", "quality", "critic"}
+EXPECTED_LOCAL_MODEL = "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
+EXPECTED_EMBEDDING = "embed-v-4-0"
+EXPECTED_RERANKER = "Cohere-rerank-v4.0-fast"
 MANIFEST_DIR = REPO_ROOT / "data" / "eval-warmup"
 DEFAULT_CASES = EVAL_ROOT / "data" / "trec-cds-2016" / "full" / "cases.jsonl"
 
-# These are intentionally conservative defaults for a LLaMA-family 7B context.
-# All four cells receive the same values. They remain environment-overridable
-# and are recorded in every audit so a paper can state the exact envelope.
+# Conservative shared envelope for the 7B model. All four cells get exactly the
+# same values so generator capacity does not change the evidence budget.
 DEFAULT_SHARED_TOKEN_BUDGET = 700
 DEFAULT_AGENT_PASSAGE_LIMIT = 4
 DEFAULT_AGENT_PASSAGE_MAX_CHARS = 500
@@ -69,31 +70,34 @@ def _now() -> str:
 
 
 def _load_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise RuntimeError(f"Missing required artifact: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _load_cases(path: Path) -> list[BenchmarkCase]:
-    cases = []
+    cases: list[BenchmarkCase] = []
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             if line.strip():
                 cases.append(BenchmarkCase.model_validate(json.loads(line)))
     if len(cases) != EXPECTED_QUERIES:
         raise RuntimeError(f"Full matrix requires {EXPECTED_QUERIES} cases; found {len(cases)}")
+    case_ids = {case.case_id for case in cases}
+    if len(case_ids) != EXPECTED_QUERIES:
+        raise RuntimeError("Full matrix case IDs are not unique")
     return cases
 
 
 def _validate_runtime_manifest(org_id: str) -> dict[str, Any]:
     path = MANIFEST_DIR / f"full-trec-runtime-{org_id}.json"
-    if not path.exists():
-        raise RuntimeError(f"Missing {path}; run eval/scripts/prepare_full_trec_runtime.py first")
     manifest = _load_json(path)
     checks = {
         "complete": manifest.get("complete") is True,
         "dataset": manifest.get("dataset") == EXPECTED_DATASET,
-        "documents": manifest.get("expected_documents") == EXPECTED_DOCS,
-        "queries": manifest.get("queries") == EXPECTED_QUERIES,
-        "embedding_model": manifest.get("embedding_model") == "embed-v-4-0",
+        "documents": int(manifest.get("expected_documents") or 0) == EXPECTED_DOCS,
+        "queries": int(manifest.get("queries") or 0) == EXPECTED_QUERIES,
+        "embedding_model": manifest.get("embedding_model") == EXPECTED_EMBEDDING,
         "embedding_input_type": manifest.get("embedding_input_type") == "document",
         "no_stale_chunks": int((manifest.get("mongo") or {}).get("stale_chunks") or -1) == 0,
     }
@@ -106,14 +110,76 @@ def _validate_runtime_manifest(org_id: str) -> dict[str, Any]:
     if failed:
         raise RuntimeError("Full runtime manifest failed: " + ", ".join(failed))
 
-    for field in (
+    required = (
         (manifest.get("bm25") or {}).get("path"),
         (manifest.get("hnsw") or {}).get("index_path"),
         (manifest.get("hnsw") or {}).get("mapping_path"),
-    ):
-        if not field or not Path(field).exists():
+    )
+    for field in required:
+        if not field or not Path(str(field)).exists():
             raise RuntimeError(f"Required full-runtime artifact is missing: {field}")
     return manifest
+
+
+def _configure_parent_for_verification(manifest: dict[str, Any]) -> None:
+    """Make independent verification use the runtime's exact embedding space.
+
+    A user may invoke this script directly rather than through start-local.sh.
+    Verification therefore cannot depend on the parent shell having already set
+    CLOUD_MODE/CLOUD_EMBEDDING correctly.
+    """
+    app_settings.CLOUD_MODE = True
+    app_settings.CLOUD_EMBEDDING = EXPECTED_EMBEDDING
+    app_settings.CLOUD_EMBEDDING_DIMENSION = int(manifest.get("embedding_dim") or 1536)
+
+
+def _verify_persisted_runtime(manifest: dict[str, Any], org_id: str, cases_path: Path) -> dict[str, Any]:
+    _configure_parent_for_verification(manifest)
+    verification = verify_full_runtime(org_id, cases_path)
+    if verification.get("strict_pass") is not True:
+        raise RuntimeError("Independent persisted-runtime verification did not return strict_pass=true")
+    if int(verification.get("persisted_literature_documents") or 0) != EXPECTED_DOCS:
+        raise RuntimeError("Independent verification did not prove all TREC literature documents")
+    return verification
+
+
+def _runtime_artifact_env(manifest: dict[str, Any]) -> dict[str, str]:
+    """Return child-process paths bound to the verified publication artifacts.
+
+    Do not inherit generic/dev HNSW, FAISS, or BM25 paths. Direct matrix runs
+    must be just as isolated as ``start-local.sh full-eval``.
+    """
+    hnsw = manifest.get("hnsw") or {}
+    bm25 = manifest.get("bm25") or {}
+    index_path = Path(str(hnsw.get("index_path") or "")).resolve()
+    mapping_path = Path(str(hnsw.get("mapping_path") or "")).resolve()
+    fts_path = Path(str(bm25.get("path") or "")).resolve()
+    if not index_path.exists() or not mapping_path.exists() or not fts_path.exists():
+        raise RuntimeError("Verified publication retrieval artifacts disappeared before matrix startup")
+    artifact_dir = index_path.parent
+    return {
+        "HNSW_INDEX_PATH": str(index_path),
+        "HNSW_MAPPING_PATH": str(mapping_path),
+        "LEXICAL_FTS_PATH": str(fts_path),
+        # HybridIndex attempts FAISS when a file is configured. Force an isolated
+        # absent path so a stale developer FAISS index can never contaminate the
+        # publication HNSW candidate set.
+        "FAISS_INDEX_PATH": str(artifact_dir / "faiss_unused.bin"),
+        "FAISS_MAPPING_PATH": str(artifact_dir / "faiss_unused.json"),
+        "TREE_INDEX_PATH": str(artifact_dir / "tree_unused.npy"),
+        "TREE_MAPPING_PATH": str(artifact_dir / "tree_unused.json"),
+    }
+
+
+def _expected_model_revision() -> str:
+    warmup = _load_json(MANIFEST_DIR / "warmup.json")
+    model = warmup.get("model") or {}
+    if model.get("model_id") != EXPECTED_LOCAL_MODEL or not model.get("complete"):
+        raise RuntimeError("Warmup manifest does not certify the expected local MedSwin model")
+    revision = str(model.get("revision") or "").strip()
+    if not revision:
+        raise RuntimeError("Warmup manifest does not pin a concrete MedSwin model revision")
+    return revision
 
 
 def _qrel_presence(cases: list[BenchmarkCase], org_id: str) -> set[str]:
@@ -159,18 +225,26 @@ def _strict_naive_errors(response: dict[str, Any], trace: dict[str, Any] | None)
         errors.append("naive_empty_evidence")
     if trace is None:
         errors.append("missing_trace")
+        return errors
+
+    tools = trace.get("tool_calls") or []
+    naive_tools = [item for item in tools if item.get("tool_name") == "retrieval.naive_dense"]
+    if not naive_tools:
+        errors.append("missing_naive_dense_trace")
     else:
-        tools = {str(item.get("tool_name")) for item in trace.get("tool_calls") or []}
-        if "retrieval.naive_dense" not in tools:
-            errors.append("missing_naive_dense_trace")
-        if trace.get("rerank_traces"):
-            errors.append("naive_used_reranker")
-        agent_tools = [name for name in tools if name.startswith("agent.")]
-        if agent_tools:
-            errors.append("naive_used_mac")
-        if trace.get("sufficiency_checks"):
-            errors.append("naive_used_sufficiency_gate")
-    return errors
+        for item in naive_tools:
+            params = item.get("parameters") or {}
+            result = item.get("result") or {}
+            if params.get("backend") != "ann" or int(result.get("count") or 0) <= 0:
+                errors.append("naive_dense_trace_not_ann_or_empty")
+                break
+    if trace.get("rerank_traces"):
+        errors.append("naive_used_reranker")
+    if [item for item in tools if str(item.get("tool_name") or "").startswith("agent.")]:
+        errors.append("naive_used_mac")
+    if trace.get("sufficiency_checks"):
+        errors.append("naive_used_sufficiency_gate")
+    return sorted(set(errors))
 
 
 def _strict_full_errors(response: dict[str, Any], trace: dict[str, Any] | None) -> list[str]:
@@ -181,6 +255,8 @@ def _strict_full_errors(response: dict[str, Any], trace: dict[str, Any] | None) 
         errors.append("medswin_degraded")
     if not str(response.get("answer") or "").strip():
         errors.append("empty_answer")
+    if not (response.get("evidence_bundle") or {}).get("passages"):
+        errors.append("full_empty_evidence")
     if not response.get("policy_decision"):
         errors.append("missing_policy_decision")
     if not response.get("sufficiency_decision"):
@@ -197,6 +273,23 @@ def _strict_full_errors(response: dict[str, Any], trace: dict[str, Any] | None) 
     tools = trace.get("tool_calls") or []
     if not retrieval_traces:
         errors.append("missing_hybrid_retrieval_trace")
+    else:
+        # A publication full-system pass must prove BOTH first-stage channels.
+        # BM25-only recovery after a broken ANN, or ANN-only recovery after a
+        # missing FTS artifact, is not the prescribed two-channel stage-1 system.
+        if not any(int(item.get("dense_count") or 0) > 0 for item in retrieval_traces):
+            errors.append("dense_ann_stage_missing")
+        if not any(int(item.get("lexical_count") or 0) > 0 for item in retrieval_traces):
+            errors.append("bm25_stage_missing")
+        if not any(int(item.get("union_count") or 0) > 0 for item in retrieval_traces):
+            errors.append("hybrid_union_empty")
+
+    hybrid_tools = [item for item in tools if item.get("tool_name") == "retrieval.hybrid"]
+    if not hybrid_tools:
+        errors.append("hybrid_tool_not_executed")
+    elif not any(int((item.get("result") or {}).get("union_count") or 0) > 0 for item in hybrid_tools):
+        errors.append("hybrid_tool_returned_empty_union")
+
     if not rerank_traces:
         errors.append("missing_rerank_trace")
     if not sufficiency_checks:
@@ -285,18 +378,33 @@ def _terminate(process: subprocess.Popen[Any] | None) -> None:
         process.wait(timeout=10)
 
 
-def _start_local_medswin() -> tuple[subprocess.Popen[Any] | None, dict[str, Any]]:
+def _validate_local_health(health: dict[str, Any], expected_revision: str) -> None:
+    if health.get("model") != EXPECTED_LOCAL_MODEL:
+        raise RuntimeError(f"Local generator health reported unexpected model {health.get('model')}")
+    if str(health.get("model_revision") or "").strip() != expected_revision:
+        raise RuntimeError(
+            f"Local generator revision {health.get('model_revision')!r} does not match warmup revision {expected_revision}"
+        )
+    if int(health.get("context_window") or 0) <= 0:
+        raise RuntimeError("Local MedSwin server did not report a context window")
+    if health.get("prompt_policy") != "fail_on_overflow_no_truncation":
+        raise RuntimeError("Local MedSwin server is not enforcing fail-on-overflow/no-truncation")
+
+
+def _start_local_medswin(expected_revision: str) -> tuple[subprocess.Popen[Any] | None, dict[str, Any]]:
     completions_url = os.getenv("MEDSWIN_LLM_URL", "http://127.0.0.1:8000/v1/chat/completions")
     health_url = _health_url(completions_url)
+    existing_health: dict[str, Any] | None = None
     try:
-        health = _wait_http(health_url, None, 2.0)
-        if health.get("model") != "MedSwin/MedSwin-DaRE-TIES-KD-0.7":
-            raise RuntimeError(f"Port already serves the wrong model: {health.get('model')}")
-        if not health.get("context_window"):
-            raise RuntimeError("Existing MedSwin server does not report its context window")
-        return None, health
+        existing_health = _wait_http(health_url, None, 2.0)
     except Exception:
-        pass
+        existing_health = None
+    if existing_health is not None:
+        # If a service is already bound to the requested port, it must be the
+        # exact pinned MedSwin server. Never hide a wrong-service conflict by
+        # attempting to start another process on the same port.
+        _validate_local_health(existing_health, expected_revision)
+        return None, existing_health
 
     log_path = REPO_ROOT / "logs" / "full-eval-medswin-llm.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -308,18 +416,17 @@ def _start_local_medswin() -> tuple[subprocess.Popen[Any] | None, dict[str, Any]
         stdout=log_handle,
         stderr=subprocess.STDOUT,
     )
-    health = _wait_http(
-        health_url,
-        process,
-        float(os.getenv("MEDSWIN_LLM_STARTUP_TIMEOUT_S", "900")),
-    )
-    if health.get("model") != "MedSwin/MedSwin-DaRE-TIES-KD-0.7":
+    try:
+        health = _wait_http(
+            health_url,
+            process,
+            float(os.getenv("MEDSWIN_LLM_STARTUP_TIMEOUT_S", "900")),
+        )
+        _validate_local_health(health, expected_revision)
+        return process, health
+    except Exception:
         _terminate(process)
-        raise RuntimeError(f"Local generator health reported unexpected model {health.get('model')}")
-    if not health.get("context_window"):
-        _terminate(process)
-        raise RuntimeError("Local MedSwin server did not report a context window")
-    return process, health
+        raise
 
 
 def _shared_eval_envelope() -> dict[str, int]:
@@ -338,15 +445,23 @@ def _shared_eval_envelope() -> dict[str, int]:
     return values
 
 
-def _api_env(generator: str, port: int, org_id: str) -> dict[str, str]:
+def _expected_generator_model(generator: str) -> str:
+    if generator == "medswin_local":
+        return EXPECTED_LOCAL_MODEL
+    return os.getenv("FOUNDRY_MODEL", "gpt-5.4")
+
+
+def _api_env(generator: str, port: int, org_id: str, manifest: dict[str, Any]) -> dict[str, str]:
     env = os.environ.copy()
     envelope = _shared_eval_envelope()
+    env.update(_runtime_artifact_env(manifest))
     env.update(
         {
             "CLOUD_MODE": "true",
-            "CLOUD_EMBEDDING": "embed-v-4-0",
+            "CLOUD_EMBEDDING": EXPECTED_EMBEDDING,
+            "CLOUD_EMBEDDING_DIMENSION": str(int(manifest.get("embedding_dim") or 1536)),
             "CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE": "query",
-            "CLOUD_RERANKER": "Cohere-rerank-v4.0-fast",
+            "CLOUD_RERANKER": EXPECTED_RERANKER,
             "GENERATION_BACKEND": generator,
             "FOUNDRY_MODEL": os.getenv("FOUNDRY_MODEL", "gpt-5.4"),
             "CLOUD_MODEL": os.getenv("FOUNDRY_MODEL", "gpt-5.4"),
@@ -354,6 +469,8 @@ def _api_env(generator: str, port: int, org_id: str) -> dict[str, str]:
             "BENCHMARK_ORG_ID": org_id,
             "MEDSWIN_BASE_URL": f"http://127.0.0.1:{port}",
             "NAIVE_ENABLE_MONGO_FALLBACK": "false",
+            "ENABLE_BM25": "true",
+            "DISABLE_DATASET_PRELOAD": "true",
             "TOKEN_BUDGET_B": str(envelope["token_budget"]),
             "AGENT_PASSAGE_LIMIT": str(envelope["agent_passage_limit"]),
             "AGENT_PASSAGE_MAX_CHARS": str(envelope["agent_passage_max_chars"]),
@@ -363,7 +480,32 @@ def _api_env(generator: str, port: int, org_id: str) -> dict[str, str]:
     return env
 
 
-def _start_api(generator: str, port: int, org_id: str) -> subprocess.Popen[Any]:
+def _validate_api_health(health: dict[str, Any], generator: str, manifest: dict[str, Any]) -> None:
+    expected_model = _expected_generator_model(generator)
+    failures: list[str] = []
+    if health.get("status") != "healthy":
+        failures.append(f"status={health.get('status')}")
+    if health.get("cloud_mode") is not True:
+        failures.append("cloud_mode_not_true")
+    if health.get("generation_backend") != generator:
+        failures.append(f"generation_backend={health.get('generation_backend')!r}")
+    if health.get("generation_model") != expected_model:
+        failures.append(f"generation_model={health.get('generation_model')!r}")
+    if health.get("embedding_model") != EXPECTED_EMBEDDING:
+        failures.append(f"embedding_model={health.get('embedding_model')!r}")
+    if health.get("reranker_model") != EXPECTED_RERANKER:
+        failures.append(f"reranker_model={health.get('reranker_model')!r}")
+    if health.get("active_embedding_space") != f"cloud:{EXPECTED_EMBEDDING}":
+        failures.append(f"embedding_space={health.get('active_embedding_space')!r}")
+    if int(health.get("active_embedding_dimension") or 0) != int(manifest.get("embedding_dim") or 0):
+        failures.append(f"embedding_dimension={health.get('active_embedding_dimension')!r}")
+    if health.get("dataset_preload_disabled") is not True:
+        failures.append("dataset_preload_not_disabled")
+    if failures:
+        raise RuntimeError("Full-eval API identity preflight failed: " + ", ".join(failures))
+
+
+def _start_api(generator: str, port: int, org_id: str, manifest: dict[str, Any]) -> subprocess.Popen[Any]:
     log_path = REPO_ROOT / "logs" / f"full-eval-api-{generator}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_handle = log_path.open("ab", buffering=0)
@@ -379,12 +521,17 @@ def _start_api(generator: str, port: int, org_id: str) -> subprocess.Popen[Any]:
             str(port),
         ],
         cwd=REPO_ROOT,
-        env=_api_env(generator, port, org_id),
+        env=_api_env(generator, port, org_id, manifest),
         stdout=log_handle,
         stderr=subprocess.STDOUT,
     )
-    _wait_http(f"http://127.0.0.1:{port}/health", process, 180.0)
-    return process
+    try:
+        health = _wait_http(f"http://127.0.0.1:{port}/health", process, 180.0)
+        _validate_api_health(health, generator, manifest)
+        return process
+    except Exception:
+        _terminate(process)
+        raise
 
 
 async def _run_cell(
@@ -396,6 +543,7 @@ async def _run_cell(
     gold_present: set[str],
     top_k: int,
     timeout_s: float,
+    manifest: dict[str, Any],
 ) -> RunAudit:
     run_id = f"full-{pipeline}-{generator}-{uuid.uuid4().hex[:10]}"
     envelope = _shared_eval_envelope()
@@ -405,18 +553,16 @@ async def _run_cell(
         config={
             "pipeline": pipeline,
             "generator": generator,
-            "generator_model": (
-                "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
-                if generator == "medswin_local"
-                else os.getenv("FOUNDRY_MODEL", "gpt-5.4")
-            ),
-            "embedding_model": "embed-v-4-0",
+            "generator_model": _expected_generator_model(generator),
+            "embedding_model": EXPECTED_EMBEDDING,
             "embedding_input_type": "query",
-            "reranker_model": "Cohere-rerank-v4.0-fast" if pipeline == "medswin" else None,
+            "corpus_embedding_input_type": manifest.get("embedding_input_type"),
+            "reranker_model": EXPECTED_RERANKER if pipeline == "medswin" else None,
             "cases": len(cases),
             "top_k": top_k,
             "strict_full_corpus": True,
             "shared_generation_envelope": envelope,
+            "runtime_artifacts": _runtime_artifact_env(manifest),
         },
     )
     base_url = f"http://127.0.0.1:{port}"
@@ -475,13 +621,15 @@ async def _run_cell(
                 f"errors={len(strict_errors)} msas={case_audit.msas:.4f}",
                 flush=True,
             )
+
     aggregate_run(run)
     run.diagnostics.update(
         {
             "strict_error_cases": sum(1 for case in run.cases if case.errors),
-            "strict_pass": all(not case.errors for case in run.cases),
+            "strict_pass": len(run.cases) == EXPECTED_QUERIES and all(not case.errors for case in run.cases),
             "generator": generator,
             "pipeline": pipeline,
+            "expected_cases": EXPECTED_QUERIES,
         }
     )
     return run
@@ -508,13 +656,19 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
     manifest = _validate_runtime_manifest(args.org_id)
     cases_path = Path(args.cases_path or manifest.get("cases_path") or DEFAULT_CASES)
     cases = _load_cases(cases_path)
-    gold_present = _qrel_presence(cases, args.org_id)
 
-    local_process, local_health = _start_local_medswin()
+    # Re-verify the CURRENT Mongo/FTS/HNSW state here. This makes direct
+    # run_full_matrix.py invocation as strict as the start-local.sh wrapper and
+    # catches post-preparation deletion/corruption before model quota is spent.
+    verification = _verify_persisted_runtime(manifest, args.org_id, cases_path)
+    gold_present = _qrel_presence(cases, args.org_id)
+    expected_revision = _expected_model_revision()
+
+    local_process, local_health = _start_local_medswin(expected_revision)
     results: dict[str, RunAudit] = {}
     try:
         for generator in ("medswin_local", "foundry"):
-            api_process = _start_api(generator, args.api_port, args.org_id)
+            api_process = _start_api(generator, args.api_port, args.org_id, manifest)
             try:
                 for pipeline in ("naive_rag", "medswin"):
                     key = f"{pipeline}:{generator}"
@@ -527,6 +681,7 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
                         gold_present,
                         args.top_k,
                         args.timeout,
+                        manifest,
                     )
                     results[key] = run
                     output = _save_run(run)
@@ -538,9 +693,8 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
                 _terminate(api_process)
                 await asyncio.sleep(1.0)
 
-            # If this runner owns the local 7B process, release its GPU memory
-            # before launching the GPT-only cells. An externally managed server
-            # is never killed by the benchmark runner.
+            # Release runner-owned 7B GPU memory before GPT-only cells. An
+            # externally managed exact-revision server is never terminated.
             if generator == "medswin_local" and local_process is not None:
                 _terminate(local_process)
                 local_process = None
@@ -548,17 +702,30 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
     finally:
         _terminate(local_process)
 
+    expected_keys = {
+        "naive_rag:medswin_local",
+        "naive_rag:foundry",
+        "medswin:medswin_local",
+        "medswin:foundry",
+    }
+    if set(results) != expected_keys:
+        raise RuntimeError(f"Evaluation matrix is incomplete: got={sorted(results)} expected={sorted(expected_keys)}")
+
     matrix = {
         "created_at": _now(),
         "complete_trec_runtime": manifest,
+        "persisted_runtime_verification": verification,
         "local_medswin_health": local_health,
+        "local_medswin_revision": expected_revision,
         "shared_generation_envelope": _shared_eval_envelope(),
+        "runtime_artifacts": _runtime_artifact_env(manifest),
         "cells": {
             key: {
                 "run_id": run.run_id,
                 "strict_pass": bool(run.diagnostics.get("strict_pass")),
                 "aggregate": run.aggregate,
                 "error_cases": int(run.diagnostics.get("strict_error_cases") or 0),
+                "cases": len(run.cases),
             }
             for key, run in results.items()
         },
@@ -579,7 +746,11 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
             "mean_msas": _metric(cloud, "mean_msas") - _metric(local, "mean_msas"),
             "mean_groundedness_proxy": _metric(cloud, "mean_groundedness_proxy") - _metric(local, "mean_groundedness_proxy"),
         }
-    matrix["strict_pass"] = all(cell["strict_pass"] for cell in matrix["cells"].values())
+
+    matrix["strict_pass"] = (
+        verification.get("strict_pass") is True
+        and all(cell["strict_pass"] and cell["cases"] == EXPECTED_QUERIES for cell in matrix["cells"].values())
+    )
     path = _run_output_dir() / f"full-matrix-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
     path.write_text(json.dumps(matrix, indent=2, default=str), encoding="utf-8")
     matrix["matrix_path"] = str(path)
@@ -595,7 +766,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-port", type=int, default=int(os.getenv("FULL_EVAL_API_PORT", "8110")))
     parser.add_argument("--top-k", type=int, default=int(os.getenv("FULL_EVAL_TOP_K", "5")))
     parser.add_argument("--timeout", type=float, default=float(os.getenv("FULL_EVAL_REQUEST_TIMEOUT_S", "600")))
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.top_k <= 0:
+        parser.error("--top-k must be positive")
+    if args.timeout <= 0:
+        parser.error("--timeout must be positive")
+    return args
 
 
 def main() -> int:
