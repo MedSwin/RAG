@@ -54,6 +54,10 @@ class CaseAudit(BaseModel):
     policy_passed: bool | None = None
     degraded_mode: bool | None = None
     answer_chars: int = 0
+    # ``ranked_doc_ids`` preserves the final evidence order presented to the
+    # generator. ``selected_doc_ids`` remains the de-duplicated set-shaped view
+    # used by legacy system-audit metrics.
+    ranked_doc_ids: list[str] = Field(default_factory=list)
     selected_doc_ids: list[str] = Field(default_factory=list)
     cited_doc_ids: list[str] = Field(default_factory=list)
     selected_chunk_ids: list[str] = Field(default_factory=list)
@@ -63,6 +67,14 @@ class CaseAudit(BaseModel):
     gold_available_in_index: int | None = None
     gold_available_but_not_retrieved: bool | None = None
     failure_bucket: str | None = None
+
+    # TREC/qrel-grounded ranked evidence measures. These are intentionally
+    # separate from architecture-specific MSAS diagnostics.
+    ndcg_at_10: float = 0.0
+    precision_at_10: float = 0.0
+    recall_at_10: float = 0.0
+    reciprocal_rank: float = 0.0
+
     facet_recall: float = 0.0
     critical_facet_recall: float = 0.0
     evidence_doc_recall: float = 0.0
