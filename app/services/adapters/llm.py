@@ -15,7 +15,10 @@ MEDSWIN_MODEL_ID = "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
 
 
 def _generation_backend() -> str:
-    value = (os.getenv("GENERATION_BACKEND") or "").strip().lower()
+    # Process-level override is intentional: the strict matrix swaps generator
+    # profiles between API subprocesses while using the same cloud retrieval
+    # configuration. Direct uvicorn/.env launches use the first-class setting.
+    value = (os.getenv("GENERATION_BACKEND") or settings.GENERATION_BACKEND or "").strip().lower()
     if value:
         aliases = {
             "medswin": "medswin_local",
@@ -45,20 +48,18 @@ class LLMClient:
     ):
         self.backend = _generation_backend()
         if self.backend == "medswin_local":
-            base_url = os.getenv("MEDSWIN_LLM_URL", "http://127.0.0.1:8000/v1/chat/completions")
-            model = os.getenv("MEDSWIN_LLM_MODEL", MEDSWIN_MODEL_ID)
+            base_url = os.getenv("MEDSWIN_LLM_URL") or settings.MEDSWIN_LLM_URL
+            model = os.getenv("MEDSWIN_LLM_MODEL") or settings.MEDSWIN_LLM_MODEL or MEDSWIN_MODEL_ID
             api_key = None
         elif self.backend == "foundry":
-            # The user's deployment name is surfaced as FOUNDRY_MODEL; retain
-            # CLOUD_MODEL as a backward-compatible alias.
-            model = os.getenv("FOUNDRY_MODEL") or model or settings.CLOUD_MODEL
+            model = os.getenv("FOUNDRY_MODEL") or settings.active_generation_model() or model
             api_key = api_key or settings.AZURE_AI_FOUNDRY_API_KEY
             if settings.CLOUD_MODE:
                 base_url = settings.cloud_chat_url()
 
         self.base_url = base_url
         self.timeout = timeout or settings.LLM_TIMEOUT_S
-        self.model = model or (settings.CLOUD_MODEL if settings.CLOUD_MODE else "default")
+        self.model = model or (settings.active_generation_model() if settings.CLOUD_MODE else "default")
         self.api_key = api_key
         self.client = httpx.AsyncClient(timeout=self.timeout)
         self.rate_limit_key = f"llm:{self.backend}:{self.base_url}:{self.model}"
@@ -71,10 +72,7 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        payload = {
-            "model": self.model,
-            "messages": messages,
-        }
+        payload = {"model": self.model, "messages": messages}
         if not self.model.lower().startswith("gpt-5"):
             payload["temperature"] = temperature
 
