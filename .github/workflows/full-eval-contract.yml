@@ -191,9 +191,10 @@ jobs:
       - name: Validate Compose graph
         run: |
           docker compose config > /tmp/medswin-compose.yml
-          grep -q '8100:8100' /tmp/medswin-compose.yml
-          grep -q 'medswin-api' /tmp/medswin-compose.yml
-          grep -q 'medswin-mongodb' /tmp/medswin-compose.yml
+          grep -q 'target: 8100' /tmp/medswin-compose.yml
+          grep -Eq 'published: "?8100"?' /tmp/medswin-compose.yml
+          grep -q 'container_name: medswin-api' /tmp/medswin-compose.yml
+          grep -q 'container_name: medswin-mongodb' /tmp/medswin-compose.yml
           ! grep -q 'medical_rag_db' /tmp/medswin-compose.yml
       - name: Build supported container image
         run: docker build --progress=plain -t medswin-ci .
