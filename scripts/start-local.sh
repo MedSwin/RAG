@@ -322,12 +322,15 @@ run_full_eval() {
     local eval_data_dir="${FULL_EVAL_DATA_DIR:-./data/full-trec-benchmark}"
     local prep_args=(--org-id "$bench_org")
 
-    # Publication artifacts are isolated from the ordinary developer index.
-    # All prep/verification/matrix subprocesses inherit these exact paths, so a
-    # full benchmark cannot overwrite ./data/hnsw_index.bin or a dev BM25 file.
+    # Publication artifacts are isolated from every ordinary developer ANN/BM25
+    # path. HybridIndex can union HNSW and FAISS when both are present, so FAISS
+    # must be isolated too even though the strict full-corpus builder only writes
+    # HNSW. This prevents a stale developer FAISS file from contaminating runs.
     mkdir -p "$eval_data_dir"
     export HNSW_INDEX_PATH="${FULL_EVAL_HNSW_INDEX_PATH:-${eval_data_dir}/hnsw_index.bin}"
     export HNSW_MAPPING_PATH="${FULL_EVAL_HNSW_MAPPING_PATH:-${eval_data_dir}/hnsw_mapping.sqlite}"
+    export FAISS_INDEX_PATH="${FULL_EVAL_FAISS_INDEX_PATH:-${eval_data_dir}/faiss_unused.bin}"
+    export FAISS_MAPPING_PATH="${FULL_EVAL_FAISS_MAPPING_PATH:-${eval_data_dir}/faiss_unused.json}"
     export LEXICAL_FTS_PATH="${FULL_EVAL_LEXICAL_FTS_PATH:-${eval_data_dir}/bm25.sqlite}"
     export LLM_TIMEOUT_S="${FULL_EVAL_LLM_TIMEOUT_S:-600}"
 
