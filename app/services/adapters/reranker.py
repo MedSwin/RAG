@@ -58,7 +58,13 @@ class RerankerClient:
 
         headers = {}
         if self.api_key:
-            headers["api-key"] = self.api_key
+            if self.provider == "cohere":
+                # Cohere ClientV2 sends its api_key as a Bearer token. Matching
+                # that wire contract is required for Foundry's provider-specific
+                # /providers/cohere/v2/rerank route.
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            else:
+                headers["api-key"] = self.api_key
         if request_id:
             headers["X-Request-ID"] = request_id
 
