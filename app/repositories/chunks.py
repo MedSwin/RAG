@@ -10,27 +10,36 @@ logger = logging.getLogger(__name__)
 
 
 class ChunkRepository(BaseRepository):
-    """Repository for chunks with tenant-scoped natural identities."""
+    """Repository for chunks with tenant-scoped natural identities.
+
+    Lexical retrieval is implemented by the runtime BM25/SQLite-FTS layer, not
+    Mongo ``$text``. We intentionally do not maintain a second text index over
+    millions of chunk bodies because it duplicates the retrieval corpus and can
+    make complete-TREC ingestion substantially more expensive.
+    """
 
     def __init__(self):
         super().__init__("chunks")
 
     async def create_indexes(self):
-        """Create tenant-safe indexes for chunks."""
+        """Create tenant-safe indexes for chunks and remove legacy text indexes."""
         try:
             info = await self.collection.index_information()
             for name, spec in info.items():
                 keys = spec.get("key") or []
                 if keys == [("chunk_id", 1)] and spec.get("unique"):
                     await self.collection.drop_index(name)
+                    continue
+                if any(str(kind) == "text" for _field, kind in keys):
+                    await self.collection.drop_index(name)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not inspect/drop legacy chunk_id index: %s", exc)
+            logger.warning("Could not migrate legacy chunk indexes: %s", exc)
+            raise
 
         await self.collection.create_index([("org_id", 1), ("chunk_id", 1)], unique=True)
         await self.collection.create_index([("org_id", 1), ("doc_id", 1)])
         await self.collection.create_index([("org_id", 1), ("source_type", 1)])
         await self.collection.create_index([("org_id", 1), ("patient_id", 1)])
-        await self.collection.create_index([("text", "text")])
         logger.info("Chunks collection tenant-safe indexes created")
 
     async def create(self, chunk: Chunk, org_id: str) -> Dict[str, Any]:
