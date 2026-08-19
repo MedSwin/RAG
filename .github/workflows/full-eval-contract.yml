@@ -45,6 +45,15 @@ jobs:
           grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE.*query' eval/scripts/run_full_matrix.py
           grep -q 'EXPECTED_MAC_AGENTS = {"emr", "guideline", "safety", "quality", "critic"}' eval/scripts/run_full_matrix.py
           grep -q 'verify_full_trec_runtime.py' scripts/start-local.sh
+      - name: Assert reproducible generator contract
+        run: |
+          grep -q 'HfApi' scripts/warmup-eval.py
+          grep -q 'revision=revision' scripts/warmup-eval.py
+          grep -q 'model_revision' scripts/serve-medswin-llm.py
+          grep -q 'fail_on_overflow_no_truncation' scripts/serve-medswin-llm.py
+          grep -q 'LLM_DEFAULT_MAX_TOKENS' app/services/adapters/llm.py
+          grep -q 'AGENT_PASSAGE_LIMIT' app/agents/base.py
+          grep -q 'shared_generation_envelope' eval/scripts/run_full_matrix.py
       - name: Assert benchmark isolation
         run: |
           grep -q '^CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=$' env.example
@@ -52,11 +61,16 @@ jobs:
           grep -q 'full-trec-benchmark' scripts/start-local.sh
           grep -q 'FULL_EVAL_LLM_TIMEOUT_S' scripts/start-local.sh
           grep -q 'HNSW_MAPPING_PATH=.*hnsw_mapping.sqlite' scripts/start-local.sh
+          grep -q 'FAISS_INDEX_PATH=.*faiss_unused.bin' scripts/start-local.sh
+          grep -q 'FAISS_MAPPING_PATH=.*faiss_unused.json' scripts/start-local.sh
           grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query' scripts/start-local.sh
       - name: Assert provider-safe configuration
         run: |
           grep -q 'CLOUD_EMBEDDING_URI: Optional\[str\] = None' app/core/config.py
           grep -q 'CLOUD_RERANKER_URI: Optional\[str\] = None' app/core/config.py
           grep -q 'providers/cohere/v2/rerank' app/core/config.py
+          grep -q 'search_document' app/services/adapters/embedding.py
+          grep -q 'search_query' app/services/adapters/embedding.py
+          grep -q 'cohere_native' app/services/adapters/embedding.py
           grep -q 'Authorization.*Bearer' app/services/adapters/reranker.py
           ! grep -q 'parth-pandya' app/core/config.py
