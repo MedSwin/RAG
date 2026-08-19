@@ -319,7 +319,18 @@ print_banner() {
 run_full_eval() {
     local bench_org="${BENCHMARK_ORG_ID:-bench-org}"
     local checkpoint="data/eval-warmup/full-trec-${bench_org}-checkpoint.json"
+    local eval_data_dir="${FULL_EVAL_DATA_DIR:-./data/full-trec-benchmark}"
     local prep_args=(--org-id "$bench_org")
+
+    # Publication artifacts are isolated from the ordinary developer index.
+    # All prep/verification/matrix subprocesses inherit these exact paths, so a
+    # full benchmark cannot overwrite ./data/hnsw_index.bin or a dev BM25 file.
+    mkdir -p "$eval_data_dir"
+    export HNSW_INDEX_PATH="${FULL_EVAL_HNSW_INDEX_PATH:-${eval_data_dir}/hnsw_index.bin}"
+    export HNSW_MAPPING_PATH="${FULL_EVAL_HNSW_MAPPING_PATH:-${eval_data_dir}/hnsw_mapping.sqlite}"
+    export LEXICAL_FTS_PATH="${FULL_EVAL_LEXICAL_FTS_PATH:-${eval_data_dir}/bm25.sqlite}"
+    export LLM_TIMEOUT_S="${FULL_EVAL_LLM_TIMEOUT_S:-600}"
+
     run_eval_warmup
     # A first publication build must never mix an old smoke/sample corpus with
     # the complete corpus. Once a compatible checkpoint exists, resume/reuse it.
@@ -327,10 +338,10 @@ run_full_eval() {
         prep_args+=(--reset)
     fi
     echo -e "${YELLOW}Preparing complete TREC-CDS runtime corpus and indexes ...${NC}"
-    CLOUD_MODE=true CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query \
+    CLOUD_MODE=true \
         python3 eval/scripts/prepare_full_trec_runtime.py "${prep_args[@]}"
     echo -e "${YELLOW}Verifying persisted 100% TREC corpus, embeddings, BM25 and HNSW ...${NC}"
-    CLOUD_MODE=true CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query \
+    CLOUD_MODE=true \
         python3 eval/scripts/verify_full_trec_runtime.py --org-id "$bench_org"
     echo -e "${YELLOW}Running strict naive/full × MedSwin/GPT-5.4 matrix ...${NC}"
     CLOUD_MODE=true CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query \
