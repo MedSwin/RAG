@@ -3,7 +3,6 @@
 import asyncio
 import httpx
 import logging
-import os
 from typing import List, Optional
 
 import numpy as np
@@ -12,27 +11,6 @@ from app.core.config import settings
 from app.services.adapters.limiter import request_with_model_rate_limit
 
 logger = logging.getLogger(__name__)
-
-
-def _foundry_models_embedding_url() -> str:
-    """Resolve the Azure Foundry Models embeddings route for Cohere Embed.
-
-    `embed-v-4-0` is a Foundry Model, not an Azure OpenAI embedding deployment.
-    The Foundry Models API uses /models/embeddings and accepts the deployment/model
-    name in the request body. An explicit CLOUD_EMBEDDING_URI always wins.
-    """
-    explicit = (os.getenv("CLOUD_EMBEDDING_URI") or "").strip()
-    if explicit:
-        return explicit
-    endpoint = (settings.AZURE_AI_FOUNDRY_ENDPOINT or "").strip().rstrip("/")
-    if not endpoint:
-        return ""
-    for suffix in ("/openai/v1", "/openai"):
-        if endpoint.endswith(suffix):
-            endpoint = endpoint[: -len(suffix)]
-            break
-    api_version = os.getenv("CLOUD_MODEL_INFERENCE_API_VERSION", "2024-05-01-preview")
-    return f"{endpoint}/models/embeddings?api-version={api_version}"
 
 
 class EmbeddingClient:
@@ -51,8 +29,8 @@ class EmbeddingClient:
         model: Optional[str] = None,
         api_key: Optional[str] = None,
     ):
-        if settings.CLOUD_MODE and settings.CLOUD_EMBEDDING == "embed-v-4-0":
-            base_url = _foundry_models_embedding_url() or base_url
+        if settings.CLOUD_MODE:
+            base_url = settings.cloud_embedding_url() or base_url
         self.base_url = base_url
         self.timeout = timeout or settings.EMBED_TIMEOUT_S
         self.model = model or (settings.CLOUD_EMBEDDING if settings.CLOUD_MODE else "default")
@@ -78,7 +56,7 @@ class EmbeddingClient:
         if not texts:
             return []
         if settings.CLOUD_MODE and input_type is None:
-            configured_default = (os.getenv("CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE") or "").strip().lower()
+            configured_default = (settings.CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE or "").strip().lower()
             input_type = configured_default or None
         if input_type not in {None, "query", "document", "text"}:
             raise ValueError("input_type must be query, document, text, or None")
