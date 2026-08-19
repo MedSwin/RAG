@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -13,39 +14,97 @@ logger = logging.getLogger(__name__)
 
 
 class HybridIndex:
-    """Query HNSW and FAISS IVF, merge by dense similarity."""
+    """Query HNSW and FAISS IVF, reloading completed artifact generations."""
 
     def __init__(self):
         self._hnsw = None
         self._faiss = None
         self._embedding_dim: Optional[int] = None
+        self._artifact_signature: Optional[Tuple[Any, ...]] = None
+
+    @staticmethod
+    def _path_signature(path_value: str) -> Tuple[str, int, int]:
+        path = Path(path_value)
+        try:
+            stat = path.stat()
+            return str(path.resolve()), int(stat.st_mtime_ns), int(stat.st_size)
+        except OSError:
+            return str(path.resolve()), 0, 0
+
+    def _current_signature(self) -> Tuple[Any, ...]:
+        hnsw_manifest = f"{settings.HNSW_INDEX_PATH}.manifest.json"
+        faiss_manifest = f"{settings.FAISS_INDEX_PATH}.manifest.json"
+        return (
+            self._path_signature(settings.HNSW_INDEX_PATH),
+            self._path_signature(settings.HNSW_MAPPING_PATH),
+            self._path_signature(hnsw_manifest),
+            self._path_signature(settings.FAISS_INDEX_PATH),
+            self._path_signature(settings.FAISS_MAPPING_PATH),
+            self._path_signature(faiss_manifest),
+        )
+
+    @staticmethod
+    def _close_mapping(index: Any) -> None:
+        mapping = getattr(index, "mapping", None)
+        close = getattr(mapping, "close", None)
+        if close is not None:
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _load(self, embedding_dim: int) -> None:
-        if self._hnsw is not None and self._embedding_dim == embedding_dim:
+        signature = self._current_signature()
+        if (
+            self._hnsw is not None
+            and self._embedding_dim == embedding_dim
+            and self._artifact_signature == signature
+        ):
             return
-        self._embedding_dim = embedding_dim
+
+        # Preserve the previous in-memory generation until all new loaders have
+        # had a chance to open the staged files. Storage writes the manifest
+        # after index+mapping replacement, so a signature change represents a
+        # completed ordinary generation rather than a partially written file.
+        old_hnsw = self._hnsw
+        old_faiss = self._faiss
+        new_hnsw = None
+        new_faiss = None
         try:
             from app.core.indexing import load_hnsw_index
 
-            self._hnsw = load_hnsw_index(
+            new_hnsw = load_hnsw_index(
                 embedding_dim,
                 settings.HNSW_INDEX_PATH,
                 settings.HNSW_MAPPING_PATH,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("HNSW load failed: %s", exc)
-            self._hnsw = None
         try:
             from app.core.indexing import load_faiss_ivf_index
 
-            self._faiss = load_faiss_ivf_index(
+            new_faiss = load_faiss_ivf_index(
                 embedding_dim,
                 settings.FAISS_INDEX_PATH,
                 settings.FAISS_MAPPING_PATH,
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("FAISS load skipped/failed: %s", exc)
-            self._faiss = None
+
+        if new_hnsw is None and new_faiss is None and (old_hnsw is not None or old_faiss is not None):
+            # A transient filesystem race should not take a live retriever from
+            # a valid old generation to no ANN at all. Retry on the next query.
+            logger.warning("New ANN generation could not be loaded; retaining previous in-memory generation")
+            return
+
+        self._hnsw = new_hnsw
+        self._faiss = new_faiss
+        self._embedding_dim = embedding_dim
+        self._artifact_signature = signature
+        if old_hnsw is not None and old_hnsw is not new_hnsw:
+            self._close_mapping(old_hnsw)
+        if old_faiss is not None and old_faiss is not new_faiss:
+            self._close_mapping(old_faiss)
 
     def query(
         self,
@@ -80,3 +139,9 @@ class HybridIndex:
 
         ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:k]
         return [chunk_id for chunk_id, _ in ranked], {cid: scores[cid] for cid, _ in ranked}
+
+    def close(self) -> None:
+        self._close_mapping(self._hnsw)
+        self._close_mapping(self._faiss)
+        self._hnsw = None
+        self._faiss = None
