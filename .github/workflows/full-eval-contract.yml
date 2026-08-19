@@ -1,0 +1,40 @@
+name: Full evaluation contract checks
+
+on:
+  pull_request:
+    paths:
+      - "app/**"
+      - "eval/**"
+      - "scripts/**"
+      - "requirements.txt"
+      - "env.example"
+      - ".github/workflows/full-eval-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python sources
+        run: python -m compileall -q app eval scripts
+      - name: Validate startup shell
+        run: bash -n scripts/start-local.sh
+      - name: Assert strict full-eval entrypoints
+        run: |
+          test -f scripts/warmup-eval.py
+          test -f scripts/serve-medswin-llm.py
+          test -f eval/scripts/prepare_full_trec_runtime.py
+          test -f eval/scripts/run_full_matrix.py
+          grep -q 'EXPECTED_DOCS = 1_255_260' eval/scripts/prepare_full_trec_runtime.py
+          grep -q 'EXPECTED_QUERIES = 30' eval/scripts/run_full_matrix.py
+          grep -q 'input_type="document"' eval/scripts/prepare_full_trec_runtime.py
+          grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE.*query' eval/scripts/run_full_matrix.py
