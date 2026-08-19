@@ -2,28 +2,12 @@
 
 import httpx
 import logging
-import os
 from typing import List, Dict, Any, Optional
 
 from app.core.config import settings
 from app.services.adapters.limiter import request_with_model_rate_limit
 
 logger = logging.getLogger(__name__)
-
-
-def _foundry_cohere_rerank_url() -> str:
-    """Resolve Cohere's v2 rerank route from the configured Foundry account."""
-    explicit = (os.getenv("CLOUD_RERANKER_URI") or "").strip()
-    if explicit:
-        return explicit
-    endpoint = (settings.AZURE_AI_FOUNDRY_ENDPOINT or "").strip().rstrip("/")
-    if not endpoint:
-        return ""
-    for suffix in ("/openai/v1", "/openai"):
-        if endpoint.endswith(suffix):
-            endpoint = endpoint[: -len(suffix)]
-            break
-    return f"{endpoint}/providers/cohere/v2/rerank"
 
 
 class RerankerClient:
@@ -38,7 +22,7 @@ class RerankerClient:
         provider: Optional[str] = None,
     ):
         if settings.CLOUD_MODE:
-            base_url = _foundry_cohere_rerank_url() or base_url
+            base_url = settings.cloud_reranker_url() or base_url
         self.base_url = base_url
         self.timeout = timeout or settings.RERANK_TIMEOUT_S
         self.model = model or (settings.CLOUD_RERANKER if settings.CLOUD_MODE else "default")
