@@ -16,9 +16,9 @@ from app.schemas.evidence import CandidatePassage
 logger = logging.getLogger(__name__)
 
 # A global ANN index cannot apply Mongo metadata filters before nearest-neighbor
-# selection. For tiny scoped corpora (notably one TREC patient's EMR chunks), an
-# exact scan is both cheap and necessary: otherwise a global top-40 dominated by
-# 1.25M literature chunks can be filtered down to zero EMR passages.
+# selection. For small tenant/patient/source scopes an exact scan is both cheap
+# and necessary: otherwise a shared top-k can be dominated by another tenant or
+# by the 1.25M literature corpus before Mongo metadata filtering occurs.
 EXACT_FILTER_SCAN_MAX = 5_000
 
 
@@ -109,9 +109,10 @@ class DenseRetriever:
         constraints: Optional[Dict[str, Any]] = None,
     ) -> List[CandidatePassage]:
         try:
-            # Oversample before metadata filtering. This improves filtered LIT
-            # retrieval without changing the public top-k result contract.
-            ann_k = max(k, min(k * 4, 500)) if source_type_filter else k
+            # Every online query is at least org-filtered after ANN label
+            # resolution. Oversample the shared index even without an explicit
+            # source filter, then use bounded exact recovery for small scopes.
+            ann_k = max(k, min(k * 4, 500))
             chunk_ids, score_map = self.index.query(query_embedding, ann_k)
             filter_dict = retrieval_filter(org_id, source_type_filter, patient_id, constraints)
             candidates: List[CandidatePassage] = []
@@ -125,9 +126,11 @@ class DenseRetriever:
                     for chunk in chunks
                 )
 
-            # Source-balanced MAC probes need patient EMR / small CPG / safety
-            # pools even when those chunks cannot appear in the global ANN top-k.
-            if source_type_filter in {SourceType.EMR, SourceType.CPG, SourceType.SAFETY} and len(candidates) < k:
+            # If metadata filtering removes ANN neighbors, recover exactly only
+            # when the entire scoped corpus is small enough to scan safely. For
+            # the complete TREC literature org this count exceeds the cap, so
+            # publication retrieval remains ANN-only and scalable.
+            if len(candidates) < k:
                 exact = await self._small_filtered_exact(query_embedding, filter_dict, k)
                 by_id = {candidate.chunk_id: candidate for candidate in candidates}
                 for candidate in exact:
