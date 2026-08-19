@@ -1,81 +1,100 @@
-# LEGACY compose contract — not the supported local path.
-# Canonical admin runbook: docs/ADMIN.md  (APP_PORT=8100, MONGODB_DB=medswin,
-# ./scripts/start-local.sh). This file still publishes the API on 8000 and
-# initializes medical_rag_db. Do not mix those numbers with the operator docs.
-version: '3.8'
-
 services:
-  # MongoDB service
   mongodb:
-    image: mongo:6.0
-    container_name: rag_mongodb
+    image: mongo:7.0
+    container_name: medswin-mongodb
     restart: unless-stopped
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password123
-      MONGO_INITDB_DATABASE: medical_rag_db
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-password123}
+      MONGO_INITDB_DATABASE: medswin
     volumes:
       - mongodb_data:/data/db
-      - ./database/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --username $${MONGO_INITDB_ROOT_USERNAME} --password $${MONGO_INITDB_ROOT_PASSWORD} --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
     networks:
-      - rag_network
+      - medswin-network
 
-  # RAG API service
   rag_api:
-    build: .
-    container_name: rag_api
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: medswin-api
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8100:8100"
     environment:
-      - MONGODB_URL=mongodb://admin:password123@mongodb:27017/medical_rag_db?authSource=admin
-      - MONGODB_DATABASE=medical_rag_db
-      - EMBEDDING_MODEL_PATH=/app/models/MedEmbed-large-v0.1
-      - RERANKER_MODEL_PATH=/app/models/bge-reranker-v2-m3
-      - HNSW_INDEX_PATH=/app/data/hnsw_index.bin
-      - HNSW_MAPPING_PATH=/app/data/hnsw_mapping.json
-      - DATA_DIR=/app/data
-      - DEBUG=false
-      - LOG_LEVEL=INFO
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8100
+      MONGODB_URL: mongodb://${MONGO_ROOT_USERNAME:-admin}:${MONGO_ROOT_PASSWORD:-password123}@mongodb:27017/medswin?authSource=admin
+      MONGODB_DB: medswin
+      MONGODB_DATABASE: medswin
+      CLOUD_MODE: ${CLOUD_MODE:-true}
+      FOUNDRY_MODEL: ${FOUNDRY_MODEL:-gpt-5.4}
+      CLOUD_MODEL: ${FOUNDRY_MODEL:-gpt-5.4}
+      CLOUD_EMBEDDING: ${CLOUD_EMBEDDING:-embed-v-4-0}
+      CLOUD_RERANKER: ${CLOUD_RERANKER:-Cohere-rerank-v4.0-fast}
+      AZURE_AI_FOUNDRY_ENDPOINT: ${AZURE_AI_FOUNDRY_ENDPOINT:-}
+      AZURE_AI_FOUNDRY_API_KEY: ${AZURE_AI_FOUNDRY_API_KEY:-}
+      CLOUD_EMBEDDING_URI: ${CLOUD_EMBEDDING_URI:-}
+      CLOUD_RERANKER_URI: ${CLOUD_RERANKER_URI:-}
+      EMBEDDING_MODEL_PATH: /app/models/MedEmbed-large-v0.1
+      RERANKER_MODEL_PATH: /app/models/bge-reranker-v2-m3
+      MEDSWIN_MODEL_PATH: /app/models/MedSwin-DaRE-TIES-KD-0.7
+      HNSW_INDEX_PATH: /app/data/hnsw_index.bin
+      HNSW_MAPPING_PATH: /app/data/hnsw_mapping.json
+      FAISS_INDEX_PATH: /app/data/faiss_index.bin
+      FAISS_MAPPING_PATH: /app/data/faiss_mapping.json
+      TREE_INDEX_PATH: /app/data/tree_index.npy
+      TREE_MAPPING_PATH: /app/data/tree_mapping.json
+      DATA_DIR: /app/data
+      LOG_FILE: /app/logs/app.log
+      DEBUG: "false"
+      LOG_LEVEL: INFO
     volumes:
       - ./models:/app/models
       - ./data:/app/data
       - ./logs:/app/logs
       - ./storage:/app/storage
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8100/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     networks:
-      - rag_network
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+      - medswin-network
 
-  # Nginx reverse proxy (optional)
   nginx:
     image: nginx:alpine
-    container_name: rag_nginx
+    container_name: medswin-nginx
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
-      - rag_api
+      rag_api:
+        condition: service_healthy
     networks:
-      - rag_network
+      - medswin-network
 
 volumes:
   mongodb_data:
     driver: local
 
 networks:
-  rag_network:
+  medswin-network:
     driver: bridge
