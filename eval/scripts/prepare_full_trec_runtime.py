@@ -14,7 +14,10 @@ corpus preparation needed by the full evaluation matrix:
 * a disk-backed SQLite FTS5 BM25 corpus is built for the hybrid lexical stage;
 * HNSW is built incrementally rather than first collecting every vector in a
   Python list; its label mapping is a lazy SQLite database;
-* exact-count and embedding-space invariants are written to a strict manifest.
+* exact-count and embedding-space invariants are written to a strict manifest;
+* resumable checkpoints are bound to the exact chunker source hash and an
+  explicit preparation-contract version so code changes cannot silently mix
+  old and new chunk/embedding generations.
 
 This is intentionally expensive. A valid publication run should prefer a
 restartable, exact corpus build over a fast but ambiguous sample.
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import sqlite3
@@ -56,9 +60,13 @@ EXPECTED_DATASET = "pmc/v2/trec-cds-2016"
 EXPECTED_DOCS = 1_255_260
 EXPECTED_QUERIES = 30
 EXPECTED_QRELS = 37_707
+EXPECTED_EMBEDDING = "embed-v-4-0"
+EXPECTED_RERANKER = "Cohere-rerank-v4.0-fast"
 DEFAULT_ORG = "bench-org"
 MANIFEST_DIR = REPO_ROOT / "data" / "eval-warmup"
 DEFAULT_CASES = EVAL_ROOT / "data" / "trec-cds-2016" / "full" / "cases.jsonl"
+CHUNKER_SOURCE = REPO_ROOT / "app" / "medswin" / "chunking.py"
+PREPARATION_CONTRACT_VERSION = "full-trec-full-body-doc-embed-fts5-hnsw-v2"
 
 
 def _now() -> str:
@@ -81,6 +89,29 @@ def _write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     temporary.replace(path)
 
 
+def _chunker_sha256() -> str:
+    if not CHUNKER_SOURCE.exists():
+        raise RuntimeError(f"Chunker source is missing: {CHUNKER_SOURCE}")
+    return hashlib.sha256(CHUNKER_SOURCE.read_bytes()).hexdigest()
+
+
+def _resume_contract(org_id: str) -> dict[str, Any]:
+    """Return the immutable corpus-preparation identity for checkpoint reuse."""
+    return {
+        "dataset": EXPECTED_DATASET,
+        "org_id": org_id,
+        "expected_documents": EXPECTED_DOCS,
+        "embedding_model": settings.active_embedding_model(),
+        "embedding_space": settings.active_embedding_space(),
+        "embedding_input_type": "document",
+        "embedding_dim": settings.active_embedding_dimension(),
+        "target_chunk_size": settings.TARGET_CHUNK_SIZE,
+        "chunking_contract": "app.medswin.chunking.section_chunks/full-body",
+        "chunker_sha256": _chunker_sha256(),
+        "preparation_contract_version": PREPARATION_CONTRACT_VERSION,
+    }
+
+
 def _warmup_manifest() -> dict[str, Any]:
     path = MANIFEST_DIR / "warmup.json"
     if not path.exists():
@@ -88,10 +119,22 @@ def _warmup_manifest() -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     trec = payload.get("trec") or {}
     foundry = payload.get("foundry") or {}
-    if trec.get("docs") != EXPECTED_DOCS or not trec.get("complete"):
+    if (
+        trec.get("docs") != EXPECTED_DOCS
+        or trec.get("queries") != EXPECTED_QUERIES
+        or trec.get("qrels") != EXPECTED_QRELS
+        or not trec.get("complete")
+    ):
         raise RuntimeError("Warmup did not verify the complete TREC-CDS corpus")
-    if foundry.get("embedding_model") != settings.CLOUD_EMBEDDING or not foundry.get("complete"):
-        raise RuntimeError("Warmup did not verify the active Foundry embedding/reranker services")
+    if (
+        foundry.get("embedding_model") != EXPECTED_EMBEDDING
+        or foundry.get("reranker_model") != EXPECTED_RERANKER
+        or foundry.get("embedding_dimension") != settings.active_embedding_dimension()
+        or foundry.get("embedding_input_types_verified") != ["query", "document"]
+        or not foundry.get("foundry_probe_exact")
+        or not foundry.get("complete")
+    ):
+        raise RuntimeError("Warmup did not verify the exact Foundry generation/embedding/reranker contract")
     return payload
 
 
@@ -198,22 +241,32 @@ def _load_checkpoint(org_id: str) -> dict[str, Any]:
 def _validate_checkpoint(checkpoint: dict[str, Any], org_id: str) -> int:
     if not checkpoint:
         return 0
-    expected = {
-        "dataset": EXPECTED_DATASET,
-        "org_id": org_id,
-        "embedding_model": settings.active_embedding_model(),
-        "embedding_space": settings.active_embedding_space(),
-        "embedding_dim": settings.active_embedding_dimension(),
-        "target_chunk_size": settings.TARGET_CHUNK_SIZE,
-    }
+    expected = _resume_contract(org_id)
     mismatches = [key for key, value in expected.items() if checkpoint.get(key) != value]
     if mismatches:
         raise RuntimeError(
-            "Full-corpus checkpoint does not match the active evaluation configuration: "
+            "Full-corpus checkpoint does not match the active preparation contract: "
             + ", ".join(mismatches)
             + ". Reset the benchmark org before rebuilding."
         )
-    return int(checkpoint.get("next_doc_ordinal") or 0)
+    next_ordinal = int(checkpoint.get("next_doc_ordinal") or 0)
+    if next_ordinal < 0 or next_ordinal > EXPECTED_DOCS:
+        raise RuntimeError(f"Invalid full-corpus checkpoint ordinal {next_ordinal}")
+    completed = bool(checkpoint.get("completed"))
+    if completed != (next_ordinal == EXPECTED_DOCS):
+        raise RuntimeError(
+            "Full-corpus checkpoint completion flag is inconsistent with next_doc_ordinal; reset before rebuilding."
+        )
+    return next_ordinal
+
+
+def _checkpoint_payload(org_id: str, next_doc_ordinal: int, completed: bool) -> dict[str, Any]:
+    return {
+        **_resume_contract(org_id),
+        "next_doc_ordinal": int(next_doc_ordinal),
+        "completed": bool(completed),
+        "updated_at": _now(),
+    }
 
 
 def _reset(org_id: str) -> None:
@@ -265,6 +318,9 @@ def _chunk_record(org_id: str, doc_id: str, title: str, chunk: dict[str, Any], o
             "title": title,
             "dataset": EXPECTED_DATASET,
             "dataset_doc_ordinal": ordinal,
+            "full_trec_runtime": True,
+            "preparation_contract_version": PREPARATION_CONTRACT_VERSION,
+            "chunker_sha256": _chunker_sha256(),
             **(chunk.get("metadata") or {}),
         },
         "tokenized_text": text.lower().split(),
@@ -305,7 +361,11 @@ def _persist_records(org_id: str, records: list[dict[str, Any]]) -> None:
         ReplaceOne({"org_id": org_id, "chunk_id": record["chunk_id"]}, record, upsert=True)
         for record in records
     ]
-    coll.bulk_write(operations, ordered=False)
+    result = coll.bulk_write(operations, ordered=False)
+    if result.matched_count + result.upserted_count < len(records):
+        raise RuntimeError(
+            f"Mongo bulk persistence acknowledged only {result.matched_count + result.upserted_count}/{len(records)} records"
+        )
 
 
 async def _ingest_literature(
@@ -332,18 +392,10 @@ async def _ingest_literature(
         _persist_records(org_id, pending)
         chunks_written += len(pending)
         pending = []
-        checkpoint = {
-            "dataset": EXPECTED_DATASET,
-            "org_id": org_id,
-            "embedding_model": settings.active_embedding_model(),
-            "embedding_space": settings.active_embedding_space(),
-            "embedding_dim": settings.active_embedding_dimension(),
-            "target_chunk_size": settings.TARGET_CHUNK_SIZE,
-            "next_doc_ordinal": flush_last_ordinal + 1,
-            "completed": False,
-            "updated_at": _now(),
-        }
-        _atomic_json(checkpoint_path, checkpoint)
+        _atomic_json(
+            checkpoint_path,
+            _checkpoint_payload(org_id, flush_last_ordinal + 1, completed=False),
+        )
 
     try:
         for ordinal, doc in enumerate(dataset.docs_iter()):
@@ -374,23 +426,13 @@ async def _ingest_literature(
 
     if docs_seen != EXPECTED_DOCS or last_ordinal != EXPECTED_DOCS - 1:
         raise RuntimeError(f"Full corpus ended at {docs_seen:,} documents; expected {EXPECTED_DOCS:,}")
-    checkpoint = {
-        "dataset": EXPECTED_DATASET,
-        "org_id": org_id,
-        "embedding_model": settings.active_embedding_model(),
-        "embedding_space": settings.active_embedding_space(),
-        "embedding_dim": settings.active_embedding_dimension(),
-        "target_chunk_size": settings.TARGET_CHUNK_SIZE,
-        "next_doc_ordinal": EXPECTED_DOCS,
-        "completed": True,
-        "updated_at": _now(),
-    }
-    _atomic_json(checkpoint_path, checkpoint)
+    _atomic_json(checkpoint_path, _checkpoint_payload(org_id, EXPECTED_DOCS, completed=True))
     return {"documents": docs_seen, "new_chunks": chunks_written}
 
 
 async def _ingest_case_notes(dataset: Any, org_id: str, embed_batch_size: int, delay_s: float) -> int:
     records: list[dict[str, Any]] = []
+    chunker_sha = _chunker_sha256()
     for query in dataset.queries_iter():
         qid = str(getattr(query, "query_id"))
         patient_id = f"trec-cds-{qid}"
@@ -419,6 +461,9 @@ async def _ingest_case_notes(dataset: Any, org_id: str, embed_batch_size: int, d
                         "benchmark_case_id": qid,
                         "dataset": EXPECTED_DATASET,
                         "benchmark_patient_context": True,
+                        "full_trec_runtime": True,
+                        "preparation_contract_version": PREPARATION_CONTRACT_VERSION,
+                        "chunker_sha256": chunker_sha,
                     },
                     "tokenized_text": body.lower().split(),
                     "created_at": datetime.now(timezone.utc),
@@ -497,7 +542,6 @@ def _build_fts(org_id: str, batch_size: int) -> dict[str, Any]:
         row_count = int(conn.execute("SELECT count(*) FROM chunks_fts").fetchone()[0])
         if row_count != inserted:
             raise RuntimeError(f"FTS row count {row_count} != inserted {inserted}")
-        # Smoke the actual bm25() function, not only table creation.
         conn.execute(
             "SELECT chunk_id, bm25(chunks_fts) FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT 1",
             ('"clinical"',),
@@ -614,6 +658,8 @@ def _build_hnsw(org_id: str, mongo_batch_size: int) -> dict[str, Any]:
         "expected_trec_documents": EXPECTED_DOCS,
         "M": m,
         "ef_construction": ef_construction,
+        "preparation_contract_version": PREPARATION_CONTRACT_VERSION,
+        "chunker_sha256": _chunker_sha256(),
         "built_at": _now(),
         "full_corpus": True,
     }
@@ -623,11 +669,51 @@ def _build_hnsw(org_id: str, mongo_batch_size: int) -> dict[str, Any]:
     return manifest
 
 
+def _distinct_count(coll: Any, match: dict[str, Any], field: str) -> int:
+    rows = list(
+        coll.aggregate(
+            [
+                {"$match": match},
+                {"$group": {"_id": f"${field}"}},
+                {"$count": "count"},
+            ],
+            allowDiskUse=True,
+        )
+    )
+    return int(rows[0]["count"]) if rows else 0
+
+
 def _verify_mongo(org_id: str, gold_doc_ids: set[str]) -> dict[str, Any]:
     coll = get_sync_database()["chunks"]
     base = {"org_id": org_id}
     lit_chunks = coll.count_documents({**base, "source_type": "LIT"})
     emr_chunks = coll.count_documents({**base, "source_type": "EMR"})
+    total_chunks = coll.count_documents(base)
+    if total_chunks != lit_chunks + emr_chunks:
+        raise RuntimeError(
+            f"Full corpus contains unsupported source types: total={total_chunks:,}, LIT+EMR={lit_chunks + emr_chunks:,}"
+        )
+    lit_documents = _distinct_count(coll, {**base, "source_type": "LIT"}, "doc_id")
+    emr_documents = _distinct_count(
+        coll,
+        {**base, "source_type": "EMR", "metadata.benchmark_patient_context": True},
+        "doc_id",
+    )
+    emr_patients = _distinct_count(
+        coll,
+        {**base, "source_type": "EMR", "metadata.benchmark_patient_context": True},
+        "patient_id",
+    )
+    if lit_documents != EXPECTED_DOCS:
+        raise RuntimeError(
+            f"Full corpus has {lit_documents:,}/{EXPECTED_DOCS:,} distinct TREC literature documents"
+        )
+    if emr_documents != EXPECTED_QUERIES or emr_patients != EXPECTED_QUERIES:
+        raise RuntimeError(
+            f"Full corpus benchmark EMR coverage is docs={emr_documents}/{EXPECTED_QUERIES}, "
+            f"patients={emr_patients}/{EXPECTED_QUERIES}"
+        )
+
     active = {
         **base,
         "embedding_space": settings.active_embedding_space(),
@@ -635,15 +721,30 @@ def _verify_mongo(org_id: str, gold_doc_ids: set[str]) -> dict[str, Any]:
         "embedding_dim": settings.active_embedding_dimension(),
         "embedding": {"$exists": True, "$ne": []},
     }
-    total_chunks = coll.count_documents(base)
     active_chunks = coll.count_documents(active)
     stale = total_chunks - active_chunks
+    if stale:
+        raise RuntimeError(f"Full corpus contains {stale:,} chunks outside the active embedding space")
+
+    wrong_contract = coll.count_documents(
+        {
+            "org_id": org_id,
+            "$or": [
+                {"metadata.full_trec_runtime": {"$ne": True}},
+                {"metadata.preparation_contract_version": {"$ne": PREPARATION_CONTRACT_VERSION}},
+                {"metadata.chunker_sha256": {"$ne": _chunker_sha256()}},
+            ],
+        }
+    )
+    if wrong_contract:
+        raise RuntimeError(
+            f"Full corpus contains {wrong_contract:,} chunks from a different preparation/chunking contract"
+        )
+
     gold_present = set(
         str(value)
         for value in coll.distinct("doc_id", {**base, "source_type": "LIT", "doc_id": {"$in": list(gold_doc_ids)}})
     )
-    if stale:
-        raise RuntimeError(f"Full corpus contains {stale:,} chunks outside the active embedding space")
     if gold_present != gold_doc_ids:
         missing = sorted(gold_doc_ids - gold_present)
         raise RuntimeError(f"Missing {len(missing)} positive qrel documents from corpus; sample={missing[:20]}")
@@ -651,8 +752,12 @@ def _verify_mongo(org_id: str, gold_doc_ids: set[str]) -> dict[str, Any]:
         "total_chunks": total_chunks,
         "lit_chunks": lit_chunks,
         "emr_chunks": emr_chunks,
+        "lit_documents": lit_documents,
+        "emr_documents": emr_documents,
+        "emr_patients": emr_patients,
         "active_chunks": active_chunks,
         "stale_chunks": stale,
+        "wrong_preparation_contract_chunks": wrong_contract,
         "positive_qrel_doc_count": len(gold_doc_ids),
         "positive_qrel_docs_present": len(gold_present),
     }
@@ -663,8 +768,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError(f"Full evaluation requires {EXPECTED_DATASET}; got {args.dataset}")
     if not settings.CLOUD_MODE:
         raise RuntimeError("Full TREC runtime preparation requires CLOUD_MODE=true")
-    if settings.CLOUD_EMBEDDING != "embed-v-4-0":
-        raise RuntimeError(f"Expected CLOUD_EMBEDDING=embed-v-4-0; got {settings.CLOUD_EMBEDDING}")
+    if settings.CLOUD_EMBEDDING != EXPECTED_EMBEDDING:
+        raise RuntimeError(f"Expected CLOUD_EMBEDDING={EXPECTED_EMBEDDING}; got {settings.CLOUD_EMBEDDING}")
     if settings.active_embedding_dimension() not in {256, 512, 1024, 1536}:
         raise RuntimeError("embed-v-4-0 dimension must be one of 256, 512, 1024, 1536")
     _warmup_manifest()
@@ -694,7 +799,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             args.inter_batch_delay,
         )
     else:
-        print("[full-prep] literature checkpoint already complete; reusing corpus")
+        print("[full-prep] literature checkpoint already complete; verifying persisted corpus before reuse")
 
     emr_chunks = await _ingest_case_notes(
         dataset,
@@ -710,20 +815,13 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     if hnsw["total_vectors"] != mongo["total_chunks"]:
         raise RuntimeError("HNSW did not index every active corpus chunk")
 
+    preparation_contract = _resume_contract(args.org_id)
     manifest = {
         "complete": True,
-        "dataset": EXPECTED_DATASET,
-        "expected_documents": EXPECTED_DOCS,
+        **preparation_contract,
         "queries": len(cases),
         "qrels": total_qrels,
-        "org_id": args.org_id,
         "cases_path": str(Path(args.cases_out).resolve()),
-        "embedding_model": settings.active_embedding_model(),
-        "embedding_space": settings.active_embedding_space(),
-        "embedding_dim": settings.active_embedding_dimension(),
-        "embedding_input_type": "document",
-        "target_chunk_size": settings.TARGET_CHUNK_SIZE,
-        "chunking": "app.medswin.chunking.section_chunks/full-body",
         "literature": literature,
         "emr_chunks": emr_chunks,
         "mongo": mongo,
@@ -763,6 +861,8 @@ def main() -> int:
                 "documents": manifest["expected_documents"],
                 "chunks": manifest["mongo"]["total_chunks"],
                 "vectors": manifest["hnsw"]["total_vectors"],
+                "preparation_contract_version": manifest["preparation_contract_version"],
+                "chunker_sha256": manifest["chunker_sha256"],
                 "elapsed_seconds": round(time.time() - started, 1),
             },
             indent=2,
