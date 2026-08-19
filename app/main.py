@@ -39,14 +39,7 @@ def _disabled(name: str) -> bool:
 
 
 def _strict_benchmark_runtime() -> bool:
-    """Return True for the publication matrix API subprocesses.
-
-    The strict matrix always supplies BENCHMARK_ORG_ID while running in cloud
-    retrieval mode. In that profile a missing database is not a degradable UI
-    concern: starting the API and failing halfway through 30 benchmark cases
-    would invalidate the run and waste model quota. Ordinary developer startup
-    retains the historical permissive behavior.
-    """
+    """Return True for the publication matrix API subprocesses."""
     return bool(str(os.getenv("BENCHMARK_ORG_ID") or "").strip()) and bool(settings.CLOUD_MODE)
 
 
@@ -58,6 +51,39 @@ def _active_generation_identity() -> tuple[str, str]:
     if backend == "foundry":
         return backend, os.getenv("FOUNDRY_MODEL") or settings.FOUNDRY_MODEL or settings.CLOUD_MODEL
     return backend, "default"
+
+
+def _validate_cloud_configuration() -> None:
+    """Fail before serving traffic when cloud mode is structurally unusable.
+
+    This validates configuration only and deliberately does not spend provider
+    quota. The publication `full-eval` warmup performs the stronger live probes.
+    """
+    if not settings.CLOUD_MODE:
+        return
+    missing = []
+    if not str(settings.AZURE_AI_FOUNDRY_API_KEY or "").strip():
+        missing.append("AZURE_AI_FOUNDRY_API_KEY")
+    try:
+        embedding_url = settings.cloud_embedding_url()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Cloud embedding configuration is invalid: {exc}") from exc
+    try:
+        reranker_url = settings.cloud_reranker_url()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Cloud reranker configuration is invalid: {exc}") from exc
+    if not str(embedding_url or "").strip():
+        missing.append("CLOUD_EMBEDDING_URI or AZURE_AI_FOUNDRY_ENDPOINT")
+    if not str(reranker_url or "").strip():
+        missing.append("CLOUD_RERANKER_URI or AZURE_AI_FOUNDRY_ENDPOINT")
+    backend, model = _active_generation_identity()
+    if backend == "foundry":
+        if not str(settings.FOUNDRY_ENDPOINT or settings.AZURE_AI_FOUNDRY_ENDPOINT or "").strip():
+            missing.append("FOUNDRY_ENDPOINT or AZURE_AI_FOUNDRY_ENDPOINT")
+        if not str(model or "").strip():
+            missing.append("FOUNDRY_MODEL")
+    if missing:
+        raise RuntimeError("Cloud mode is missing required configuration: " + ", ".join(sorted(set(missing))))
 
 
 @asynccontextmanager
@@ -72,13 +98,14 @@ async def lifespan(app: FastAPI):
         if _strict_benchmark_runtime():
             logger.error("Strict benchmark startup requires MongoDB; refusing to start: %s", e)
             raise
-        logger.warning(f"Database connection failed (this is expected if security group not configured): {e}")
+        logger.warning("Database connection failed: %s", e)
         logger.warning("Application will start but database features may not be available")
 
     if settings.CLOUD_MODE:
-        logger.info("Cloud mode enabled; skipping local HF embedding/reranker download/load")
-        # Cloud embedding refresh is explicit. Startup must not spend benchmark
-        # quota or mutate a prepared publication index before verification.
+        _validate_cloud_configuration()
+        logger.info("Cloud mode configuration validated; skipping local HF embedding/reranker load")
+        # Provider connectivity is probed by warmup-eval for strict publication
+        # runs. Ordinary startup validates configuration without consuming quota.
     else:
         try:
             logger.info("Checking and downloading models...")
@@ -86,11 +113,11 @@ async def lifespan(app: FastAPI):
             download_results = await model_download_service.download_all_models()
             for model_name, result in download_results.items():
                 if result["success"]:
-                    logger.info(f"Model {model_name}: {result['message']}")
+                    logger.info("Model %s: %s", model_name, result["message"])
                 else:
-                    logger.warning(f"Model {model_name}: {result.get('error', 'Unknown error')}")
+                    logger.warning("Model %s: %s", model_name, result.get("error", "Unknown error"))
         except Exception as e:
-            logger.error(f"Failed to download models: {e}")
+            logger.error("Failed to download models: %s", e)
 
         try:
             model_manager = get_model_manager()
@@ -98,7 +125,7 @@ async def lifespan(app: FastAPI):
             await model_manager.load_reranker_model()
             logger.info("Models loaded successfully")
         except Exception as e:
-            logger.error(f"Failed to load models: {e}")
+            logger.error("Failed to load models: %s", e)
             logger.warning("Continuing without models - some features may not be available")
 
     async def preload_datasets():
@@ -116,17 +143,13 @@ async def lifespan(app: FastAPI):
                     stats['total_datasets'],
                     stats['total_rows'],
                 )
-                logger.info("Dataset statistics cached and ready for dashboard")
             except asyncio.TimeoutError:
                 logger.warning("Dataset preloading timed out - will load on demand")
             except Exception as e:
-                logger.warning(f"Dataset preloading failed: {e} - will load on demand")
+                logger.warning("Dataset preloading failed: %s - will load on demand", e)
         except Exception as e:
-            logger.warning(f"Error setting up dataset preloading: {e} - will load on demand")
+            logger.warning("Error setting up dataset preloading: %s - will load on demand", e)
 
-    # Full publication evaluation disables unrelated dashboard preloading so API
-    # startup cannot add network/CPU noise or touch auxiliary datasets while a
-    # cell is being measured. Normal application startup retains the old behavior.
     if _disabled("DISABLE_DATASET_PRELOAD"):
         logger.info("Dataset dashboard preload disabled for this process")
     else:
@@ -136,6 +159,18 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         logger.info("Shutting down RAG application...")
+        try:
+            from app.api.v1.endpoints.storage import cleanup_storage_service
+
+            cleanup_storage_service()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Storage worker cleanup failed: %s", exc)
+        try:
+            from app.api.v1.endpoints.preprocessing import cleanup_preprocessing_service
+
+            cleanup_preprocessing_service()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Preprocessing worker cleanup failed: %s", exc)
         cleanup_services()
         await close_database()
 
@@ -178,8 +213,6 @@ async def root():
 async def health_check():
     """Health check including real database and generation identities."""
     try:
-        # A health response must prove the dependency that every retrieval and
-        # trace path needs, not merely report the state reached during startup.
         db = get_database()
         await db.command("ping")
 
@@ -217,14 +250,14 @@ async def health_check():
             "database": "connected",
         }
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        logger.error("Health check failed: %s", e)
         raise HTTPException(status_code=503, detail="Service unavailable")
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """Global exception handler."""
-    logger.error(f"Unhandled exception: {exc}")
+    logger.error("Unhandled exception: %s", exc)
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"}
