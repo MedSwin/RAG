@@ -1,313 +1,173 @@
 # MedSwin HTTP API
 
-Base URL for the runtime: `http://127.0.0.1:8100`
+Runtime base URL: `http://127.0.0.1:8100`. All versioned routes live under `/api/v1`.
 
-All versioned routes sit under `/api/v1`. Every MedSwin / naive / storage call that reads tenant data requires `org_id`.
+The production data contract is tenant scoped. Any route that reads or mutates corpus data requires an `org_id` directly or inside its request body. Cloud mode uses Azure AI Foundry adapters; local mode uses the configured/local Hugging Face model services.
 
-Interactive explorer: [http://127.0.0.1:8100/docs](http://127.0.0.1:8100/docs)  
-Admin runbook: [ADMIN.md](ADMIN.md)  
-Local operator: [OPERATOR.md](OPERATOR.md)  
-Architecture: [MEDSWIN.md](MEDSWIN.md)
-
----
-
-## Process and pages
+## Process and health
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/` | Redirect to `/app/` when the clinician UI is present, else `/api/v1/dashboard/` |
-| `GET` | `/health` | Liveness. Local: embedding / reranker loaded. Cloud: `cloud_mode`, `active_embedding_space`, `active_index_ready`, `embedding_refresh` |
-| `GET` | `/app/` | Clinician CDS (static `web/public` or built `web/dist`) |
+| `GET` | `/` | Redirect to clinician UI when built, otherwise dashboard |
+| `GET` | `/health` | Mongo-backed liveness plus active model/embedding identities |
+| `GET` | `/app/` | Clinician CDS UI |
 | `GET` | `/docs` | OpenAPI |
 
-`/health` is **not** namespaced under `/api/v1`.
-
----
+Cloud startup validates the provider configuration before serving traffic. Strict `full-eval` adds live Foundry/model/corpus probes before the matrix starts.
 
 ## MedSwin (`/api/v1/medswin`)
 
-### `POST /api/v1/medswin/chat`
-
-Full MAC + gate pipeline.
+### `POST /medswin/chat`
 
 ```json
 {
-  "query": "Can this patient continue metformin after the latest renal-function result?",
+  "query": "Can this patient continue metformin?",
   "user_id": "clinician-1",
   "org_id": "demo-org",
-  "session_id": "optional",
+  "session_id": null,
   "patient_id": "patient-42",
   "constraints": {
     "clinical_scope": "clinician_cds",
-    "guideline_only": false,
-    "required_facets": [],
     "source_policy": "ANY",
     "min_evidence_grade": 0.3
   }
 }
 ```
 
-`source_policy` ∈ `ANY` | `CPG_ONLY` | `EMR_ONLY` | `LIT_ONLY` | `SAFETY_ONLY`. The clinician UI does not send `constraints` or `session_id`; those fields are for curl / eval / the operator.
+Full path: query normalization → dense ANN ∪ BM25 → Cohere/local rerank → MAC specialists → sufficiency/policy gate → synthesis or bounded abstention. Insufficient evidence is HTTP 200 with `policy_decision.passed=false`.
 
-Response is a `ChatResponse`:
+### `POST /medswin/ingest?source_type=LIT&org_id=demo-org`
 
-| Field | Meaning |
-| --- | --- |
-| `answer` | Clinician CDS text; never a final diagnosis |
-| `pipeline` | `"medswin"` |
-| `policy_decision` | Gate: `passed`, `action`, `reason` |
-| `evidence_bundle` | Selected passages, source counts, ledger, facet coverage |
-| `facet_coverage` | Per-facet LCB / entropy / status |
-| `contradictions` | High-severity pairs |
-| `evidence_ledger` | Claim-level provenance |
-| `citations` | `chunk_id`, `doc_id`, `source_type`, section, version |
-| `trace_id` | Fetch the full audit with the traces route |
-| `degraded_mode` | Service-failure flags (rerank, calibration, agents, …) |
-| `uncertainty_level` | Model-facing uncertainty hint |
-| `retrieval_backend` | Present on some paths; naive sets this explicitly |
-| `timing_ms` | Optional stage timings |
+Body is a JSON array of documents. If `chunks` is omitted, section-aware chunking runs. In cloud mode every staged chunk is embedded with **document** intent before Document/Chunk persistence begins; a cloud embedding failure therefore does not leave a metadata-only partial document. Local mode may store text when the local embedding runtime is unavailable and can be repaired with the storage refresh route.
 
-Insufficient evidence is still HTTP **200** with `policy_decision.passed=false` and a bounded abstention answer.
+### Sessions and traces
 
-### `GET /api/v1/medswin/sessions/{session_id}`
+- `GET /medswin/sessions/{session_id}?org_id=...`
+- `GET /medswin/traces/{trace_id}?org_id=...&include_details=false`
 
-Query: `org_id` (required).
+Both use tenant-scoped repositories. Trace output is PHI-redacted by default.
 
-Returns `session_id`, `user_id`, `org_id`, `created_at`, `last_active`, `metadata`.
+## Naive RAG (`/api/v1/naive`)
 
-### `GET /api/v1/medswin/traces/{trace_id}`
+- `GET /naive/ready`
+- `POST /naive/chat`
+- `POST /naive/compare`
 
-Query:
+The control is intentionally: query embedding → dense ANN top-K → shared-budget context → one generation. It has no BM25, reranker, MAC specialists, or sufficiency gate. Publication evaluation rejects ANN fallback/degraded control runs.
 
-- `org_id` (required)
-- `include_details` (default false). Policy artefacts are included only when this is true **and** `TRACE_INCLUDE_POLICY_DETAILS` is true on the server.
+## Storage and indexing (`/api/v1/storage`)
 
-Always returns counts: `messages_count`, `tool_calls_count`, `sufficiency_checks_count`, `evidence_passages_count`, plus a PHI-redacted query. Naive traces are stored in the same collection and are readable here.
+The online application keeps one shared HNSW artifact containing active vectors from all ordinary tenants; ANN labels are resolved through tenant-filtered Mongo queries. The strict publication benchmark uses isolated artifact paths and its separate streaming full-corpus builder.
 
-### `POST /api/v1/medswin/ingest`
+### `POST /storage/chunks`
 
-Query:
-
-- `source_type`: `CPG` | `EMR` | `LIT` | `SAFETY`
-- `org_id`: required
-
-Body: JSON array of documents.
+Accepts either current production chunks or the legacy preprocessing response shape. Storage normalizes the record, generates any missing/stale active embedding using **document** intent, writes it idempotently under `(org_id, chunk_id)`, then rebuilds the ordinary global ANN in a background task.
 
 ```json
-[
-  {
-    "doc_id": "guideline-1",
-    "title": "Guideline title",
-    "version": "2026.1",
-    "effective_date": "2026-01-01T00:00:00",
-    "patient_id": "optional-for-emr",
-    "source_reliability": 0.95,
-    "evidence_grade": {"label": "guideline", "score": 0.95, "source_reliability": 0.95},
-    "tags": ["diabetes"],
-    "metadata": {},
-    "text": "Recommendations\n\n...",
-    "chunks": [
-      {
-        "chunk_id": "optional",
-        "text": "Chunk text",
-        "section": "Recommendations",
-        "offset_start": 0,
-        "offset_end": 120,
-        "metadata": {}
+{
+  "org_id": "demo-org",
+  "source_type": "LIT",
+  "batch_size": 64,
+  "chunks": [
+    {
+      "content": "legacy preprocessing output is accepted",
+      "metadata": {
+        "chunk_id": "example-1",
+        "parent_id": "doc-1"
       }
-    ]
-  }
-]
-```
-
-If `chunks` is omitted, the server runs section-aware chunking. Ingest **always tries to attach** the active embedding space. Cloud mode fails the request if embed fails. Local mode warns and stores text so you can `POST /storage/embeddings/refresh` later. See [INDEXING.md](INDEXING.md).
-
----
-
-## Naive-RAG control (`/api/v1/naive`)
-
-Fairness contract: [NAIVE_RAG.md](NAIVE_RAG.md).
-
-### `GET /api/v1/naive/ready`
-
-Lightweight preflight. No `org_id` filter (global counts).
-
-```json
-{
-  "pipeline": "naive_rag",
-  "cloud_mode": false,
-  "embedding_url": "...",
-  "llm_url": "...",
-  "index_exists": true,
-  "mongo": true,
-  "chunk_count": 12,
-  "embedded_count": 12,
-  "ready": true
+    }
+  ]
 }
 ```
 
-`ready` is true when Mongo pings. Eval still fails the run if `chunk_count > 0` and `embedded_count == 0`.
+Current-schema chunks may instead provide top-level `chunk_id`, `doc_id`, `text`, `source_type`, metadata, and an already-valid active embedding.
 
-### `POST /api/v1/naive/chat`
+### `POST /storage/embeddings/refresh`
 
-Same body as `/medswin/chat`, plus optional `top_k` (default `NAIVE_TOP_K`).
-
-Pipeline: embed → dense ANN top-K → one generate. No BM25, rerank, MAC, or gate. `policy_decision.passed` is always true.
-
-Extra response fields:
-
-- `pipeline`: `"naive_rag"`
-- `retrieval_backend`: `ann` | `mongo_cosine` | `empty` | `dim_mismatch` | `error`
-- `timing_ms`: `{embed, retrieve, generate, total}`
-- `uncertainty_level`: `"ungated"` (or high when degraded / empty)
-- `degraded_mode`: `error`, `no_embeddings`, `empty_index`, `trace_persist`
-
-Infrastructure gaps (`no_embeddings`, `dim_mismatch`) do **not** call the LLM.
-
-### `POST /api/v1/naive/compare`
-
-Same body. Runs naive then MedSwin and returns:
+Refreshes stale vectors for one tenant without publishing a tenant-only ANN. A global rebuild is queued only after the tenant refresh succeeds.
 
 ```json
-{
-  "query": "...",
-  "naive": { "pipeline": "naive_rag" },
-  "medswin": { "pipeline": "medswin" },
-  "diff": {
-    "jaccard": 0.0,
-    "overlap_chunk_ids": [],
-    "naive_only_chunk_ids": [],
-    "medswin_only_chunk_ids": [],
-    "medswin_abstained": true,
-    "naive_backend": "ann",
-    "timing_ms": { "naive": 1200.0, "medswin": 8400.0 }
-  }
-}
+{"org_id":"demo-org","batch_size":64}
 ```
 
----
+### `POST /storage/index/build`
 
-## Storage (`/api/v1/storage`)
+Rebuilds the one ordinary global HNSW artifact from all active vectors. The builder refuses oversized in-memory corpora (`STORAGE_IN_MEMORY_INDEX_MAX_VECTORS`, default 250000); large publication corpora must use `full-eval`'s streaming builder.
 
-| Method | Path | Purpose |
+```json
+{"force_rebuild":true}
+```
+
+### Other storage routes
+
+| Method | Path | Scope |
 | --- | --- | --- |
-| `GET` | `/storage/stats` | Chunk / embedding / index provenance. Query `org_id` |
-| `POST` | `/storage/index/build` | Rebuild HNSW (and FAISS when configured) from embedded chunks |
-| `POST` | `/storage/embeddings/refresh` | Embed stale / missing vectors in the **active** space; local and cloud |
-| `POST` | `/storage/benchmark/reset` | Clear `bench-org` (or given `org_id`) and optionally delete index files |
-| `POST` | `/storage/chunks` | Legacy bulk chunk insert (triggers a background index rebuild) |
-| `GET` | `/storage/chunks` | List chunks |
-| `GET` | `/storage/chunks/{chunk_id}` | Fetch one chunk |
-| `DELETE` | `/storage/chunks` | Clear chunks (dangerous) |
-| `POST` | `/storage/validate` | Index / corpus validation snapshot |
+| `GET` | `/storage/stats?org_id=...` | tenant stats plus index provenance |
+| `GET` | `/storage/chunks?org_id=...` | tenant list, bounded pagination |
+| `GET` | `/storage/chunks/{chunk_id}?org_id=...` | tenant lookup |
+| `DELETE` | `/storage/chunks?org_id=...` | delete only that tenant's chunks |
+| `POST` | `/storage/validate?org_id=...` | chunk/index validation |
+| `POST` | `/storage/benchmark/reset` | benchmark-org reset + optional isolated artifacts |
 
-Build body:
+## Embedding (`/api/v1/embedding`)
 
-```json
-{"force_rebuild": true, "org_id": "demo-org"}
-```
+These utility endpoints now follow the active runtime instead of assuming local Hugging Face weights exist.
 
-Refresh body:
-
-```json
-{"org_id": "demo-org", "batch_size": 64}
-```
-
-Stats fields the eval harness depends on: `source_counts`, `index_exists`, `index_manifest`, `index_provenance_valid`, `active_embedding_model`, `active_embedding_dim`, `active_embeddings`, `active_doc_ids`.
-
----
-
-## Ops dashboard (`/api/v1/dashboard`)
-
-HTML UI at `/api/v1/dashboard/`. JSON helpers:
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/dashboard/stats` | Hugging Face dataset totals (cached) |
-| `GET` | `/dashboard/status` | Service status |
-| `GET` | `/dashboard/models` | Local model presence |
-| `POST` | `/dashboard/download-models` | Download embedding / reranker weights |
-| `POST` | `/dashboard/ingest/{dataset_name}` | Legacy HF ingest job |
-| `GET` | `/dashboard/dataset/{dataset_name}` | Dataset card |
-
-This is an operations console, not the clinician CDS.
-
----
-
-## Legacy RAG (`/api/v1/{preprocessing,embedding,retrieval}`)
-
-Still mounted for compatibility. They do **not** run the sufficiency gate.
-
-- `POST /preprocessing/chunk`
-- `POST /preprocessing/upload-and-chunk`
-- `GET /preprocessing/preprocessing/info` (legacy path on that router)
-- `POST /preprocessing/validate-chunks`
 - `POST /embedding/embed`
 - `POST /embedding/embed/batch`
 - `GET /embedding/info`
+
+Example:
+
+```json
+{"text":"clinical search text","input_type":"query","normalize":true}
+```
+
+`input_type` is `query` or `document`. Online cloud retrieval defaults to query intent; corpus-writing paths pass document intent explicitly.
+
+## Retrieval (`/api/v1/retrieval`)
+
 - `POST /retrieval/search`
 - `GET /retrieval/search`
 - `GET /retrieval/index/info`
 
-Use `/medswin/chat` or `/naive/chat` for anything you would report.
-
----
-
-## Eval harness (`http://127.0.0.1:8200`)
-
-Separate FastAPI app: `eval.app.main:app`. Start with `./scripts/start-local.sh eval --open`.
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/` | Benchmark UI (`eval/static/index.html`) |
-| `GET` | `/health` | `{status, service: medswin-system-benchmark}` |
-| `GET` | `/api/cases` | Preview a cases JSONL |
-| `POST` | `/api/run` | Run an audit (`RunRequest`) |
-| `GET` | `/api/runs` | List stored audits (skips `*.comparison.json`) |
-| `GET` | `/api/runs/{run_id}` | Full `RunAudit` |
-| `GET` | `/api/runs/{run_id}/download` | Download JSON |
-
-`POST /api/run` body (defaults shown):
+The search route uses the same `EmbeddingClient`, `DenseRetriever`, tenant/patient/source filters, HNSW loader (JSON or SQLite mapping), and optional `RerankerClient` used by MedSwin. It does **not** execute MAC/gating and therefore is not the full CDS pipeline.
 
 ```json
 {
-  "cases_path": "eval/data/sample/cases.jsonl",
-  "max_cases": 2,
-  "max_concurrency": 1,
-  "reranker_budget": 1,
-  "ingest_case_context": true,
-  "fetch_trace_summary": true,
-  "include_patient_context_in_query": false,
-  "source_policy": "ANY",
-  "guideline_only": false,
-  "min_evidence_grade": 0.3,
-  "clinical_scope": "clinician_cds",
-  "pipeline": "medswin",
-  "top_k": 5
+  "query": "renal metformin guidance",
+  "org_id": "demo-org",
+  "patient_id": null,
+  "top_k": 10,
+  "use_reranking": true,
+  "source_type": "LIT",
+  "constraints": {}
 }
 ```
 
-`pipeline` ∈ `medswin` | `naive_rag` | `both`.
+## Preprocessing (`/api/v1/preprocessing`)
 
-`both` returns the MedSwin `RunAudit`. Naive aggregates and deltas are under `diagnostics.pipeline_comparison`. Sidecar: `{run_id}.comparison.json`.
+- `POST /preprocessing/chunk`
+- `POST /preprocessing/upload-and-chunk`
+- `GET /preprocessing/preprocessing/info`
+- `POST /preprocessing/validate-chunks`
 
-Audits default to `RUN_STORE_DIR=/tmp/medswin-audits`. Full metric definitions: [`eval/README.md`](../eval/README.md).
+Cloud mode uses a local `tiktoken` tokenizer for chunk accounting, so these endpoints do not require local embedding weights. CSV/JSON upload is supported by this dialogue preprocessor. Its legacy `{content, metadata}` chunks can be sent directly to `/storage/chunks`, which performs production-schema normalization and embedding.
 
----
+## Dashboard (`/api/v1/dashboard`)
 
-## Auth
+Operations/dashboard routes remain separate from clinician CDS. Dataset preloading can be disabled with `DISABLE_DATASET_PRELOAD=true`; the strict matrix always disables it to avoid benchmark noise.
 
-`ENABLE_AUTH=false` by default. When true, `AuthMiddleware` expects a Bearer token. This is a scaffold, not a production IdP integration.
+## Evaluation
 
----
+The normal eval FastAPI harness listens on 8200. It is suitable for smoke/debug runs. Complete publication evaluation must use:
 
-## Error conventions
+```bash
+./scripts/start-local.sh full-eval
+```
 
-| Situation | HTTP | Body |
-| --- | --- | --- |
-| Insufficient evidence (MedSwin) | 200 | Abstention answer, `policy_decision.passed=false` |
-| Naive infrastructure gap | 200 | Explanation in `answer`, `degraded_mode.no_embeddings` / `empty_index` |
-| Unhandled orchestrator exception | 500 | `detail` string |
-| Eval preflight (index / qrel / naive ready) | 500 from `/api/run` | Human-readable `detail` |
+That command prepares/verifies the complete TREC CDS 2016 runtime and executes all four 30-topic cells. See `eval/FULL_EVALUATION.md`.
 
-The operator CLI treats naive `degraded_mode.error` / `no_embeddings` as a failed one-shot ask (exit 1).
+## Authentication
+
+`ENABLE_AUTH=false` remains the default development configuration. When enabled, the current middleware enforces Bearer-token presence but is still an identity-provider integration scaffold; do not represent it as completed enterprise JWT/RBAC authorization.

@@ -1,0 +1,233 @@
+name: Full evaluation contract checks
+
+on:
+  pull_request:
+    paths:
+      - "app/**"
+      - "eval/**"
+      - "scripts/**"
+      - "tests/**"
+      - "web/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker-compose.yml"
+      - "nginx/**"
+      - "requirements.txt"
+      - "pytest.ini"
+      - "env.example"
+      - ".github/workflows/full-eval-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python sources
+        run: python -m compileall -q app eval scripts tests
+      - name: Validate startup shell
+        run: bash -n scripts/start-local.sh
+      - name: Assert strict full-eval entrypoints
+        run: |
+          test -f scripts/warmup-eval.py
+          test -f scripts/serve-medswin-llm.py
+          test -f eval/app/full_contract.py
+          test -f eval/scripts/prepare_full_trec_mongo.py
+          test -f eval/scripts/prepare_full_trec_runtime.py
+          test -f eval/scripts/materialize_full_trec_documents.py
+          test -f eval/scripts/verify_full_trec_runtime.py
+          test -f eval/scripts/run_full_matrix.py
+          test -f eval/FULL_EVALUATION.md
+          grep -q 'EXPECTED_TREC_DOCS = 1_255_260' scripts/warmup-eval.py
+          grep -q 'EXPECTED_DOCS = 1_255_260' eval/scripts/prepare_full_trec_runtime.py
+          grep -q 'EXPECTED_DOCS = 1_255_260' eval/scripts/verify_full_trec_runtime.py
+          grep -q 'EXPECTED_DOCUMENTS = 1_255_260' eval/app/full_contract.py
+          grep -q 'EXPECTED_QUERIES = 30' eval/scripts/run_full_matrix.py
+          grep -q 'EXPECTED_QRELS = 37_707' eval/scripts/verify_full_trec_runtime.py
+          grep -q 'input_type="document"' eval/scripts/prepare_full_trec_runtime.py
+          grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE.*query' eval/scripts/run_full_matrix.py
+          grep -q 'EXPECTED_MAC_AGENTS = {"emr", "guideline", "safety", "quality", "critic"}' eval/scripts/run_full_matrix.py
+          grep -q 'dense_ann_stage_missing' eval/scripts/run_full_matrix.py
+          grep -q 'bm25_stage_missing' eval/scripts/run_full_matrix.py
+          grep -q 'verify_full_runtime' eval/scripts/run_full_matrix.py
+          grep -q 'runtime_artifacts' eval/scripts/run_full_matrix.py
+          grep -q 'prepare_full_trec_mongo.py' scripts/start-local.sh
+          grep -q 'materialize_full_trec_documents.py' scripts/start-local.sh
+          grep -q 'verify_full_trec_runtime.py' scripts/start-local.sh
+      - name: Assert resilience and reproducibility contracts
+        run: |
+          grep -q 'PREPARATION_CONTRACT_VERSION' eval/app/full_contract.py
+          grep -q 'chunker_sha256' eval/app/full_contract.py
+          grep -q 'terminal_repaired' eval/scripts/prepare_full_trec_mongo.py
+          grep -q 'prefix_documents' eval/scripts/prepare_full_trec_mongo.py
+          grep -q 'HNSW_MAX_EF_SEARCH' app/core/indexing/hnsw.py
+          grep -q 'max_ef = max' app/core/indexing/hnsw.py
+          grep -q '_strict_benchmark_runtime' app/main.py
+          grep -q 'await db.command("ping")' app/main.py
+          grep -q 'await close_database()' app/main.py
+          grep -q 'hnsw_vector_alignment' eval/scripts/verify_full_trec_runtime.py
+          grep -q 'FULL_VERIFY_HNSW_SAMPLES' eval/scripts/verify_full_trec_runtime.py
+          grep -q 'chunk_id_fingerprint' eval/scripts/verify_full_trec_runtime.py
+          grep -q 'input_type="document" if settings.CLOUD_MODE else None' app/api/v1/endpoints/medswin.py
+          grep -q '_render_final_answer' app/medswin/orchestrator.py
+          grep -q '_generation_signature' app/indexes/hybrid.py
+      - name: Assert retrieval metric separation and budget fairness
+        run: |
+          grep -q 'retrieval_ndcg_at_10' eval/app/schemas.py
+          grep -q 'final_evidence_ndcg_at_10' eval/app/schemas.py
+          grep -q 'ranked_trec_metrics' eval/app/audit.py
+          grep -q '_retrieval_ranked_lit_doc_ids' eval/scripts/run_full_matrix.py
+          grep -q 'retrieval_metric_cases' eval/scripts/run_full_matrix.py
+          grep -q 'DEFAULT_SHARED_TOKEN_BUDGET = 700' eval/scripts/run_full_matrix.py
+          grep -q 'DEFAULT_RETRIEVAL_TOP_K = 10' eval/scripts/run_full_matrix.py
+          grep -q 'packing.naive' app/medswin/naive.py
+          grep -q 'naive_evidence_budget_exceeded' eval/scripts/run_full_matrix.py
+          grep -q 'full_evidence_budget_exceeded' eval/scripts/run_full_matrix.py
+      - name: Assert reproducible generator contract
+        run: |
+          grep -q 'HfApi' scripts/warmup-eval.py
+          grep -q 'revision=revision' scripts/warmup-eval.py
+          grep -q 'model_revision' scripts/serve-medswin-llm.py
+          grep -q 'fail_on_overflow_no_truncation' scripts/serve-medswin-llm.py
+          grep -q 'LLM_DEFAULT_MAX_TOKENS' app/services/adapters/llm.py
+          grep -q 'AGENT_PASSAGE_LIMIT' app/agents/base.py
+          grep -q 'shared_generation_envelope' eval/scripts/run_full_matrix.py
+          grep -q 'generation_backend' app/main.py
+          grep -q 'generation_model' app/main.py
+      - name: Assert benchmark isolation
+        run: |
+          grep -q '^CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=$' env.example
+          grep -q 'FULL_EVAL_DATA_DIR' env.example
+          grep -q 'full-trec-benchmark' scripts/start-local.sh
+          grep -q 'FULL_EVAL_LLM_TIMEOUT_S' scripts/start-local.sh
+          grep -q 'HNSW_MAPPING_PATH=.*hnsw_mapping.sqlite' scripts/start-local.sh
+          grep -q 'FAISS_INDEX_PATH=.*faiss_unused.bin' scripts/start-local.sh
+          grep -q 'FAISS_MAPPING_PATH=.*faiss_unused.json' scripts/start-local.sh
+          grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query' scripts/start-local.sh
+          grep -q 'DISABLE_DATASET_PRELOAD' eval/scripts/run_full_matrix.py
+      - name: Assert provider-safe configuration
+        run: |
+          grep -q 'CLOUD_EMBEDDING_URI: Optional\[str\] = None' app/core/config.py
+          grep -q 'CLOUD_RERANKER_URI: Optional\[str\] = None' app/core/config.py
+          grep -q 'providers/cohere/v2/rerank' app/core/config.py
+          grep -q 'search_document' app/services/adapters/embedding.py
+          grep -q 'search_query' app/services/adapters/embedding.py
+          grep -q 'cohere_native' app/services/adapters/embedding.py
+          grep -q 'CLOUD_RERANKER_AUTH_SCHEME' app/services/adapters/reranker.py
+          grep -q 'Authorization.*Bearer' app/services/adapters/reranker.py
+          ! grep -q 'parth-pandya' app/core/config.py
+
+  contract-unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install focused test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            pytest==8.3.4 \
+            pytest-asyncio==0.24.0 \
+            pydantic==2.11.9 \
+            pydantic-settings==2.0.3 \
+            httpx==0.28.1 \
+            pymongo==4.10.1 \
+            motor==3.7.1 \
+            numpy==2.1.3 \
+            hnswlib==0.8.0 \
+            ir-datasets==0.5.9
+      - name: Run strict contract unit tests
+        run: |
+          pytest -q tests/test_full_eval_contract.py tests/test_hnsw_adaptive.py
+
+  full-python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Verify installed API route graph
+        run: |
+          python - <<'PY'
+          from app.main import app
+          paths = {route.path for route in app.routes}
+          required = {
+              "/health",
+              "/api/v1/medswin/chat",
+              "/api/v1/naive/chat",
+              "/api/v1/storage/chunks",
+              "/api/v1/retrieval/search",
+              "/api/v1/embedding/embed",
+              "/api/v1/preprocessing/chunk",
+          }
+          missing = sorted(required - paths)
+          if missing:
+              raise SystemExit(f"missing required routes: {missing}")
+          print(f"route graph OK: {len(paths)} routes")
+          PY
+      - name: Run complete Python test suite
+        run: pytest -q
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+      - name: Type-check and build clinician UI
+        run: npm run build
+
+  container-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate Compose graph
+        run: |
+          docker compose config > /tmp/medswin-compose.yml
+          grep -q 'target: 8100' /tmp/medswin-compose.yml
+          grep -Eq 'published: "?8100"?' /tmp/medswin-compose.yml
+          grep -q 'container_name: medswin-api' /tmp/medswin-compose.yml
+          grep -q 'container_name: medswin-mongodb' /tmp/medswin-compose.yml
+          ! grep -q 'medical_rag_db' /tmp/medswin-compose.yml
+      - name: Build supported container image
+        run: docker build --progress=plain -t medswin-ci .
+      - name: Check container dependency consistency
+        run: docker run --rm --entrypoint python medswin-ci -m pip check
+      - name: Import API from built image
+        run: >-
+          docker run --rm --entrypoint python medswin-ci -c
+          'from app.main import app; paths={route.path for route in app.routes};
+          required={"/health","/api/v1/medswin/chat","/api/v1/storage/chunks"};
+          missing=sorted(required-paths);
+          (_ for _ in ()).throw(SystemExit(f"container missing required routes: {missing}")) if missing else None;
+          print(f"container API import OK: {len(paths)} routes")'

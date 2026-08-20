@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from app.schemas.agents import AgentClaimBatch
@@ -43,6 +44,7 @@ def canonicalize_facet(name: str, facets: Optional[List[ClinicalFacet]] = None) 
             return target
     return lowered
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,10 +75,22 @@ CLAIM_SCHEMA = {
 
 
 def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
+    """Render bounded specialist context.
+
+    Normal application behavior retains the historical 12 × 1,200-character
+    envelope. The strict full-evaluation command sets the same smaller envelope
+    for *both* local MedSwin and Foundry GPT child processes so generator
+    comparisons do not silently give the larger-context model more evidence.
+    """
+    configured_limit = int(os.getenv("AGENT_PASSAGE_LIMIT", str(limit)))
+    configured_chars = int(os.getenv("AGENT_PASSAGE_MAX_CHARS", "1200"))
+    configured_limit = max(1, configured_limit)
+    configured_chars = max(128, configured_chars)
     blocks = []
-    for passage in passages[:limit]:
+    for passage in passages[:configured_limit]:
         blocks.append(
-            f"[{passage.chunk_id}|{passage.source_type.value}|doc={passage.doc_id}]\n{passage.text[:1200]}"
+            f"[{passage.chunk_id}|{passage.source_type.value}|doc={passage.doc_id}]\n"
+            f"{passage.text[:configured_chars]}"
         )
     return "\n\n".join(blocks)
 

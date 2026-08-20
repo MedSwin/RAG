@@ -3,17 +3,17 @@ try:
 except ModuleNotFoundError:
     pymongo = None
 try:
-    from pymongo import MongoClient
+    from pymongo import MongoClient, UpdateOne
 except ModuleNotFoundError:
-    MongoClient = None
+    MongoClient = UpdateOne = None
 import hashlib
 import json
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import numpy as np
 from pathlib import Path
 
 from app.core.config import settings
@@ -31,7 +31,6 @@ from app.services.strategy import (
     IndexStrategyManager,
     IndexType,
     IndexStrategy,
-    analyze_chunk_characteristics
 )
 
 logger = logging.getLogger(__name__)
@@ -55,7 +54,7 @@ def _index_manifest_path(index_path: str | Path) -> Path:
 
 
 def _corpus_signature(chunk_ids: List[str], org_id: str, embedding_space: str) -> str:
-    """Derive a deterministic corpus signature from the active index contents."""
+    """Derive a deterministic corpus signature from active index contents."""
     digest = hashlib.sha256()
     digest.update(org_id.encode("utf-8"))
     digest.update(b"\0")
@@ -66,26 +65,40 @@ def _corpus_signature(chunk_ids: List[str], org_id: str, embedding_space: str) -
         digest.update(b"\n")
     return digest.hexdigest()
 
+
 class StorageService:
-    """Service for managing data storage and indexing."""
-    
+    """Service for managing data storage and ordinary (non-publication) indexes.
+
+    The complete-TREC publication path uses its dedicated streaming builder.
+    This service deliberately refuses to materialize an unbounded vector corpus
+    into Python memory so an admin endpoint cannot accidentally OOM a live API.
+    """
+
     def __init__(self):
-        self.executor = ThreadPoolExecutor(max_workers=2)
+        # ThreadPoolExecutor creates worker threads lazily, but retaining it only
+        # when a blocking operation is actually used avoids health/stats callers
+        # allocating executor objects on every request.
+        self.executor: Optional[ThreadPoolExecutor] = None
+
+    def _executor(self) -> ThreadPoolExecutor:
+        if self.executor is None:
+            self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="medswin-storage")
+        return self.executor
 
     def _write_index_manifest(self, index_path: str, manifest: Dict[str, Any]) -> str:
         manifest_path = _index_manifest_path(index_path)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest, f, ensure_ascii=False, indent=2, default=str)
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2, default=str)
         return str(manifest_path)
 
-    def _read_index_manifest(self, index_path: str) -> Dict[str, Any] | None:
+    def _read_index_manifest(self, index_path: str | Path) -> Dict[str, Any] | None:
         manifest_path = _index_manifest_path(index_path)
         if not manifest_path.exists():
             return None
         try:
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                return json.load(handle)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to read index manifest %s: %s", manifest_path, exc)
             return None
@@ -100,95 +113,105 @@ class StorageService:
             and manifest.get("embedding_model") == settings.active_embedding_model()
             and int(manifest.get("embedding_dim") or 0) == settings.active_embedding_dimension()
         )
-    
+
     async def store_chunks(
-        self, 
-        chunks: List[Dict[str, Any]], 
+        self,
+        chunks: List[Dict[str, Any]],
         collection_name: str = "chunks",
-        batch_size: int = 100
+        batch_size: int = 100,
     ) -> Dict[str, Any]:
-        """Store chunks in MongoDB asynchronously."""
+        """Idempotently store tenant-scoped chunks in MongoDB."""
+        loop = asyncio.get_running_loop()
         try:
-            # Run storage in thread pool
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                self.executor,
+            return await loop.run_in_executor(
+                self._executor(),
                 self._store_chunks_sync,
                 chunks,
                 collection_name,
-                batch_size
+                batch_size,
             )
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error storing chunks: {e}")
+        except Exception as exc:
+            logger.error("Error storing chunks: %s", exc)
             raise
-    
+
     def _store_chunks_sync(
-        self, 
-        chunks: List[Dict[str, Any]], 
+        self,
+        chunks: List[Dict[str, Any]],
         collection_name: str,
-        batch_size: int
+        batch_size: int,
     ) -> Dict[str, Any]:
-        """Synchronous chunk storage function."""
+        """Synchronous tenant-safe chunk storage function."""
+        if MongoClient is None or UpdateOne is None:
+            raise RuntimeError("pymongo is required for chunk storage")
+        batch_size = max(1, int(batch_size))
         client = MongoClient(settings.MONGODB_URL)
         db = client[settings.MONGODB_DATABASE]
         coll = db[collection_name]
-        
+
         success_count = 0
+        skipped_count = 0
         failed_count = 0
-        failed_chunks = []
-        
-        for i in range(0, len(chunks), batch_size):
-            batch = chunks[i:i+batch_size]
-            
-            # Filter out existing chunk_ids
-            existing_ids = [
-                doc['chunk_id'] for doc in coll.find(
-                    {"chunk_id": {"$in": [chunk['chunk_id'] for chunk in batch]}}, 
-                    {"chunk_id": 1}
-                )
-            ]
-            new_batch = [chunk for chunk in batch if chunk['chunk_id'] not in existing_ids]
-            
-            if not new_batch:
-                logger.info(f"Batch {i//batch_size + 1} skipped: all chunks already exist")
-                continue
-            
-            # Prepare new batch
-            for chunk in new_batch:
-                if 'metadata' in chunk and 'created_timestamp' in chunk['metadata']:
-                    chunk['metadata']['created_timestamp'] = chunk['metadata']['created_timestamp'].replace(tzinfo=timezone.utc)
-            
-            try:
-                result = coll.insert_many(new_batch, ordered=False)
-                success_count += len(result.inserted_ids)
-                logger.info(f"Inserted batch {i//batch_size + 1}: {len(result.inserted_ids)} chunks")
-            except pymongo.errors.BulkWriteError as bwe:
-                logger.error(f"Batch error: {bwe.details}")
-                failed_chunks.extend(new_batch)
-                failed_count += len(new_batch)
-            except Exception as e:
-                logger.error(f"Unexpected error: {e}")
-                failed_chunks.extend(new_batch)
-                failed_count += len(new_batch)
-        
-        # Save failed chunks
+        failed_chunks: List[Dict[str, Any]] = []
+        try:
+            for start in range(0, len(chunks), batch_size):
+                batch = chunks[start : start + batch_size]
+                operations = []
+                operation_chunks: List[Dict[str, Any]] = []
+                for raw in batch:
+                    chunk = dict(raw)
+                    chunk_id = str(chunk.get("chunk_id") or "").strip()
+                    org_id = str(chunk.get("org_id") or "").strip()
+                    if collection_name == "chunks" and (not chunk_id or not org_id):
+                        failed_chunks.append(chunk)
+                        failed_count += 1
+                        continue
+                    if "metadata" in chunk and isinstance(chunk["metadata"], dict):
+                        created = chunk["metadata"].get("created_timestamp")
+                        if isinstance(created, datetime) and created.tzinfo is None:
+                            chunk["metadata"]["created_timestamp"] = created.replace(tzinfo=timezone.utc)
+                    natural_key = {"chunk_id": chunk_id}
+                    if org_id:
+                        natural_key["org_id"] = org_id
+                    operations.append(UpdateOne(natural_key, {"$setOnInsert": chunk}, upsert=True))
+                    operation_chunks.append(chunk)
+
+                if not operations:
+                    continue
+                try:
+                    result = coll.bulk_write(operations, ordered=False)
+                    inserted = len(result.upserted_ids)
+                    success_count += inserted
+                    skipped_count += len(operations) - inserted
+                    logger.info(
+                        "Stored batch %s: inserted=%s existing=%s",
+                        start // batch_size + 1,
+                        inserted,
+                        len(operations) - inserted,
+                    )
+                except pymongo.errors.BulkWriteError as exc:
+                    logger.error("Chunk batch write failed: %s", exc.details)
+                    failed_chunks.extend(operation_chunks)
+                    failed_count += len(operation_chunks)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Unexpected chunk storage error: %s", exc)
+                    failed_chunks.extend(operation_chunks)
+                    failed_count += len(operation_chunks)
+        finally:
+            client.close()
+
         if failed_chunks:
             failed_path = Path(settings.DATA_DIR) / "failed_chunks.json"
-            with open(failed_path, 'w') as f:
-                json.dump(failed_chunks, f, default=str)
-            logger.info(f"{len(failed_chunks)} failed chunks saved to {failed_path}")
-        
-        client.close()
-        
+            failed_path.parent.mkdir(parents=True, exist_ok=True)
+            failed_path.write_text(json.dumps(failed_chunks, default=str, indent=2), encoding="utf-8")
+            logger.warning("%s failed chunks saved to %s", len(failed_chunks), failed_path)
+
         return {
             "success_count": success_count,
+            "skipped_count": skipped_count,
             "failed_count": failed_count,
-            "total_chunks": len(chunks)
+            "total_chunks": len(chunks),
         }
-    
+
     async def build_hnsw_index_async(
         self,
         index_path: Optional[str] = None,
@@ -196,13 +219,10 @@ class StorageService:
         force_rebuild: bool = False,
         org_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Build HNSW index asynchronously."""
+        """Build an ordinary HNSW index asynchronously."""
         try:
             index_path = index_path or settings.HNSW_INDEX_PATH
             mapping_path = mapping_path or settings.HNSW_MAPPING_PATH
-            
-            # Root Cause vs Logic: a cached index file alone does not prove the
-            # index belongs to the current benchmark org or embedding space.
             if not force_rebuild and Path(index_path).exists():
                 manifest = self._read_index_manifest(index_path)
                 if self._manifest_matches_active_scope(manifest, org_id):
@@ -224,30 +244,28 @@ class StorageService:
                     "total_vectors": 0,
                     "message": "Index exists but provenance does not match the active org or embedding space",
                 }
-            
-            # Run index building in thread pool
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                self.executor,
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                self._executor(),
                 self._build_hnsw_index_sync,
                 index_path,
                 mapping_path,
                 org_id,
             )
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error building HNSW index: {e}")
+        except Exception as exc:
+            logger.error("Error building HNSW index: %s", exc)
             raise
 
-    async def refresh_cloud_embeddings(self, batch_size: Optional[int] = None, org_id: Optional[str] = None) -> Dict[str, Any]:
-        """Refresh stale chunk embeddings for the active cloud embedding space.
+    async def refresh_cloud_embeddings(
+        self,
+        batch_size: Optional[int] = None,
+        org_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Refresh stale chunk embeddings and rebuild the active index.
 
-        Motivation vs Logic: Cloud embedding models occupy a different vector
-        space from local models, so mixed indexes would silently corrupt
-        retrieval. Refresh runs in the background and marks readiness only after
-        chunks are re-embedded and the active index is rebuilt.
+        Stored passages are documents, so Cohere-native cloud calls explicitly
+        use document intent rather than relying on the online-query default.
         """
         batch_size = batch_size or settings.BATCH_SIZE
         batch_cap = settings.CLOUD_EMBED_BATCH_SIZE if settings.CLOUD_MODE else settings.BATCH_SIZE
@@ -277,7 +295,14 @@ class StorageService:
                     if not chunks:
                         break
                     texts = [chunk.get("text") or chunk.get("content", "") for chunk in chunks]
-                    embeddings = await client.embed(texts)
+                    embeddings = await client.embed(
+                        texts,
+                        input_type="document" if settings.CLOUD_MODE else None,
+                    )
+                    if len(embeddings) != len(chunks):
+                        raise RuntimeError(
+                            f"Embedding service returned {len(embeddings)} vectors for {len(chunks)} chunks"
+                        )
                     for chunk, embedding in zip(chunks, embeddings):
                         await coll.update_one(
                             {"_id": chunk["_id"]},
@@ -290,23 +315,25 @@ class StorageService:
                             }},
                         )
                         EMBEDDING_REFRESH_STATUS["updated"] += 1
-                    if settings.CLOUD_MODE and batch_size > 0 and settings.CLOUD_EMBED_BATCH_DELAY_S > 0:
+                    if settings.CLOUD_MODE and settings.CLOUD_EMBED_BATCH_DELAY_S > 0:
                         await asyncio.sleep(settings.CLOUD_EMBED_BATCH_DELAY_S)
             finally:
                 await client.close()
 
-            await self.build_hnsw_index_async(force_rebuild=True, org_id=org_id)
+            index_result = await self.build_hnsw_index_async(force_rebuild=True, org_id=org_id)
+            if not index_result.get("success"):
+                raise RuntimeError(index_result.get("message") or "HNSW rebuild failed after embedding refresh")
             EMBEDDING_REFRESH_STATUS.update({
                 "running": False,
                 "ready": True,
                 "completed_at": datetime.now(timezone.utc),
             })
-        except Exception as e:
-            logger.error(f"Cloud embedding refresh failed: {e}", exc_info=True)
+        except Exception as exc:
+            logger.error("Cloud embedding refresh failed: %s", exc, exc_info=True)
             EMBEDDING_REFRESH_STATUS.update({
                 "running": False,
                 "ready": False,
-                "error": str(e),
+                "error": str(exc),
                 "completed_at": datetime.now(timezone.utc),
             })
         return EMBEDDING_REFRESH_STATUS.copy()
@@ -331,26 +358,38 @@ class StorageService:
         if org_id:
             filter_dict["org_id"] = org_id
         return filter_dict
-    
+
     def _build_hnsw_index_sync(
         self,
         index_path: str,
         mapping_path: str,
         org_id: Optional[str] = None,
-        index_type: IndexType = IndexType.HNSW
+        index_type: IndexType = IndexType.HNSW,
     ) -> Dict[str, Any]:
-        """Synchronous index building function using modular index builders."""
+        """Build an in-memory index only for bounded ordinary corpora."""
         try:
-            # Get database
             db = get_sync_database()
-            coll = db['chunks']
-            
-            # Get all chunks with embeddings
+            coll = db["chunks"]
+            active_filter = self._index_embedding_filter(org_id=org_id)
+            vector_count = int(coll.count_documents(active_filter))
+            max_vectors = max(1, int(os.getenv("STORAGE_IN_MEMORY_INDEX_MAX_VECTORS", "250000")))
+            if vector_count > max_vectors:
+                return {
+                    "success": False,
+                    "index_path": index_path,
+                    "mapping_path": mapping_path,
+                    "manifest_path": str(_index_manifest_path(index_path)),
+                    "total_vectors": 0,
+                    "message": (
+                        f"Refusing in-memory index build for {vector_count:,} vectors; "
+                        f"limit is {max_vectors:,}. Use the streaming full-corpus builder for large corpora."
+                    ),
+                }
+
             chunks = list(coll.find(
-                self._index_embedding_filter(org_id=org_id),
-                {"chunk_id": 1, "doc_id": 1, "source_type": 1, "embedding": 1, "embedding_dim": 1, "metadata": 1}
+                active_filter,
+                {"chunk_id": 1, "doc_id": 1, "source_type": 1, "embedding": 1, "embedding_dim": 1, "metadata": 1},
             ))
-            
             if not chunks:
                 return {
                     "success": False,
@@ -358,16 +397,12 @@ class StorageService:
                     "mapping_path": mapping_path,
                     "manifest_path": str(_index_manifest_path(index_path)),
                     "total_vectors": 0,
-                    "message": "No chunks with embeddings found"
+                    "message": "No chunks with embeddings found",
                 }
-            
-            # Get embedding dimension
-            embedding_dim = chunks[0].get('embedding_dim', settings.active_embedding_dimension())
-            
-            # Prepare embeddings and mapping
+
+            embedding_dim = chunks[0].get("embedding_dim", settings.active_embedding_dimension())
             embeddings = []
             chunk_ids = []
-            
             for chunk in chunks:
                 if len(chunk.get("embedding") or []) != embedding_dim:
                     logger.warning(
@@ -377,8 +412,8 @@ class StorageService:
                         embedding_dim,
                     )
                     continue
-                embeddings.append(chunk['embedding'])
-                chunk_ids.append(chunk['chunk_id'])
+                embeddings.append(chunk["embedding"])
+                chunk_ids.append(chunk["chunk_id"])
             if not embeddings:
                 return {
                     "success": False,
@@ -386,48 +421,26 @@ class StorageService:
                     "mapping_path": mapping_path,
                     "manifest_path": str(_index_manifest_path(index_path)),
                     "total_vectors": 0,
-                    "message": "No chunks with active-dimension embeddings found"
+                    "message": "No chunks with active-dimension embeddings found",
                 }
-            
-            # Initialize strategy manager
+
             strategy_manager = IndexStrategyManager()
-            
-            # Select appropriate index builder based on type
             if index_type == IndexType.HNSW:
-                config = strategy_manager.get_index_config(
-                    IndexStrategy.HNSW_ONLY,
-                    embedding_dim,
-                    len(chunks)
-                )
+                config = strategy_manager.get_index_config(IndexStrategy.HNSW_ONLY, embedding_dim, len(chunks))
                 builder = HNSWIndexBuilder(embedding_dim, config.get("hnsw"))
-                
             elif index_type == IndexType.FAISS_IVF:
-                config = strategy_manager.get_index_config(
-                    IndexStrategy.FAISS_ONLY,
-                    embedding_dim,
-                    len(chunks)
-                )
+                config = strategy_manager.get_index_config(IndexStrategy.FAISS_ONLY, embedding_dim, len(chunks))
                 builder = FAISSIndexBuilder(embedding_dim, config.get("faiss_ivf"))
-                
             elif index_type == IndexType.FAISS_TREE:
-                config = strategy_manager.get_index_config(
-                    IndexStrategy.TREE_ONLY,
-                    embedding_dim,
-                    len(chunks)
-                )
+                config = strategy_manager.get_index_config(IndexStrategy.TREE_ONLY, embedding_dim, len(chunks))
                 builder = TreeIndexBuilder(embedding_dim, config.get("faiss_tree"))
-                
             else:
-                # Default to HNSW
-                config = strategy_manager.get_index_config(
-                    IndexStrategy.HNSW_ONLY,
-                    embedding_dim,
-                    len(chunks)
-                )
+                config = strategy_manager.get_index_config(IndexStrategy.HNSW_ONLY, embedding_dim, len(chunks))
                 builder = HNSWIndexBuilder(embedding_dim, config.get("hnsw"))
-            
-            # Build the index
+
             result = builder.build(embeddings, chunk_ids, index_path, mapping_path)
+            if not result.get("success"):
+                return result
             manifest = {
                 "org_id": org_id,
                 "index_type": index_type.value,
@@ -445,35 +458,23 @@ class StorageService:
                     "LIT": sum(1 for chunk in chunks if chunk.get("source_type") == "LIT"),
                 },
                 "doc_ids": sorted({str(chunk.get("doc_id")) for chunk in chunks if chunk.get("doc_id")}),
-                "corpus_signature": _corpus_signature(
-                    chunk_ids,
-                    org_id or "all",
-                    settings.active_embedding_space(),
-                ),
+                "corpus_signature": _corpus_signature(chunk_ids, org_id or "all", settings.active_embedding_space()),
                 "built_at": datetime.now(timezone.utc).isoformat(),
             }
             manifest_path = self._write_index_manifest(index_path, manifest)
             result["manifest_path"] = manifest_path
             result["index_manifest"] = manifest
-
-            logger.info(
-                "%s index built for %s: %s",
-                index_type.value.upper(),
-                org_id or "all orgs",
-                result["message"],
-            )
-            
+            logger.info("%s index built for %s: %s", index_type.value.upper(), org_id or "all orgs", result["message"])
             return result
-            
-        except Exception as e:
-            logger.error(f"Error building index: {e}")
+        except Exception as exc:
+            logger.error("Error building index: %s", exc)
             return {
                 "success": False,
                 "index_path": index_path,
                 "mapping_path": mapping_path,
                 "manifest_path": str(_index_manifest_path(index_path)),
                 "total_vectors": 0,
-                "message": f"Index building failed: {str(e)}"
+                "message": f"Index building failed: {exc}",
             }
 
     def _index_embedding_filter(self, org_id: Optional[str] = None) -> Dict[str, Any]:
@@ -485,71 +486,55 @@ class StorageService:
         if org_id:
             filter_dict["org_id"] = org_id
         return filter_dict
-    
+
     async def get_storage_stats(self, org_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get storage statistics."""
+        """Get storage statistics without materializing a million-ID corpus."""
         try:
             db = get_sync_database()
-            coll = db['chunks']
+            coll = db["chunks"]
             scope_filter: Dict[str, Any] = {"org_id": org_id} if org_id else {}
-            
-            # Get basic stats
-            total_chunks = coll.count_documents(scope_filter)
-            total_embeddings = coll.count_documents({**scope_filter, "embedding": {"$exists": True, "$ne": []}})
+            total_chunks = int(coll.count_documents(scope_filter))
+            total_embeddings = int(coll.count_documents({**scope_filter, "embedding": {"$exists": True, "$ne": []}}))
             source_counts = {
-                "CPG": coll.count_documents({**scope_filter, "source_type": "CPG"}),
-                "EMR": coll.count_documents({**scope_filter, "source_type": "EMR"}),
-                "LIT": coll.count_documents({**scope_filter, "source_type": "LIT"}),
+                "CPG": int(coll.count_documents({**scope_filter, "source_type": "CPG"})),
+                "EMR": int(coll.count_documents({**scope_filter, "source_type": "EMR"})),
+                "LIT": int(coll.count_documents({**scope_filter, "source_type": "LIT"})),
             }
             if settings.CLOUD_MODE:
-                active_embeddings = coll.count_documents(self._index_embedding_filter(org_id=org_id))
-                stale_embeddings = coll.count_documents(self._stale_embedding_filter(org_id=org_id))
+                active_embeddings = int(coll.count_documents(self._index_embedding_filter(org_id=org_id)))
+                stale_embeddings = int(coll.count_documents(self._stale_embedding_filter(org_id=org_id)))
             else:
                 active_embeddings = total_embeddings
                 stale_embeddings = 0
-            
-            # Check index existence
+
             index_path = Path(settings.HNSW_INDEX_PATH)
             index_exists = index_path.exists()
             manifest_path = _index_manifest_path(index_path)
             index_manifest = self._read_index_manifest(index_path) if index_exists else None
-            active_index_chunks = list(coll.find(
-                self._index_embedding_filter(org_id=org_id),
-                {"chunk_id": 1, "doc_id": 1},
-            ))
-            active_chunk_ids = [str(chunk.get("chunk_id")) for chunk in active_index_chunks if chunk.get("chunk_id")]
-            active_doc_ids = sorted({str(chunk.get("doc_id")) for chunk in active_index_chunks if chunk.get("doc_id")})
-            active_signature = _corpus_signature(active_chunk_ids, org_id or "all", settings.active_embedding_space())
             index_provenance_valid = self._manifest_matches_active_scope(index_manifest, org_id)
             if index_manifest:
                 index_provenance_valid = (
                     index_provenance_valid
-                    and int(index_manifest.get("total_vectors") or 0) == len(active_chunk_ids)
-                    and index_manifest.get("corpus_signature") == active_signature
+                    and int(index_manifest.get("total_vectors") or 0) == active_embeddings
                 )
             index_provenance_error = None
             if index_exists and not index_manifest:
                 index_provenance_error = "missing index provenance manifest"
             elif index_exists and not index_provenance_valid:
-                index_provenance_error = "index provenance does not match active org or embedding space"
-                if index_manifest and int(index_manifest.get("total_vectors") or 0) != len(active_chunk_ids):
-                    index_provenance_error = "index vector count does not match active benchmark corpus"
-                elif index_manifest and index_manifest.get("corpus_signature") != active_signature:
-                    index_provenance_error = "index corpus signature is stale"
-            if index_manifest:
-                index_manifest.setdefault("doc_ids", active_doc_ids if index_provenance_valid else index_manifest.get("doc_ids", []))
+                index_provenance_error = "index provenance/vector count does not match active org or embedding space"
+
+            active_doc_ids = list((index_manifest or {}).get("doc_ids") or [])
+            # Old ordinary manifests may contain large doc-id arrays. API stats
+            # are diagnostic, not a corpus export, so bound response size.
+            active_doc_ids = [str(value) for value in active_doc_ids[:1000]]
             index_size = index_path.stat().st_size if index_exists else None
-            
-            # Get last updated timestamp
+
             last_updated = None
             if total_chunks > 0:
-                last_chunk = coll.find_one(
-                    scope_filter,
-                    sort=[("metadata.created_timestamp", -1)]
-                )
-                if last_chunk and 'metadata' in last_chunk:
-                    last_updated = last_chunk['metadata'].get('created_timestamp')
-            
+                last_chunk = coll.find_one(scope_filter, sort=[("metadata.created_timestamp", -1)])
+                if last_chunk and "metadata" in last_chunk:
+                    last_updated = last_chunk["metadata"].get("created_timestamp")
+
             return {
                 "total_chunks": total_chunks,
                 "total_embeddings": total_embeddings,
@@ -568,43 +553,31 @@ class StorageService:
                 "index_provenance_error": index_provenance_error,
                 "index_size": index_size,
                 "active_doc_ids": active_doc_ids,
-                "last_updated": last_updated
+                "last_updated": last_updated,
             }
-            
-        except Exception as e:
-            logger.error(f"Error getting storage stats: {e}")
+        except Exception as exc:
+            logger.error("Error getting storage stats: %s", exc)
             raise
-    
-    async def clear_chunks(self, collection_name: str = "chunks") -> Dict[str, Any]:
-        """Clear all chunks from storage."""
+
+    async def clear_chunks(self, collection_name: str = "chunks", org_id: Optional[str] = None) -> Dict[str, Any]:
+        """Clear chunks, tenant-scoped when org_id is supplied."""
         try:
             db = get_sync_database()
             coll = db[collection_name]
-            
-            result = coll.delete_many({})
-            
-            return {
-                "deleted_count": result.deleted_count
-            }
-            
-        except Exception as e:
-            logger.error(f"Error clearing chunks: {e}")
+            result = coll.delete_many({"org_id": org_id} if org_id else {})
+            return {"deleted_count": int(result.deleted_count), "org_id": org_id}
+        except Exception as exc:
+            logger.error("Error clearing chunks: %s", exc)
             raise
 
     async def clear_benchmark_org(self, org_id: str, remove_indexes: bool = True) -> Dict[str, Any]:
-        """Clear benchmark-scoped runtime data without touching other tenants.
-
-        Motivation vs Logic: Benchmark reruns need a fresh corpus and traces, but
-        deleting the whole database is unsafe in a shared development runtime.
-        This reset deletes only the configured benchmark org and optionally
-        removes global ANN files so they can be rebuilt from active embeddings.
-        """
+        """Clear benchmark-scoped runtime data without touching other tenants."""
         try:
             db = get_sync_database()
             deleted: Dict[str, int] = {}
             for collection_name in ("chunks", "documents", "traces", "sessions"):
                 result = db[collection_name].delete_many({"org_id": org_id})
-                deleted[collection_name] = result.deleted_count
+                deleted[collection_name] = int(result.deleted_count)
 
             removed_indexes = []
             if remove_indexes:
@@ -624,103 +597,76 @@ class StorageService:
                     if manifest_path.exists():
                         manifest_path.unlink()
                         removed_indexes.append(str(manifest_path))
-
-            return {
-                "org_id": org_id,
-                "deleted": deleted,
-                "removed_indexes": removed_indexes,
-            }
-        except Exception as e:
-            logger.error(f"Error clearing benchmark org {org_id}: {e}")
+            return {"org_id": org_id, "deleted": deleted, "removed_indexes": removed_indexes}
+        except Exception as exc:
+            logger.error("Error clearing benchmark org %s: %s", org_id, exc)
             raise
-    
-    async def get_chunk(self, chunk_id: str) -> Optional[Dict[str, Any]]:
-        """Get a specific chunk by ID."""
+
+    async def get_chunk(self, chunk_id: str, org_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a specific chunk, tenant-scoped when org_id is supplied."""
         try:
             db = get_sync_database()
-            coll = db['chunks']
-            
-            chunk = coll.find_one({"chunk_id": chunk_id})
-            
+            coll = db["chunks"]
+            query: Dict[str, Any] = {"chunk_id": chunk_id}
+            if org_id:
+                query["org_id"] = org_id
+            chunk = coll.find_one(query)
             if chunk:
-                # Convert ObjectId to string
-                chunk['_id'] = str(chunk['_id'])
-            
+                chunk["_id"] = str(chunk["_id"])
             return chunk
-            
-        except Exception as e:
-            logger.error(f"Error getting chunk: {e}")
+        except Exception as exc:
+            logger.error("Error getting chunk: %s", exc)
             raise
-    
+
     async def list_chunks(
         self,
         skip: int = 0,
         limit: int = 100,
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """List chunks with optional filtering."""
+        """List chunks with bounded pagination and optional filters."""
         try:
             db = get_sync_database()
-            coll = db['chunks']
-            
+            coll = db["chunks"]
             query = filters or {}
-            cursor = coll.find(query).skip(skip).limit(limit)
-            
+            safe_limit = max(1, min(int(limit), 1000))
+            cursor = coll.find(query).skip(max(0, int(skip))).limit(safe_limit)
             chunks = []
             for chunk in cursor:
-                chunk['_id'] = str(chunk['_id'])
+                chunk["_id"] = str(chunk["_id"])
                 chunks.append(chunk)
-            
             return chunks
-            
-        except Exception as e:
-            logger.error(f"Error listing chunks: {e}")
+        except Exception as exc:
+            logger.error("Error listing chunks: %s", exc)
             raise
-    
-    async def validate_storage(self) -> Dict[str, Any]:
-        """Validate storage integrity."""
+
+    async def validate_storage(self, org_id: Optional[str] = None) -> Dict[str, Any]:
+        """Validate storage/index integrity for an optional tenant scope."""
         try:
             db = get_sync_database()
-            coll = db['chunks']
-            
-            # Get chunk count
-            chunk_count = coll.count_documents({})
-            
-            # Check for chunks without embeddings
-            chunks_without_embeddings = coll.count_documents({
-                "embedding": {"$exists": False}
-            })
-            
-            # Check for chunks with invalid embeddings
-            chunks_with_invalid_embeddings = coll.count_documents({
-                "embedding": {"$exists": True, "$size": 0}
-            })
-            
-            # Check index existence and validity
+            coll = db["chunks"]
+            scope: Dict[str, Any] = {"org_id": org_id} if org_id else {}
+            chunk_count = int(coll.count_documents(scope))
+            chunks_without_embeddings = int(coll.count_documents({**scope, "embedding": {"$exists": False}}))
+            chunks_with_invalid_embeddings = int(coll.count_documents({**scope, "embedding": {"$exists": True, "$size": 0}}))
+
             index_path = Path(settings.HNSW_INDEX_PATH)
             mapping_path = Path(settings.HNSW_MAPPING_PATH)
-            
             index_exists = index_path.exists()
             mapping_exists = mapping_path.exists()
-            
             index_valid = False
-            if index_exists and mapping_exists:
+            if index_exists and mapping_exists and HNSWIndexBuilder is not None:
                 try:
-                    # Try to load the index using HNSW builder
-                    with open(mapping_path, 'r') as f:
-                        mapping = json.load(f)
-                    
-                    if mapping:
-                        # Get embedding dimension from first chunk
-                        sample_chunk = coll.find_one(self._index_embedding_filter())
-                        if sample_chunk:
-                            embedding_dim = sample_chunk.get('embedding_dim', settings.active_embedding_dimension())
-                            builder = HNSWIndexBuilder(embedding_dim)
-                            index_valid = builder.load(str(index_path), str(mapping_path))
-                except Exception as e:
-                    logger.warning(f"Index validation failed: {e}")
-            
-            # Collect issues
+                    sample_chunk = coll.find_one(self._index_embedding_filter(org_id=org_id))
+                    if sample_chunk:
+                        embedding_dim = sample_chunk.get("embedding_dim", settings.active_embedding_dimension())
+                        builder = HNSWIndexBuilder(embedding_dim)
+                        index_valid = builder.load(str(index_path), str(mapping_path))
+                        if hasattr(builder.mapping, "close"):
+                            builder.mapping.close()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Index validation failed: %s", exc)
+
             issues = []
             if chunks_without_embeddings > 0:
                 issues.append(f"{chunks_without_embeddings} chunks without embeddings")
@@ -730,22 +676,23 @@ class StorageService:
                 issues.append("HNSW index not found")
             if not mapping_exists:
                 issues.append("HNSW mapping not found")
-            if index_exists and not index_valid:
-                issues.append("HNSW index is corrupted or invalid")
-            
+            if index_exists and mapping_exists and not index_valid:
+                issues.append("HNSW index is corrupted, incompatible, or invalid")
+
             return {
                 "valid": len(issues) == 0,
                 "issues": issues,
+                "org_id": org_id,
                 "chunk_count": chunk_count,
                 "index_exists": index_exists,
-                "index_valid": index_valid
+                "index_valid": index_valid,
             }
-            
-        except Exception as e:
-            logger.error(f"Error validating storage: {e}")
+        except Exception as exc:
+            logger.error("Error validating storage: %s", exc)
             raise
-    
+
     def cleanup(self):
-        """Cleanup resources."""
-        if self.executor:
+        """Cleanup worker resources."""
+        if self.executor is not None:
             self.executor.shutdown(wait=True)
+            self.executor = None

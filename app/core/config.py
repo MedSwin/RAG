@@ -4,29 +4,31 @@ from typing import List, Optional
 import os
 from pathlib import Path
 
+
 class Settings(BaseSettings):
     """Application settings for MedSwin."""
+
     model_config = ConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
-    
+
     # Application settings
     APP_NAME: str = "MedSwin"
     DEBUG: bool = False
     VERSION: str = "1.1.0"
-    
+
     # Server settings
     APP_HOST: str = "0.0.0.0"
-    APP_PORT: int = 8100  # Changed from 8000 to avoid conflict with supervisor
+    APP_PORT: int = 8100
     HOST: str = "0.0.0.0"  # Legacy alias
     PORT: int = 8100  # Legacy alias
-    
+
     # CORS settings
     ALLOWED_ORIGINS: List[str] = ["*"]
-    
+
     # Database settings
     MONGODB_URL: str = "mongodb://localhost:27017"
     MONGODB_DB: str = "medswin"
     MONGODB_DATABASE: str = "medswin"  # Legacy alias
-    
+
     # Model endpoints (OpenAI-compatible)
     SUPERVISOR_URL: str = "http://localhost:8000/v1/chat/completions"
     AGENT1_URL: str = "http://localhost:8001/v1/chat/completions"
@@ -36,18 +38,27 @@ class Settings(BaseSettings):
     EMBEDDING_URL: str = "http://localhost:8005/embeddings"
 
     # Cloud mode with Azure AI Foundry
-    # Root Cause vs Logic: Azure variables were already present in local .env,
-    # but pydantic rejected unknown keys during import. Cloud settings are
-    # first-class now, while extra env keys stay non-fatal for deploy drift.
     CLOUD_MODE: bool = False
-    CLOUD_MODEL: str = "gpt-5.4"
+    FOUNDRY_MODEL: str = "gpt-5.4"
+    CLOUD_MODEL: str = "gpt-5.4"  # Backward-compatible alias
     CLOUD_EMBEDDING: str = "embed-v-4-0"
     CLOUD_EMBEDDING_DIMENSION: Optional[int] = None
+    CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE: Optional[str] = None
     CLOUD_RERANKER: str = "Cohere-rerank-v4.0-fast"
     AZURE_AI_FOUNDRY_ENDPOINT: Optional[str] = None
     AZURE_AI_FOUNDRY_API_KEY: Optional[str] = None
-    CLOUD_RERANKER_URI: str = "https://parth-miy1kx0s-eastus2.services.ai.azure.com/providers/cohere/v2/rerank"
-    
+    CLOUD_EMBEDDING_URI: Optional[str] = None
+    CLOUD_RERANKER_URI: Optional[str] = None
+    CLOUD_MODEL_INFERENCE_API_VERSION: str = "2024-05-01-preview"
+
+    # Generation backend. Retrieval may stay cloud-backed while generation is
+    # switched between Azure Foundry GPT-5.4 and the local MedSwin 7B server.
+    GENERATION_BACKEND: Optional[str] = None
+    MEDSWIN_MODEL_REPO: str = "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
+    MEDSWIN_MODEL_PATH: str = "./models/MedSwin-DaRE-TIES-KD-0.7"
+    MEDSWIN_LLM_MODEL: str = "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
+    MEDSWIN_LLM_URL: str = "http://127.0.0.1:8000/v1/chat/completions"
+
     # Service timeouts
     LLM_TIMEOUT_S: int = 60
     RERANK_TIMEOUT_S: int = 30
@@ -57,13 +68,13 @@ class Settings(BaseSettings):
     MODEL_RATE_LIMIT_BASE_COOLDOWN_S: float = 600.0
     MODEL_RATE_LIMIT_MAX_COOLDOWN_S: float = 1800.0
     MODEL_RATE_LIMIT_JITTER_S: float = 0.25
-    
+
     # Legacy model settings (for backward compatibility)
     EMBEDDING_MODEL_PATH: str = "./models/MedEmbed-large-v0.1"
     RERANKER_MODEL_PATH: str = "./models/bge-reranker-v2-m3"
     EMBEDDING_DIMENSION: int = 768
     MAX_SEQUENCE_LENGTH: int = 512
-    
+
     # Storage settings
     HNSW_INDEX_PATH: str = "./data/hnsw_index.bin"
     HNSW_MAPPING_PATH: str = "./data/hnsw_mapping.json"
@@ -72,10 +83,9 @@ class Settings(BaseSettings):
     TREE_INDEX_PATH: str = "./data/tree_index.npy"
     TREE_MAPPING_PATH: str = "./data/tree_mapping.json"
     DATA_DIR: str = "./data"
-    
+
     # Retrieval settings
     DEFAULT_TOP_K: int = 5
-    # Naive-RAG baseline: dense top-K only (no BM25, rerank, MAC, or gate)
     NAIVE_TOP_K: int = 5
     NAIVE_MAX_CONTEXT_CHARS: int = 8000
     NAIVE_ENABLE_MONGO_FALLBACK: bool = True
@@ -87,12 +97,12 @@ class Settings(BaseSettings):
     ENABLE_BM25: bool = True
     DEFAULT_INDEX_TYPE: str = "hnsw"
     INDEX_STRATEGY_MODE: str = "dynamic"
-    
-    # Legacy retrieval settings (for backward compatibility)
+
+    # Legacy retrieval settings
     MAX_TOP_K: int = 20
     RERANK_TOP_K: int = 10
     FINAL_TOP_K: int = 3
-    
+
     # Evidence sufficiency policy
     SUFF_T_CPG: int = 2
     SUFF_T_EMR: int = 2
@@ -110,8 +120,8 @@ class Settings(BaseSettings):
     AGENT_RELIABILITY_PATH: str = "./data/calibration/agents.json"
     AUTH_JWT_SECRET: Optional[str] = None
     AUTH_JWT_ALGORITHM: str = "HS256"
-    
-    # Fusion score weights (must sum to 1.0)
+
+    # Fusion score weights
     W_RERANK: float = 0.45
     W_DENSE: float = 0.25
     W_LEX: float = 0.10
@@ -144,7 +154,7 @@ class Settings(BaseSettings):
     MMR_LAMBDA: float = 0.75
     MMR_MAX_EVIDENCE_CHUNKS: int = 10
     HNSW_MAX_EF_SEARCH: int = 2000
-    
+
     # Enterprise features
     ENABLE_AUTH: bool = False
     ENABLE_RBAC: bool = False
@@ -152,35 +162,35 @@ class Settings(BaseSettings):
     LOG_REDACT_PHI: bool = True
     TRACE_REDACT_BY_DEFAULT: bool = True
     TRACE_INCLUDE_POLICY_DETAILS: bool = True
-    
+
     # Chunking settings
     TARGET_CHUNK_SIZE: int = 400
     BATCH_SIZE: int = 64
-    
+
     # File upload settings
-    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
+    MAX_FILE_SIZE: int = 100 * 1024 * 1024
     ALLOWED_FILE_TYPES: List[str] = [".csv", ".json", ".txt", ".pdf"]
 
     # Cloud embedding batch control
     CLOUD_EMBED_BATCH_SIZE: int = 64
     CLOUD_EMBED_BATCH_DELAY_S: float = 60.0
-    
+
     # Logging settings
     LOG_LEVEL: str = "INFO"
     LOG_FILE: str = "./logs/app.log"
-    
+
     # Hugging Face settings
     HF_TOKEN: Optional[str] = None
-    
-    # AWS settings (for EC2 deployment)
+
+    # AWS settings
     AWS_REGION: str = "us-east-1"
     EC2_INSTANCE_TYPE: str = "g4dn.xlarge"
-    
+
     def validate_fusion_weights(self) -> bool:
         """Validate that base fusion weights are within a stable range."""
         total = (
-            self.W_RERANK + self.W_DENSE + self.W_LEX +
-            self.W_RECENCY + self.W_SECTION + self.W_SOURCE
+            self.W_RERANK + self.W_DENSE + self.W_LEX
+            + self.W_RECENCY + self.W_SECTION + self.W_SOURCE
         )
         return 0.10 <= total <= 2.0
 
@@ -201,23 +211,48 @@ class Settings(BaseSettings):
             return False
         return True
 
-    def cloud_openai_base_url(self) -> str:
-        """Return Azure AI Foundry OpenAI v1 base URL."""
-        endpoint = (self.AZURE_AI_FOUNDRY_ENDPOINT or "").strip()
+    def cloud_account_base_url(self) -> str:
+        """Return the Azure AI Foundry account root without API-specific suffixes."""
+        endpoint = (self.AZURE_AI_FOUNDRY_ENDPOINT or "").strip().rstrip("/")
         if not endpoint:
             return ""
-        endpoint = endpoint.rstrip("/")
-        if endpoint.endswith("/openai/v1"):
-            return f"{endpoint}/"
-        if endpoint.endswith("/openai"):
-            return f"{endpoint}/v1/"
-        return f"{endpoint}/openai/v1/"
+        for suffix in ("/openai/v1", "/openai"):
+            if endpoint.endswith(suffix):
+                endpoint = endpoint[: -len(suffix)]
+                break
+        return endpoint.rstrip("/")
+
+    def cloud_openai_base_url(self) -> str:
+        """Return Azure AI Foundry OpenAI-compatible v1 base URL."""
+        endpoint = self.cloud_account_base_url()
+        return f"{endpoint}/openai/v1/" if endpoint else ""
 
     def cloud_chat_url(self) -> str:
-        return f"{self.cloud_openai_base_url()}chat/completions"
+        base = self.cloud_openai_base_url()
+        return f"{base}chat/completions" if base else ""
 
     def cloud_embedding_url(self) -> str:
-        return f"{self.cloud_openai_base_url()}embeddings"
+        """Return the Foundry Models embeddings route used by Cohere Embed v4."""
+        explicit = (self.CLOUD_EMBEDDING_URI or "").strip()
+        if explicit:
+            return explicit
+        base = self.cloud_account_base_url()
+        if not base:
+            return ""
+        return f"{base}/models/embeddings?api-version={self.CLOUD_MODEL_INFERENCE_API_VERSION}"
+
+    def cloud_reranker_url(self) -> str:
+        """Return Cohere's provider-specific v2 rerank route."""
+        explicit = (self.CLOUD_RERANKER_URI or "").strip()
+        if explicit:
+            return explicit
+        base = self.cloud_account_base_url()
+        return f"{base}/providers/cohere/v2/rerank" if base else ""
+
+    def active_generation_model(self) -> str:
+        if self.CLOUD_MODE:
+            return (self.FOUNDRY_MODEL or self.CLOUD_MODEL).strip()
+        return "default"
 
     def active_llm_url(self, fallback_url: str) -> str:
         return self.cloud_chat_url() if self.CLOUD_MODE else fallback_url
@@ -226,7 +261,7 @@ class Settings(BaseSettings):
         return self.cloud_embedding_url() if self.CLOUD_MODE else self.EMBEDDING_URL
 
     def active_reranker_url(self) -> str:
-        return self.CLOUD_RERANKER_URI if self.CLOUD_MODE else self.RERANKER_URL
+        return self.cloud_reranker_url() if self.CLOUD_MODE else self.RERANKER_URL
 
     def active_embedding_model(self) -> str:
         return self.CLOUD_EMBEDDING if self.CLOUD_MODE else self.EMBEDDING_MODEL_PATH
@@ -239,37 +274,28 @@ class Settings(BaseSettings):
         if self.CLOUD_MODE:
             if self.CLOUD_EMBEDDING_DIMENSION:
                 return self.CLOUD_EMBEDDING_DIMENSION
-            known_cloud_dims = {
-                "embed-v-4-0": 1536,
-            }
+            known_cloud_dims = {"embed-v-4-0": 1536}
             return known_cloud_dims.get(self.CLOUD_EMBEDDING, self.EMBEDDING_DIMENSION)
         return self.EMBEDDING_DIMENSION
 
+
 def _path_is_under_app_root(path_value: str) -> bool:
-    """Return True when a configured path targets the Docker /app tree."""
     return path_value.startswith("/app/")
 
 
 def _local_runtime_path(path_value: str) -> str:
-    """Map a Docker-only /app path to the equivalent local workspace path."""
     return "." + path_value[4:]
 
 
 def _normalize_runtime_paths(settings: Settings) -> None:
-    """Keep Docker defaults portable in local dev.
-
-    Root Cause vs Logic: the repo ships Docker-oriented defaults under /app,
-    but local imports run from the checkout and cannot create directories in
-    that read-only filesystem. We preserve the same relative layout while
-    rewriting only the /app paths to local workspace equivalents outside
-    containers.
-    """
+    """Keep Docker defaults portable in local dev."""
     if os.access("/app", os.W_OK):
         return
 
     path_fields = [
         "EMBEDDING_MODEL_PATH",
         "RERANKER_MODEL_PATH",
+        "MEDSWIN_MODEL_PATH",
         "HNSW_INDEX_PATH",
         "HNSW_MAPPING_PATH",
         "FAISS_INDEX_PATH",
@@ -279,20 +305,18 @@ def _normalize_runtime_paths(settings: Settings) -> None:
         "DATA_DIR",
         "LOG_FILE",
     ]
-
     for field_name in path_fields:
         current_value = getattr(settings, field_name)
         if isinstance(current_value, str) and _path_is_under_app_root(current_value):
             setattr(settings, field_name, _local_runtime_path(current_value))
 
 
-# Create settings instance
 settings = Settings()
 _normalize_runtime_paths(settings)
 
-# Validate fusion weights on startup
 if not settings.validate_fusion_weights():
     import warnings
+
     warnings.warn(
         f"Fusion base weights are outside the stable range (sum={settings.W_RERANK + settings.W_DENSE + settings.W_LEX + settings.W_RECENCY + settings.W_SECTION + settings.W_SOURCE}). "
         "This may cause unexpected scoring behavior."
@@ -301,25 +325,26 @@ if not settings.validate_fusion_weights():
 if not settings.validate_enterprise_policy():
     raise ValueError("Invalid MedSwin enterprise policy configuration")
 
-# Ensure required directories exist
+
 def ensure_directories():
     """Ensure required directories exist."""
     directories = [
         Path(settings.DATA_DIR),
         Path(settings.EMBEDDING_MODEL_PATH).parent,
         Path(settings.RERANKER_MODEL_PATH).parent,
+        Path(settings.MEDSWIN_MODEL_PATH).parent,
         Path(settings.LOG_FILE).parent,
         Path("./models"),
         Path("./data"),
         Path("./logs"),
     ]
-    
     for directory in directories:
         try:
             directory.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             import warnings
+
             warnings.warn(f"Could not create configured directory {directory}: {exc}")
 
-# Initialize directories
+
 ensure_directories()

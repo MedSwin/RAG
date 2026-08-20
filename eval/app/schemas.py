@@ -54,6 +54,23 @@ class CaseAudit(BaseModel):
     policy_passed: bool | None = None
     degraded_mode: bool | None = None
     answer_chars: int = 0
+
+    # Pre-pack literature ranking, derived from retrieval/rerank traces by the
+    # strict full matrix. These are the track-aligned retrieval diagnostics.
+    retrieval_ranked_doc_ids: list[str] = Field(default_factory=list)
+    retrieval_ndcg_at_10: float | None = None
+    retrieval_precision_at_10: float | None = None
+    retrieval_recall_at_10: float | None = None
+    retrieval_reciprocal_rank: float | None = None
+
+    # Final evidence packet actually shown to the generator. These metrics are
+    # RAG-context diagnostics and must not be described as a full TREC run.
+    final_evidence_ranked_doc_ids: list[str] = Field(default_factory=list)
+    final_evidence_ndcg_at_10: float = 0.0
+    final_evidence_precision_at_10: float = 0.0
+    final_evidence_recall_at_10: float = 0.0
+    final_evidence_reciprocal_rank: float = 0.0
+
     selected_doc_ids: list[str] = Field(default_factory=list)
     cited_doc_ids: list[str] = Field(default_factory=list)
     selected_chunk_ids: list[str] = Field(default_factory=list)
@@ -63,6 +80,7 @@ class CaseAudit(BaseModel):
     gold_available_in_index: int | None = None
     gold_available_but_not_retrieved: bool | None = None
     failure_bucket: str | None = None
+
     facet_recall: float = 0.0
     critical_facet_recall: float = 0.0
     evidence_doc_recall: float = 0.0

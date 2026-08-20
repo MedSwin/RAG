@@ -1,10 +1,10 @@
 """Naive-RAG baseline: embed query → dense top-K → generate.
 
 This is the control pipeline for MedSwin evaluation. It reuses the same
-embedding client, ANN index, Mongo chunk store, org/patient filters, and
-LLM backend as the full system. It deliberately omits BM25, reranking,
-calibration, fusion, utility selection, MAC agents, the sufficiency gate,
-retrieve-more, and hint expansion.
+embedding client, ANN index, Mongo chunk store, org/patient filters, LLM backend,
+and evidence token budget as the full system. It deliberately omits BM25,
+reranking, calibration, fusion, utility selection, MAC agents, the sufficiency
+gate, retrieve-more, and hint expansion.
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ from app.schemas.evidence import (
 )
 from app.schemas.sessions import Session
 from app.schemas.traces import AgentMessage, AuditTrace, ChatResponse, RetrievalTrace, ToolCall
+from app.scoring.utility import token_count
 from app.services.adapters.embedding import EmbeddingClient
 from app.services.adapters.llm import LLMClient
 from app.services.medswin.governance import build_citation
@@ -84,15 +85,36 @@ def _chunk_to_passage(chunk: Dict[str, Any], dense_score: float, retrieved_by: s
     )
 
 
-def _truncate_context(passages: List[CandidatePassage], max_chars: int) -> List[CandidatePassage]:
+def _truncate_context(
+    passages: List[CandidatePassage],
+    max_chars: int,
+    token_budget: int,
+) -> List[CandidatePassage]:
+    """Pack ranked naive evidence under the same token budget as full MedSwin.
+
+    ``NAIVE_MAX_CONTEXT_CHARS`` remains a secondary safety ceiling for ordinary
+    application use, but publication comparison is governed by
+    ``TOKEN_BUDGET_B`` exactly like ``pack_bundle`` in the full pipeline. As in
+    the full packer, one first passage is retained even if a pathological single
+    passage exceeds the nominal budget; normal MedSwin chunks are ~400 tokens.
+    """
+    if not passages:
+        return []
+    token_budget = max(1, int(token_budget))
+    char_ceiling = max(1, int(max_chars))
     kept: List[CandidatePassage] = []
-    used = 0
+    used_tokens = 0
+    used_chars = 0
     for passage in passages:
         text = passage.text or ""
-        if used and used + len(text) > max_chars:
+        passage_tokens = token_count(passage)
+        would_exceed_tokens = used_tokens + passage_tokens > token_budget
+        would_exceed_chars = used_chars + len(text) > char_ceiling
+        if kept and (would_exceed_tokens or would_exceed_chars):
             break
         kept.append(passage)
-        used += len(text)
+        used_tokens += passage_tokens
+        used_chars += len(text)
     return kept or passages[:1]
 
 
@@ -225,7 +247,26 @@ class NaiveRAGOrchestrator:
                     degraded=degraded,
                 )
 
-            packed = _truncate_context(passages, settings.NAIVE_MAX_CONTEXT_CHARS)
+            packed = _truncate_context(
+                passages,
+                settings.NAIVE_MAX_CONTEXT_CHARS,
+                settings.TOKEN_BUDGET_B,
+            )
+            packed_tokens = sum(token_count(passage) for passage in packed)
+            trace.tool_calls.append(
+                ToolCall(
+                    tool_name="packing.naive",
+                    parameters={
+                        "token_budget": settings.TOKEN_BUDGET_B,
+                        "char_ceiling": settings.NAIVE_MAX_CONTEXT_CHARS,
+                    },
+                    result={
+                        "retrieved_passages": len(passages),
+                        "packed_passages": len(packed),
+                        "packed_tokens": packed_tokens,
+                    },
+                )
+            )
             generate_started = time.perf_counter()
             answer = await self._generate(query, packed)
             generate_ms = (time.perf_counter() - generate_started) * 1000.0
@@ -319,12 +360,7 @@ class NaiveRAGOrchestrator:
         patient_id: Optional[str],
         constraints: Dict[str, Any],
     ) -> Tuple[List[CandidatePassage], int]:
-        """Local-dev fallback when the ANN index is missing or empty.
-
-        Benchmarks that already have a provenance-stamped HNSW/IVF index never
-        take this path. The scan is capped so a full TREC corpus cannot be
-        loaded into memory during a smoke prompt.
-        """
+        """Local-dev fallback when the ANN index is missing or empty."""
         filter_dict = retrieval_filter(org_id, source_type_filter, patient_id, constraints)
         filter_dict["embedding"] = {"$exists": True, "$ne": None}
         try:
@@ -361,9 +397,7 @@ class NaiveRAGOrchestrator:
             )
         else:
             context = "(no passages retrieved)"
-            instruction = (
-                "No passages were retrieved. Answer the question from your own knowledge."
-            )
+            instruction = "No passages were retrieved. Answer the question from your own knowledge."
         messages = [
             {
                 "role": "system",
@@ -373,10 +407,7 @@ class NaiveRAGOrchestrator:
                     f"{instruction}"
                 ),
             },
-            {
-                "role": "user",
-                "content": f"Question:\n{query}\n\nPassages:\n{context}",
-            },
+            {"role": "user", "content": f"Question:\n{query}\n\nPassages:\n{context}"},
         ]
         response = await self.llm.call_llm(messages, temperature=0.2)
         return str(response.get("content") or "").strip() or "No answer was generated."
@@ -453,11 +484,7 @@ class NaiveRAGOrchestrator:
         if answer and not any(message.content == answer for message in trace.messages):
             trace.messages.append(AgentMessage(role="user", agent_id="naive_rag", content=trace.query))
             trace.messages.append(AgentMessage(role="assistant", agent_id="naive_rag", content=answer))
-        decision = PolicyDecision(
-            passed=True,
-            action=PolicyAction.ACCEPT,
-            reason=notes,
-        )
+        decision = PolicyDecision(passed=True, action=PolicyAction.ACCEPT, reason=notes)
         ledger = self._naive_ledger(passages)
         bundle = self.bundle_builder.build_bundle(
             passages,
@@ -518,8 +545,6 @@ class NaiveRAGOrchestrator:
                 passage.calibrated_score = passage.dense_score
             if passage.fusion_score is None:
                 passage.fusion_score = passage.dense_score
-        # Reuse the retrieval ledger shape so the eval harness can score
-        # evidence_doc_recall / citation metrics without MedSwin claims.
         ledger = build_retrieval_ledger(passages, facets=[])
         for entry, passage in zip(ledger, passages):
             entry.agent_id = PIPELINE_ID

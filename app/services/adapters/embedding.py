@@ -1,19 +1,84 @@
-"""Embedding client adapter with retries and timeouts."""
+"""Embedding client adapter with retries, provider-aware payloads, and local fallback.
+
+Azure Foundry can expose Cohere Embed v4 through more than one wire contract:
+
+* Foundry model-inference/OpenAI-style embeddings: ``input`` + optional
+  ``query``/``document`` intent.
+* Cohere-native deployment endpoints such as ``.../v1/embed`` or ``.../v2/embed``:
+  ``texts`` + required ``search_query``/``search_document`` intent.
+
+Stored-corpus writers pass ``document`` explicitly. When a cloud caller omits
+intent, the adapter defaults to ``query`` because the shared online API use case
+is retrieval. This keeps ordinary cloud chat aligned with the strict matrix
+without relying on a benchmark-only environment override.
+"""
 
 import asyncio
 import httpx
 import logging
+import os
+from urllib.parse import urlsplit
 from typing import List, Optional
+
+import numpy as np
+
 from app.core.config import settings
 from app.services.adapters.limiter import request_with_model_rate_limit
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
+_NATIVE_INPUT_TYPES = {
+    "query": "search_query",
+    "document": "search_document",
+}
+
+
+def _embedding_protocol(url: str) -> str:
+    configured = (os.getenv("CLOUD_EMBEDDING_PROTOCOL") or "").strip().lower()
+    aliases = {
+        "cohere": "cohere_native",
+        "cohere_v1": "cohere_native",
+        "cohere_v2": "cohere_native",
+        "native": "cohere_native",
+        "foundry": "foundry_models",
+        "foundry_models": "foundry_models",
+        "generic": "foundry_models",
+    }
+    if configured:
+        protocol = aliases.get(configured, configured)
+        if protocol not in {"cohere_native", "foundry_models"}:
+            raise ValueError(f"Unsupported CLOUD_EMBEDDING_PROTOCOL={configured}")
+        return protocol
+    path = urlsplit(url).path.rstrip("/").lower()
+    if path.endswith("/v1/embed") or path.endswith("/v2/embed"):
+        return "cohere_native"
+    return "foundry_models"
+
+
+def _auth_headers(protocol: str, api_key: Optional[str]) -> dict[str, str]:
+    if not api_key:
+        return {}
+    if protocol != "cohere_native":
+        return {"api-key": api_key}
+
+    scheme = (os.getenv("CLOUD_EMBEDDING_AUTH_SCHEME") or "bearer").strip().lower()
+    if scheme in {"bearer", "token"}:
+        return {"Authorization": f"Bearer {api_key}"}
+    if scheme in {"raw", "authorization"}:
+        return {"Authorization": api_key}
+    if scheme in {"api-key", "api_key", "apikey"}:
+        return {"api-key": api_key}
+    raise ValueError(f"Unsupported CLOUD_EMBEDDING_AUTH_SCHEME={scheme}")
+
 
 class EmbeddingClient:
-    """Client for embedding endpoints."""
-    
+    """Client for embedding endpoints.
+
+    Online cloud calls default to query intent. Corpus builders and ingestion
+    paths must pass ``input_type=document`` explicitly, which is asserted by the
+    publication contract and tests.
+    """
+
     def __init__(
         self,
         base_url: str,
@@ -21,61 +86,103 @@ class EmbeddingClient:
         model: Optional[str] = None,
         api_key: Optional[str] = None,
     ):
-        """Initialize embedding client.
-        
-        Args:
-            base_url: Base URL for the embedding endpoint
-            timeout: Timeout in seconds (defaults to EMBED_TIMEOUT_S)
-        """
+        if settings.CLOUD_MODE:
+            base_url = settings.cloud_embedding_url() or base_url
         self.base_url = base_url
         self.timeout = timeout or settings.EMBED_TIMEOUT_S
         self.model = model or (settings.CLOUD_EMBEDDING if settings.CLOUD_MODE else "default")
         self.api_key = api_key or (settings.AZURE_AI_FOUNDRY_API_KEY if settings.CLOUD_MODE else None)
+        self.protocol = _embedding_protocol(self.base_url) if settings.CLOUD_MODE else "local"
         self.client = httpx.AsyncClient(timeout=self.timeout)
-        self.rate_limit_key = f"embedding:{self.base_url}:{self.model}"
-    
-    async def embed(self, texts: List[str], request_id: Optional[str] = None) -> List[np.ndarray]:
+        self.rate_limit_key = f"embedding:{self.protocol}:{self.base_url}:{self.model}"
+
+    def _payload(self, texts: List[str], input_type: Optional[str]) -> dict:
+        if self.protocol == "cohere_native":
+            native_type = _NATIVE_INPUT_TYPES.get(str(input_type or "").lower())
+            if not native_type:
+                raise ValueError(
+                    "Cohere-native semantic-search embedding requires input_type=document or query; "
+                    "corpus builders must use document and retrieval must use query"
+                )
+            return {
+                "model": self.model,
+                "texts": texts,
+                "input_type": native_type,
+                "truncate": "NONE",
+                "embedding_types": ["float"],
+                "output_dimension": settings.active_embedding_dimension(),
+            }
+
+        payload = {"input": texts, "model": self.model}
+        if settings.CLOUD_MODE:
+            if input_type:
+                payload["input_type"] = input_type
+            if settings.CLOUD_EMBEDDING_DIMENSION or self.model == "embed-v-4-0":
+                payload["dimensions"] = settings.active_embedding_dimension()
+        return payload
+
+    async def embed(
+        self,
+        texts: List[str],
+        request_id: Optional[str] = None,
+        input_type: Optional[str] = None,
+    ) -> List[np.ndarray]:
         """Generate embeddings for texts.
-        
+
         Args:
-            texts: List of texts to embed
-            request_id: Optional request ID for tracing
-            
-        Returns:
-            List of embedding vectors as numpy arrays
-            
-        Raises:
-            httpx.HTTPError: If request fails after retries
+            texts: Texts to embed.
+            request_id: Optional trace identifier.
+            input_type: Semantic-search intent. Use ``document`` for corpus
+                chunks and ``query`` for online ANN lookup. In cloud mode a
+                missing value resolves to the configured default, then to
+                ``query``. ``text`` is supported only by the generic Foundry
+                embeddings contract.
         """
         if not texts:
             return []
-        
-        payload = {
-            "input": texts,
-            "model": self.model
-        }
-        
-        headers = {}
-        if self.api_key:
-            headers["api-key"] = self.api_key
+        if settings.CLOUD_MODE and input_type is None:
+            configured_default = (settings.CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE or "").strip().lower()
+            input_type = configured_default or "query"
+        if input_type not in {None, "query", "document", "text"}:
+            raise ValueError("input_type must be query, document, text, or None")
+
+        payload = self._payload(texts, input_type)
+        headers = _auth_headers(self.protocol, self.api_key)
         if request_id:
             headers["X-Request-ID"] = request_id
-        
+
         try:
-            logger.debug(f"Calling embedding service at {self.base_url} for {len(texts)} texts")
+            logger.debug(
+                "Calling embedding service at %s for %s texts (protocol=%s input_type=%s)",
+                self.base_url,
+                len(texts),
+                self.protocol,
+                input_type,
+            )
             response = await request_with_model_rate_limit(
                 self.client,
                 self.base_url,
                 rate_limit_key=self.rate_limit_key,
                 logger=logger,
                 json=payload,
-                headers=headers
+                headers=headers,
             )
             response.raise_for_status()
-            return _parse_embedding_response(response.json())
+            embeddings = _parse_embedding_response(response.json())
+            if len(embeddings) != len(texts):
+                raise RuntimeError(
+                    f"Embedding service returned {len(embeddings)} vectors for {len(texts)} inputs"
+                )
+            expected_dim = settings.active_embedding_dimension() if settings.CLOUD_MODE else None
+            if expected_dim and any(len(vector) != expected_dim for vector in embeddings):
+                dimensions = sorted({len(vector) for vector in embeddings})
+                raise RuntimeError(
+                    f"Embedding service returned dimensions {dimensions}; expected {expected_dim}"
+                )
+            return embeddings
         except Exception as exc:
             if settings.CLOUD_MODE:
-                logger.error(f"Embedding request failed: {exc}")
+                logger.error("Embedding request failed: %s", exc)
                 raise
             local = await self._local_embed(texts)
             if local is not None:
@@ -85,7 +192,7 @@ class EmbeddingClient:
                     exc,
                 )
                 return local
-            logger.error(f"Embedding request failed: {exc}")
+            logger.error("Embedding request failed: %s", exc)
             raise
 
     async def _local_embed(self, texts: List[str]) -> Optional[List[np.ndarray]]:
@@ -119,22 +226,29 @@ class EmbeddingClient:
             return [row.astype(np.float32) for row in pooled.cpu().numpy()]
 
         return await loop.run_in_executor(None, _encode)
-    
+
     async def close(self):
-        """Close the HTTP client."""
         await self.client.aclose()
 
 
 def _parse_embedding_response(data) -> List[np.ndarray]:
-    embeddings = []
+    """Parse generic Foundry, Cohere v1, and Cohere v2 float responses."""
+    embeddings: List[np.ndarray] = []
     if isinstance(data, dict) and "data" in data:
         for item in data["data"]:
-            if "embedding" in item:
+            if isinstance(item, dict) and "embedding" in item:
                 embeddings.append(np.array(item["embedding"], dtype=np.float32))
-    elif isinstance(data, dict) and "embeddings" in data:
-        embeddings = [np.array(emb, dtype=np.float32) for emb in data["embeddings"]]
-    else:
-        embeddings = [np.array(emb, dtype=np.float32) for emb in data]
+        return embeddings
+
+    if isinstance(data, dict) and "embeddings" in data:
+        raw = data["embeddings"]
+        if isinstance(raw, dict):
+            raw = raw.get("float") or raw.get("float_") or []
+        if isinstance(raw, list):
+            return [np.array(emb, dtype=np.float32) for emb in raw]
+
+    if isinstance(data, list):
+        return [np.array(emb, dtype=np.float32) for emb in data]
     return embeddings
 
 
