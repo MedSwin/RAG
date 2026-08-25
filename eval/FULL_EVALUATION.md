@@ -59,7 +59,7 @@ This check catches a completed checkpoint whose persisted corpus or index was la
 
 ## Evaluation matrix
 
-The strict matrix always evaluates all 30 cases. It reuses the same prepared corpus/index and swaps only the requested pipeline/generator dimensions.
+The strict matrix always evaluates all 30 cases. It reuses the same prepared corpus/index and swaps only the requested pipeline/generator dimensions. The default (`--pipeline both`) is the four-cell publication matrix. `--pipeline naive_rag` or `--pipeline medswin` still runs both generators and all 30 topics, but the resulting artifact is a subset: `strict_pass` means the selected cells passed architecture checks, while `publication_complete` is `true` only for the full 2x2.
 
 | Cell | Retrieval/system | Generator |
 | --- | --- | --- |
@@ -108,7 +108,10 @@ Create `.env` from `env.example` and supply at least the Azure Foundry account e
 
 ```bash
 ./scripts/start-local.sh full-eval
+./scripts/start-local.sh full-eval --pipeline naive_rag
 ```
+
+`--pipeline` is forwarded into `eval/scripts/run_full_matrix.py`. Omitting it keeps the publication 2x2. A naive-only or MedSwin-only run still pays the complete-corpus warmup/index cost; it only skips the unselected chat cells.
 
 To deliberately discard an existing benchmark org and rebuild every persisted chunk/index from zero:
 
@@ -123,13 +126,13 @@ The command performs, in order:
 3. complete BM25/HNSW construction;
 4. independent persisted-runtime verification;
 5. local MedSwin generation-server validation;
-6. the four 30-case evaluation cells;
+6. the selected 30-case evaluation cells (four cells unless `--pipeline` filters them);
 7. strict per-case architecture validation and aggregate audit output.
 
-Per-cell and matrix JSON outputs are written under `RUN_STORE_DIR` (default `/tmp/medswin-audits`). The final matrix is acceptable only when `strict_pass` is `true`.
+Per-cell and matrix JSON outputs are written under `RUN_STORE_DIR` (default `/tmp/medswin-audits`). Selected cells are acceptable only when `strict_pass` is `true`. Treat the run as the complete TREC system audit only when `publication_complete` is also `true`.
 
 ## Important distinction for publication
 
 The strict matrix is a whole-system MedSwin audit: it proves the requested corpus, retrieval, reranking, MAC, gating, and generation paths actually executed and records the repository's system-level metrics. It should not be described as a replacement for the official TREC retrieval leaderboard protocol unless standard TREC ranked-run metrics (for example MAP/nDCG/P@k using the official qrels) are also generated and reported separately.
 
-Likewise, code review, compilation, or GitHub CI success is not evidence that the million-document cloud evaluation itself completed. Publication evidence is the persisted-runtime verification artifact plus a four-cell matrix whose `strict_pass` is `true`, produced on the target machine with real Azure credentials, storage, network access, and sufficient model compute.
+Likewise, code review, compilation, or GitHub CI success is not evidence that the million-document cloud evaluation itself completed. Publication evidence is the persisted-runtime verification artifact plus a four-cell matrix whose `strict_pass` and `publication_complete` are both `true`, produced on the target machine with real Azure credentials, storage, network access, and sufficient model compute.

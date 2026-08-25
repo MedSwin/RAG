@@ -74,7 +74,7 @@ Options
   --patient-id ID       Optional EMR scope
   --port N              API port                     (default: 8100)
   --eval-port N         Eval portal port             (default: 8200)
-  --pipeline P          medswin | naive_rag | both   (eval run)
+  --pipeline P          medswin | naive_rag | both   (eval run, full-eval)
   --cases-path PATH     Eval JSONL
   --max-cases N         Eval case cap
   --top-k N             Naive dense top-K
@@ -98,6 +98,7 @@ Examples
   ./scripts/start-local.sh
   ./scripts/start-local.sh warmup
   ./scripts/start-local.sh full-eval
+  ./scripts/start-local.sh full-eval --pipeline naive_rag
   ./scripts/start-local.sh full-eval --reset-full-corpus
   ./scripts/start-local.sh up --with-eval --open
   ./scripts/start-local.sh ask --mode both --question "Can metformin continue?"
@@ -368,9 +369,13 @@ run_full_eval() {
     echo -e "${YELLOW}Verifying persisted 100% TREC documents, chunks, embeddings, BM25 and HNSW ...${NC}"
     CLOUD_MODE=true \
         python3 eval/scripts/verify_full_trec_runtime.py --org-id "$bench_org"
-    echo -e "${YELLOW}Running strict naive/full × MedSwin/GPT-5.4 matrix ...${NC}"
+    local matrix_args=(--org-id "$bench_org" --pipeline "$PIPELINE")
+    if [[ -n "$TOP_K" ]]; then
+        matrix_args+=(--top-k "$TOP_K")
+    fi
+    echo -e "${YELLOW}Running strict naive/full × MedSwin/GPT-5.4 matrix (pipeline=${PIPELINE}) ...${NC}"
     CLOUD_MODE=true CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query \
-        python3 eval/scripts/run_full_matrix.py --org-id "$bench_org"
+        python3 eval/scripts/run_full_matrix.py "${matrix_args[@]}"
 }
 
 case "$COMMAND" in

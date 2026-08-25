@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Run the strict 2x2 complete-TREC MedSwin evaluation matrix.
+"""Run the strict complete-TREC MedSwin evaluation matrix.
 
-Cells:
+Default cells (`--pipeline both`):
   1. naive_rag + local MedSwin-DaRE-TIES-KD-0.7
   2. naive_rag + Azure Foundry GPT-5.4
   3. full MedSwin (dense ANN + BM25 -> Cohere rerank -> MAC -> gate) + local MedSwin 7B
   4. full MedSwin + Azure Foundry GPT-5.4
+
+`--pipeline naive_rag` or `--pipeline medswin` runs only those retrieval cells
+against both generators. That subset is still architecture-strict, but it is not
+the publication 2x2 (`publication_complete` is false).
 
 This runner is fail-closed and self-certifying. It re-verifies the persisted
 complete-TREC runtime before starting any cell, binds every API subprocess to the
@@ -42,6 +46,12 @@ for root in (REPO_ROOT, EVAL_ROOT, SCRIPTS_ROOT):
 
 from app.core.config import settings as app_settings
 from app.core.database import get_sync_database
+from eval.app.full_contract import (
+    ALL_GENERATORS,
+    expected_matrix_keys,
+    is_publication_matrix,
+    resolve_pipelines,
+)
 from eval.app.audit import aggregate_run, audit_case, ranked_trec_metrics
 from eval.app.client import MedSwinClient
 from eval.app.schemas import BenchmarkCase, RunAudit
@@ -765,6 +775,7 @@ def _delta_metrics(left: RunAudit, right: RunAudit) -> dict[str, float]:
 
 
 async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
+    pipelines = resolve_pipelines(args.pipeline)
     manifest = _validate_runtime_manifest(args.org_id)
     cases_path = Path(args.cases_path or manifest.get("cases_path") or DEFAULT_CASES)
     cases = _load_cases(cases_path)
@@ -776,10 +787,10 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
     local_process, local_health = _start_local_medswin(expected_revision)
     results: dict[str, RunAudit] = {}
     try:
-        for generator in ("medswin_local", "foundry"):
+        for generator in ALL_GENERATORS:
             api_process = _start_api(generator, args.api_port, args.org_id, manifest)
             try:
-                for pipeline in ("naive_rag", "medswin"):
+                for pipeline in pipelines:
                     key = f"{pipeline}:{generator}"
                     run = await _run_cell(
                         cases,
@@ -809,17 +820,14 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
     finally:
         _terminate(local_process)
 
-    expected_keys = {
-        "naive_rag:medswin_local",
-        "naive_rag:foundry",
-        "medswin:medswin_local",
-        "medswin:foundry",
-    }
+    expected_keys = expected_matrix_keys(pipelines)
     if set(results) != expected_keys:
         raise RuntimeError(f"Evaluation matrix is incomplete: got={sorted(results)} expected={sorted(expected_keys)}")
 
     matrix = {
         "created_at": _now(),
+        "selected_pipelines": list(pipelines),
+        "publication_complete": is_publication_matrix(pipelines),
         "complete_trec_runtime": manifest,
         "persisted_runtime_verification": verification,
         "local_medswin_health": local_health,
@@ -861,11 +869,14 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
             "msas": "Architecture/system-audit diagnostic; not the sole model-comparison metric.",
         },
     }
-    for generator in ("medswin_local", "foundry"):
-        naive = results[f"naive_rag:{generator}"]
-        full = results[f"medswin:{generator}"]
-        matrix["comparisons"][f"full_minus_naive:{generator}"] = _delta_metrics(full, naive)
-    for pipeline in ("naive_rag", "medswin"):
+    for generator in ALL_GENERATORS:
+        naive_key = f"naive_rag:{generator}"
+        full_key = f"medswin:{generator}"
+        if naive_key in results and full_key in results:
+            matrix["comparisons"][f"full_minus_naive:{generator}"] = _delta_metrics(
+                results[full_key], results[naive_key]
+            )
+    for pipeline in pipelines:
         local = results[f"{pipeline}:medswin_local"]
         cloud = results[f"{pipeline}:foundry"]
         matrix["comparisons"][f"gpt54_minus_medswin7b:{pipeline}"] = _delta_metrics(cloud, local)
@@ -890,6 +901,13 @@ async def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--org-id", default=os.getenv("BENCHMARK_ORG_ID", "bench-org"))
+    parser.add_argument(
+        "--pipeline",
+        choices=("medswin", "naive_rag", "both"),
+        default="both",
+        help="Which retrieval systems to run. Default both is the publication 2x2. "
+        "A subset is architecture-strict for the selected cells but not publication-complete.",
+    )
     parser.add_argument("--cases-path", default="")
     parser.add_argument("--api-port", type=int, default=int(os.getenv("FULL_EVAL_API_PORT", "8110")))
     parser.add_argument(
@@ -909,7 +927,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     matrix = asyncio.run(run_matrix(parse_args()))
-    print(json.dumps({"strict_pass": matrix["strict_pass"], "matrix_path": matrix["matrix_path"]}, indent=2))
+    print(
+        json.dumps(
+            {
+                "strict_pass": matrix["strict_pass"],
+                "publication_complete": matrix["publication_complete"],
+                "selected_pipelines": matrix["selected_pipelines"],
+                "matrix_path": matrix["matrix_path"],
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

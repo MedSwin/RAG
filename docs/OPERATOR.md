@@ -222,7 +222,7 @@ You want `index_exists=true`, `embedded_count > 0`, and naive `retrieval_backend
 | `--question TEXT` | ask | REPL if omitted |
 | `--org-id` / `--user-id` / `--patient-id` | ask, index, eval | `demo-org` / `clinician-1` / empty |
 | `--port` / `--eval-port` | all | `8100` / `8200` |
-| `--pipeline medswin\|naive_rag\|both` | eval --run | `both` |
+| `--pipeline medswin\|naive_rag\|both` | eval --run, full-eval | `both` |
 | `--cases-path` / `--max-cases` | eval --run | `eval/data/sample/cases.jsonl` / `2` |
 | `--top-k` | naive ask / eval | runtime `NAIVE_TOP_K` |
 | `--portal` | open | `clinician` |

@@ -23,6 +23,31 @@ EXPECTED_RERANKER = "Cohere-rerank-v4.0-fast"
 EXPECTED_CHUNKING_CONTRACT = "app.medswin.chunking.section_chunks/full-body"
 PREPARATION_CONTRACT_VERSION = "full-trec-full-body-doc-embed-fts5-hnsw-v2"
 CHUNKER_SOURCE = REPO_ROOT / "app" / "medswin" / "chunking.py"
+ALL_PIPELINES: tuple[str, ...] = ("naive_rag", "medswin")
+ALL_GENERATORS: tuple[str, ...] = ("medswin_local", "foundry")
+
+
+def resolve_pipelines(pipeline: str) -> tuple[str, ...]:
+    """Map the CLI pipeline selector onto the cells a matrix will execute."""
+    if pipeline == "both":
+        return ALL_PIPELINES
+    if pipeline in ALL_PIPELINES:
+        return (pipeline,)
+    raise ValueError(f"Unsupported full-eval pipeline: {pipeline}")
+
+
+def expected_matrix_keys(
+    pipelines: tuple[str, ...] | list[str],
+    generators: tuple[str, ...] | list[str] = ALL_GENERATORS,
+) -> set[str]:
+    return {f"{pipeline}:{generator}" for generator in generators for pipeline in pipelines}
+
+
+def is_publication_matrix(
+    pipelines: tuple[str, ...] | list[str],
+    generators: tuple[str, ...] | list[str] = ALL_GENERATORS,
+) -> bool:
+    return tuple(pipelines) == ALL_PIPELINES and tuple(generators) == ALL_GENERATORS
 
 
 @lru_cache(maxsize=1)
