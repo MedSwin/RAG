@@ -104,6 +104,10 @@ Examples
   ./scripts/start-local.sh ask --mode both --question "Can metformin continue?"
   ./scripts/start-local.sh eval --run --pipeline both --max-cases 2
   ./scripts/start-local.sh serve --skip-eval-warmup
+
+Python
+  Requires 3.12 or 3.13. Homebrew python3 on macOS can be 3.14, which cannot
+  install torch==2.8.0. The script prefers python3.13 / python3.12, or PYTHON_BIN.
 EOF
 }
 
@@ -171,18 +175,62 @@ if [[ "$PIPELINE" != "medswin" && "$PIPELINE" != "naive_rag" && "$PIPELINE" != "
     exit 1
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-    echo -e "${RED}Python 3 is not installed.${NC}"
+python_minor() {
+    "$1" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true
+}
+
+python_supported() {
+    local ver
+    ver="$(python_minor "$1")"
+    [[ "$ver" == "3.12" || "$ver" == "3.13" ]]
+}
+
+select_python() {
+    local candidates=()
+    local cand resolved
+    if [[ -n "${PYTHON_BIN:-}" ]]; then
+        candidates+=("$PYTHON_BIN")
+    fi
+    candidates+=(python3.13 python3.12)
+    if command -v python3 >/dev/null 2>&1; then
+        candidates+=(python3)
+    fi
+    for cand in "${candidates[@]}"; do
+        resolved="$(command -v "$cand" 2>/dev/null || true)"
+        if [[ -z "$resolved" && -x "$cand" ]]; then
+            resolved="$cand"
+        fi
+        if [[ -n "$resolved" ]] && python_supported "$resolved"; then
+            printf '%s\n' "$resolved"
+            return 0
+        fi
+    done
+    return 1
+}
+
+PYTHON_CMD="$(select_python || true)"
+if [[ -z "$PYTHON_CMD" ]]; then
+    echo -e "${RED}This stack requires Python 3.12 or 3.13 (torch==2.8.0 has no 3.14 wheels).${NC}"
+    echo -e "${RED}Install python@3.13, or set PYTHON_BIN to a 3.12/3.13 interpreter.${NC}"
+    echo -e "${YELLOW}On this machine Homebrew python3 is often 3.14; python3.13 is the one to use.${NC}"
     exit 1
 fi
+echo -e "${GREEN}Using Python ${NC}$("$PYTHON_CMD" -V) ${GREEN}at ${NC}${PYTHON_CMD}"
 
+VENV=""
 if [ -d ".venv" ]; then
     VENV=".venv"
 elif [ -d "venv" ]; then
     VENV="venv"
-else
+fi
+if [[ -n "$VENV" ]] && ! python_supported "${VENV}/bin/python"; then
+    echo -e "${YELLOW}Existing ${VENV} is Python $(python_minor "${VENV}/bin/python" || echo unknown); recreating with 3.12/3.13 ...${NC}"
+    rm -rf "$VENV"
+    VENV=""
+fi
+if [[ -z "$VENV" ]]; then
     echo -e "${YELLOW}Creating virtual environment at .venv ...${NC}"
-    python3 -m venv .venv
+    "$PYTHON_CMD" -m venv .venv
     VENV=".venv"
 fi
 
@@ -225,10 +273,14 @@ need_full_bootstrap() {
 }
 
 run_eval_warmup() {
-    local args=()
-    if [[ "$FORCE_EVAL_WARMUP" -eq 1 ]]; then args+=(--force); fi
+    # With `set -u`, expanding an empty "${args[@]}" is an unbound-variable error
+    # on some bash builds. Call the script with or without --force explicitly.
     echo -e "${YELLOW}Evaluation warmup: MedSwin snapshot + full TREC-CDS 2016 + Azure Foundry ...${NC}"
-    CLOUD_MODE=true python3 scripts/warmup-eval.py "${args[@]}"
+    if [[ "$FORCE_EVAL_WARMUP" -eq 1 ]]; then
+        CLOUD_MODE=true python3 scripts/warmup-eval.py --force
+    else
+        CLOUD_MODE=true python3 scripts/warmup-eval.py
+    fi
 }
 
 if need_full_bootstrap; then

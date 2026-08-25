@@ -34,3 +34,19 @@ def test_start_local_forwards_pipeline_into_full_matrix():
     script = (ROOT / "scripts" / "start-local.sh").read_text(encoding="utf-8")
     assert 'matrix_args=(--org-id "$bench_org" --pipeline "$PIPELINE")' in script
     assert "eval/scripts/run_full_matrix.py" in script
+
+
+def test_start_local_requires_python_312_or_313():
+    script = (ROOT / "scripts" / "start-local.sh").read_text(encoding="utf-8")
+    assert '[[ "$ver" == "3.12" || "$ver" == "3.13" ]]' in script
+    assert 'candidates+=(python3.13 python3.12)' in script
+
+
+def test_start_local_warmup_avoids_empty_array_expansion():
+    script = (ROOT / "scripts" / "start-local.sh").read_text(encoding="utf-8")
+    assert "run_eval_warmup()" in script
+    assert 'CLOUD_MODE=true python3 scripts/warmup-eval.py --force' in script
+    assert 'CLOUD_MODE=true python3 scripts/warmup-eval.py\n' in script or (
+        'CLOUD_MODE=true python3 scripts/warmup-eval.py' in script
+        and 'local args=()' not in script
+    )
