@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "app/**"
-      - "eval/**"
+      - "benchmarks/**"
       - "scripts/**"
       - "tests/**"
       - "web/**"
@@ -15,6 +15,9 @@ on:
       - "requirements.txt"
       - "pytest.ini"
       - "env.example"
+      - "docs/**"
+      - "README.md"
+      - "metrics.md"
       - ".github/workflows/full-eval-contract.yml"
   workflow_dispatch:
 
@@ -32,65 +35,83 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile Python sources
-        run: python -m compileall -q app eval scripts tests
+        run: python -m compileall -q app benchmarks scripts tests
       - name: Validate startup shell
         run: bash -n scripts/start-local.sh
-      - name: Assert strict full-eval entrypoints
+      - name: Assert paper-eval entrypoints
         run: |
           test -f scripts/warmup-eval.py
           test -f scripts/serve-medswin-llm.py
-          test -f eval/app/full_contract.py
-          test -f eval/scripts/prepare_full_trec_mongo.py
-          test -f eval/scripts/prepare_full_trec_runtime.py
-          test -f eval/scripts/materialize_full_trec_documents.py
-          test -f eval/scripts/verify_full_trec_runtime.py
-          test -f eval/scripts/run_full_matrix.py
-          test -f eval/FULL_EVALUATION.md
-          grep -q 'EXPECTED_TREC_DOCS = 1_255_260' scripts/warmup-eval.py
-          grep -q 'EXPECTED_DOCS = 1_255_260' eval/scripts/prepare_full_trec_runtime.py
-          grep -q 'EXPECTED_DOCS = 1_255_260' eval/scripts/verify_full_trec_runtime.py
-          grep -q 'EXPECTED_DOCUMENTS = 1_255_260' eval/app/full_contract.py
-          grep -q 'EXPECTED_QUERIES = 30' eval/scripts/run_full_matrix.py
-          grep -q 'EXPECTED_QRELS = 37_707' eval/scripts/verify_full_trec_runtime.py
-          grep -q 'input_type="document"' eval/scripts/prepare_full_trec_runtime.py
-          grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE.*query' eval/scripts/run_full_matrix.py
-          grep -q 'EXPECTED_MAC_AGENTS = {"emr", "guideline", "safety", "quality", "critic"}' eval/scripts/run_full_matrix.py
-          grep -q 'dense_ann_stage_missing' eval/scripts/run_full_matrix.py
-          grep -q 'bm25_stage_missing' eval/scripts/run_full_matrix.py
-          grep -q 'verify_full_runtime' eval/scripts/run_full_matrix.py
-          grep -q 'runtime_artifacts' eval/scripts/run_full_matrix.py
-          grep -q 'prepare_full_trec_mongo.py' scripts/start-local.sh
-          grep -q 'materialize_full_trec_documents.py' scripts/start-local.sh
-          grep -q 'verify_full_trec_runtime.py' scripts/start-local.sh
+          test -f benchmarks/trec_cds2016/PREREG.md
+          test -f benchmarks/trec_cds2016/contract.py
+          test -f benchmarks/trec_cds2016/nist.py
+          test -f benchmarks/trec_cds2016/validate.py
+          test -f benchmarks/trec_cds2016/exporter.py
+          test -f benchmarks/trec_cds2016/emit.py
+          test -f benchmarks/trec_cds2016/score.py
+          test -f benchmarks/expert/PROTOCOL.md
+          test -f benchmarks/trec_cds2016/prepare/mongo.py
+          test -f benchmarks/trec_cds2016/prepare/runtime.py
+          test -f benchmarks/trec_cds2016/prepare/materialize.py
+          test -f benchmarks/trec_cds2016/prepare/verify.py
+          test -f docs/PAPER_EVAL.md
+          ! test -f eval/scripts/run_full_matrix.py
+          ! test -d eval
+          ! grep -q 'eval/README.md' README.md docs/README.md docs/ADMIN.md docs/OPERATOR.md docs/NAIVE_RAG.md docs/ENDPOINTS.md
+          grep -q 'paper-eval' scripts/start-local.sh
+          grep -q -- '--stage' scripts/start-local.sh
+          grep -q -- '--systems' scripts/start-local.sh
+          grep -q -- '--pipeline' scripts/start-local.sh
+          grep -q -- '--generator' scripts/start-local.sh
+          grep -q -- '--topic-field' scripts/start-local.sh
+          grep -q 'medswin-mongodb' scripts/start-local.sh
+          grep -q 'mongo:7.0' scripts/start-local.sh
+          ! grep -q 'rag_mongodb' scripts/start-local.sh
+          ! grep -q 'EVAL_PORT' scripts/start-local.sh
+          grep -q 'EVAL_WARMUP_ON_START:-false' scripts/start-local.sh
+          grep -q 'EXPECTED_DOCUMENTS = 1_255_260' benchmarks/trec_cds2016/contract.py
+          grep -q 'EXPECTED_QRELS = 37_707' benchmarks/trec_cds2016/contract.py
+          grep -q 'RRF_K = 60' benchmarks/trec_cds2016/contract.py
+          grep -q 'CASCADE_RERANK = 300' benchmarks/trec_cds2016/contract.py
+          grep -q 'input_type="document"' benchmarks/trec_cds2016/prepare/runtime.py
+          grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE' scripts/start-local.sh
+          grep -q 'prepare.mongo' scripts/start-local.sh
+          grep -q 'prepare.materialize' scripts/start-local.sh
+          grep -q 'prepare.verify' scripts/start-local.sh
+      - name: Assert official NIST pins and validator
+        run: |
+          grep -q 'https://trec.nist.gov/data/clinical/topics2016.xml' benchmarks/trec_cds2016/nist.py
+          grep -q 'https://trec.nist.gov/data/clinical/qrels-treceval-2016.txt' benchmarks/trec_cds2016/nist.py
+          grep -q 'https://trec.nist.gov/data/clinical/qrels-sampleval-2016.txt' benchmarks/trec_cds2016/nist.py
+          grep -q 'https://trec.nist.gov/data/clinical/sample_eval.pl' benchmarks/trec_cds2016/nist.py
+          grep -q '167541d16ab0986fd36045fb4e1104fccb6c8df18e1842b7ee448e7639479767' benchmarks/trec_cds2016/PREREG.md
+          grep -q 'qid 1-30' benchmarks/trec_cds2016/PREREG.md
+          grep -q 'not in 1-30' benchmarks/trec_cds2016/validate.py
+          grep -q 'bare integer' benchmarks/trec_cds2016/PREREG.md
+          grep -q 'PREGISTERED_CONTRASTS' benchmarks/trec_cds2016/stats.py
+          grep -q 'LIT_ONLY' benchmarks/trec_cds2016/exporter.py
+          grep -q 't3_query' benchmarks/trec_cds2016/topics.py
+          grep -q 'path.is_dir()' benchmarks/trec_cds2016/nist.py
+          ! grep -qi 'msas' benchmarks/trec_cds2016/*.py
       - name: Assert resilience and reproducibility contracts
         run: |
-          grep -q 'PREPARATION_CONTRACT_VERSION' eval/app/full_contract.py
-          grep -q 'chunker_sha256' eval/app/full_contract.py
-          grep -q 'terminal_repaired' eval/scripts/prepare_full_trec_mongo.py
-          grep -q 'prefix_documents' eval/scripts/prepare_full_trec_mongo.py
+          grep -q 'PREPARATION_CONTRACT_VERSION' benchmarks/trec_cds2016/contract.py
+          grep -q 'chunker_sha256' benchmarks/trec_cds2016/contract.py
+          grep -q 'terminal_repaired' benchmarks/trec_cds2016/prepare/mongo.py
+          grep -q 'prefix_documents' benchmarks/trec_cds2016/prepare/mongo.py
           grep -q 'HNSW_MAX_EF_SEARCH' app/core/indexing/hnsw.py
           grep -q 'max_ef = max' app/core/indexing/hnsw.py
           grep -q '_strict_benchmark_runtime' app/main.py
           grep -q 'await db.command("ping")' app/main.py
           grep -q 'await close_database()' app/main.py
-          grep -q 'hnsw_vector_alignment' eval/scripts/verify_full_trec_runtime.py
-          grep -q 'FULL_VERIFY_HNSW_SAMPLES' eval/scripts/verify_full_trec_runtime.py
-          grep -q 'chunk_id_fingerprint' eval/scripts/verify_full_trec_runtime.py
+          grep -q 'hnsw_vector_alignment' benchmarks/trec_cds2016/prepare/verify.py
+          grep -q 'FULL_VERIFY_HNSW_SAMPLES' benchmarks/trec_cds2016/prepare/verify.py
+          grep -q 'chunk_id_fingerprint' benchmarks/trec_cds2016/prepare/verify.py
           grep -q 'input_type="document" if settings.CLOUD_MODE else None' app/api/v1/endpoints/medswin.py
           grep -q '_render_final_answer' app/medswin/orchestrator.py
           grep -q '_generation_signature' app/indexes/hybrid.py
-      - name: Assert retrieval metric separation and budget fairness
-        run: |
-          grep -q 'retrieval_ndcg_at_10' eval/app/schemas.py
-          grep -q 'final_evidence_ndcg_at_10' eval/app/schemas.py
-          grep -q 'ranked_trec_metrics' eval/app/audit.py
-          grep -q '_retrieval_ranked_lit_doc_ids' eval/scripts/run_full_matrix.py
-          grep -q 'retrieval_metric_cases' eval/scripts/run_full_matrix.py
-          grep -q 'DEFAULT_SHARED_TOKEN_BUDGET = 700' eval/scripts/run_full_matrix.py
-          grep -q 'DEFAULT_RETRIEVAL_TOP_K = 10' eval/scripts/run_full_matrix.py
-          grep -q 'packing.naive' app/medswin/naive.py
-          grep -q 'naive_evidence_budget_exceeded' eval/scripts/run_full_matrix.py
-          grep -q 'full_evidence_budget_exceeded' eval/scripts/run_full_matrix.py
+          grep -q 'disable_gate' app/medswin/orchestrator.py
+          grep -q 'disable_mac' app/medswin/orchestrator.py
       - name: Assert reproducible generator contract
         run: |
           grep -q 'HfApi' scripts/warmup-eval.py
@@ -99,20 +120,24 @@ jobs:
           grep -q 'fail_on_overflow_no_truncation' scripts/serve-medswin-llm.py
           grep -q 'LLM_DEFAULT_MAX_TOKENS' app/services/adapters/llm.py
           grep -q 'AGENT_PASSAGE_LIMIT' app/agents/base.py
-          grep -q 'shared_generation_envelope' eval/scripts/run_full_matrix.py
           grep -q 'generation_backend' app/main.py
           grep -q 'generation_model' app/main.py
+          grep -q 'warm_nist' scripts/warmup-eval.py
+          grep -q 'ensure_trec_eval' scripts/warmup-eval.py
       - name: Assert benchmark isolation
         run: |
           grep -q '^CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=$' env.example
           grep -q 'FULL_EVAL_DATA_DIR' env.example
+          grep -q 'TREC_EVAL_BIN' env.example
+          grep -q 'NIST_DIR' env.example
           grep -q 'full-trec-benchmark' scripts/start-local.sh
           grep -q 'FULL_EVAL_LLM_TIMEOUT_S' scripts/start-local.sh
           grep -q 'HNSW_MAPPING_PATH=.*hnsw_mapping.sqlite' scripts/start-local.sh
           grep -q 'FAISS_INDEX_PATH=.*faiss_unused.bin' scripts/start-local.sh
           grep -q 'FAISS_MAPPING_PATH=.*faiss_unused.json' scripts/start-local.sh
-          grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE=query' scripts/start-local.sh
-          grep -q 'DISABLE_DATASET_PRELOAD' eval/scripts/run_full_matrix.py
+          grep -q 'CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE' scripts/start-local.sh
+          ! grep -q 'BENCHMARK_CORPUS_SAMPLE_SIZE' env.example
+          ! grep -q 'EVAL_BASE_URL' env.example
       - name: Assert provider-safe configuration
         run: |
           grep -q 'CLOUD_EMBEDDING_URI: Optional\[str\] = None' app/core/config.py
@@ -150,7 +175,7 @@ jobs:
             ir-datasets==0.5.9
       - name: Run strict contract unit tests
         run: |
-          pytest -q tests/test_full_eval_contract.py tests/test_hnsw_adaptive.py
+          pytest -q tests/test_full_eval_contract.py tests/test_trec_cds2016.py tests/test_hnsw_adaptive.py
 
   full-python-tests:
     runs-on: ubuntu-latest

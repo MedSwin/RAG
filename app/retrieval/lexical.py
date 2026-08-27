@@ -206,7 +206,7 @@ class LexicalRetriever:
         if count > in_memory_cap:
             raise RuntimeError(
                 f"Disk BM25 index {self._fts_path(org_id)} is required for {count}+ chunks; "
-                "run eval/scripts/prepare_full_trec_runtime.py"
+                "run python3 -m benchmarks.trec_cds2016.prepare.runtime"
             )
         chunks = await db.chunks.find(
             filter_dict,

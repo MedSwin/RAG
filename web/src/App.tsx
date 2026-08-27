@@ -224,7 +224,6 @@ export function App() {
           <a href={portals.clinician}>Clinician CDS</a>
           <a href={portals.dashboard}>Ops dashboard</a>
           <a href={portals.docs}>OpenAPI</a>
-          <a href={portals.eval}>Eval portal</a>
         </nav>
       </header>
 

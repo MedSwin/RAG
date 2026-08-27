@@ -5,7 +5,6 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import hnswlib
 import numpy as np
 
 from app.core.config import settings
@@ -91,6 +90,8 @@ class HNSWIndexBuilder(BaseIndexBuilder):
                     "message": "No valid embeddings found",
                 }
 
+            import hnswlib
+
             embeddings_array = np.array(valid_embeddings, dtype=np.float32)
             self.index = hnswlib.Index(space=self.config.get("space", "cosine"), dim=self.embedding_dim)
 
@@ -145,6 +146,8 @@ class HNSWIndexBuilder(BaseIndexBuilder):
                 if _sqlite_mapping(mapping_path)
                 else self._load_mapping(mapping_path)
             )
+            import hnswlib
+
             self.index = hnswlib.Index(space=self.config.get("space", "cosine"), dim=self.embedding_dim)
             self.index.load_index(str(index_path))
             logger.info(

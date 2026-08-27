@@ -34,11 +34,10 @@ def _generation_backend() -> str:
 def _default_max_tokens() -> Optional[int]:
     """Return an optional shared generation cap.
 
-    The strict full-evaluation launcher sets this value for both generator
-    profiles. This prevents GPT-5.4 from receiving a larger output allowance
-    than the local MedSwin model merely because one backend has a larger context
-    window. Ordinary application behavior remains uncapped when the variable is
-    absent/zero.
+    paper-eval sets this value for both generator profiles. This prevents
+    Foundry GPT from receiving a larger output allowance than the local MedSwin
+    model merely because one backend has a larger context window. Ordinary
+    application behavior remains uncapped when the variable is absent/zero.
     """
     raw = (os.getenv("LLM_DEFAULT_MAX_TOKENS") or "").strip()
     if not raw:

@@ -46,13 +46,11 @@ export async function getTrace(traceId: string, orgId: string) {
   return res.json();
 }
 
-export function portalUrls(evalPort = 8200) {
+export function portalUrls() {
   const origin = window.location.origin;
-  const evalOrigin = `${window.location.protocol}//${window.location.hostname}:${evalPort}`;
   return {
     clinician: `${origin}/app/`,
     dashboard: `${origin}/api/v1/dashboard/`,
     docs: `${origin}/docs`,
-    eval: `${evalOrigin}/`,
   };
 }

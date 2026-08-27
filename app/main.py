@@ -55,7 +55,7 @@ def _validate_cloud_configuration() -> None:
     """Fail before serving traffic when cloud mode is structurally unusable.
 
     This validates configuration only and deliberately does not spend provider
-    quota. The publication `full-eval` warmup performs the stronger live probes.
+    quota. The publication `paper-eval` warmup performs the stronger live probes.
     """
     if not settings.CLOUD_MODE:
         return

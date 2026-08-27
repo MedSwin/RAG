@@ -10,13 +10,13 @@ Documentation index: [`docs/README.md`](docs/README.md)
 
 | Manual | Use it when |
 | --- | --- |
-| [`docs/ADMIN.md`](docs/ADMIN.md) | Day-one: `.env`, ports, orgs, ingest, index, ask, eval |
-| [`docs/OPERATOR.md`](docs/OPERATOR.md) | Starting the stack, asking, comparing, opening portals, running eval |
+| [`docs/ADMIN.md`](docs/ADMIN.md) | Day-one: `.env`, ports, orgs, ingest, index, ask |
+| [`docs/OPERATOR.md`](docs/OPERATOR.md) | Starting the stack, asking, comparing, opening portals |
+| [`docs/PAPER_EVAL.md`](docs/PAPER_EVAL.md) | Official TREC CDS 2016 T1–T4 (`paper-eval`) |
 | [`docs/NAIVE_RAG.md`](docs/NAIVE_RAG.md) | Fairness contract for the textbook RAG control |
-| [`docs/ENDPOINTS.md`](docs/ENDPOINTS.md) | HTTP routes for MedSwin, naive-RAG, storage, eval |
+| [`docs/ENDPOINTS.md`](docs/ENDPOINTS.md) | HTTP routes for MedSwin, naive-RAG, storage |
 | [`docs/MEDSWIN.md`](docs/MEDSWIN.md) | MAC, gate, scoring, traces (current runtime, not the old 3-agent sketch) |
 | [`docs/INDEXING.md`](docs/INDEXING.md) | Embeddings, HNSW ∪ IVF, refresh / rebuild |
-| [`eval/README.md`](eval/README.md) | TREC CDS 2016 harness and MSAS |
 | [`env.example`](env.example) | Environment keys. Copy to `.env`; never commit secrets |
 
 ---
@@ -51,11 +51,11 @@ Documentation index: [`docs/README.md`](docs/README.md)
 ```mermaid
 flowchart TD
   Op["Operator CLI / start-local.sh"] --> UI["Clinician UI /app"]
-  Op --> EvalUI["Eval portal :8200"]
+  Op --> Paper["paper-eval T1 exporter / T3 packs"]
   UI --> Full["POST /api/v1/medswin/chat"]
   UI --> Naive["POST /api/v1/naive/chat"]
-  EvalUI --> Full
-  EvalUI --> Naive
+  Paper --> T1["LIT-only official IR"]
+  Paper --> T3["product-path /chat packs"]
   Full --> Orch["MedSwinOrchestrator"]
   Naive --> Control["NaiveRAGOrchestrator"]
   Orch --> Norm["QueryNormalizer"]
@@ -164,16 +164,16 @@ app/
   indexes/          # hybrid ANN query (HNSW ∪ IVF)
   prompts/          # role claim prompts
   api/              # auth scaffold + v1 endpoints
-  cli/              # local operator: ask, eval, portals
+  cli/              # local operator: ask, portals, status
   services/         # adapters (llm, embedding, reranker, limiter), governance shims
   core/             # config, database, indexing builders
 web/                # clinician SPA (Vite/React + static public fallback)
 data/calibration/   # rerank.json, agents.json
-eval/               # TREC system audit harness (consumer of /medswin/chat and /naive/chat)
-docs/               # operator, architecture, API, naive-RAG, indexing manuals
+benchmarks/         # official TREC CDS 2016 T1/T2 + T3/T4 clinician protocol
+docs/               # operator, architecture, API, naive-RAG, paper-eval manuals
 ```
 
-Legacy imports under `app/services/medswin/*` and `app/models/medswin.py` re-export the new packages so `eval/` and tests keep working.
+Legacy imports under `app/services/medswin/*` and `app/models/medswin.py` re-export the new packages so older call sites keep working.
 
 ---
 
@@ -395,8 +395,8 @@ cp env.example .env
 # API only, foreground (scripts / CI)
 ./scripts/start-local.sh serve
 
-# Start API + eval portal and open the web UIs
-./scripts/start-local.sh up --with-eval --open
+# Start API and open the clinician UI
+./scripts/start-local.sh up --open
 ```
 
 From the console, or as one-shot commands:
@@ -404,7 +404,7 @@ From the console, or as one-shot commands:
 ```bash
 ./scripts/start-local.sh ask --mode both --question "Can this patient continue metformin after the latest renal-function result?"
 ./scripts/start-local.sh open clinician
-./scripts/start-local.sh eval --run --pipeline both --max-cases 2
+./scripts/start-local.sh paper-eval
 ./scripts/start-local.sh status
 ```
 
@@ -413,8 +413,8 @@ From the console, or as one-shot commands:
 Equivalent manual API start:
 
 ```bash
-# MongoDB
-docker run -d -p 27017:27017 --name rag_mongodb mongo:6.0
+# MongoDB (operator prefers Compose medswin-mongodb / mongo:7.0)
+docker compose up -d mongodb
 
 # API
 python3 -m uvicorn app.main:app --reload --port 8100
@@ -424,7 +424,6 @@ python3 -m uvicorn app.main:app --reload --port 8100
 | --- | --- |
 | Clinician UI (full / naive / both) | [http://localhost:8100/app/](http://localhost:8100/app/) — form: query, pipeline, org, user, patient, naive top-K (no `constraints`) |
 | Ops dashboard | [http://localhost:8100/api/v1/dashboard/](http://localhost:8100/api/v1/dashboard/) |
-| Eval harness | [http://localhost:8200/](http://localhost:8200/) (`./scripts/start-local.sh eval`) |
 | OpenAPI | [http://localhost:8100/docs](http://localhost:8100/docs) |
 | Health | `GET /health` |
 
@@ -482,7 +481,7 @@ curl -s http://localhost:8100/api/v1/medswin/chat \
 | `NAIVE_TOP_K` | Dense hits for the naive-RAG control | `5` |
 | `NAIVE_MAX_CONTEXT_CHARS` | Naive prompt cap | `8000` |
 | `NAIVE_ENABLE_MONGO_FALLBACK` | Cosine scan if ANN is empty (not for publication) | `true` |
-| `BENCHMARK_ORG_ID` | Eval tenant (eval service / operator `eval --run`) | `bench-org` |
+| `BENCHMARK_ORG_ID` | Paper-eval tenant (`paper-eval`, not `--org-id`) | `bench-org` |
 | `CANDIDATE_K` / `CANDIDATE_K_PRIME` | Candidate pools | `80` / `120` |
 | `MAX_RETRIEVE_LOOPS` | Retrieve-more budget | `3` |
 | `TOKEN_BUDGET_B` | Evidence token budget | `1800` |
@@ -530,10 +529,10 @@ If the file is missing or identity, chat sets `degraded_mode.calibration=true` a
 python3 -m pytest
 # focused
 python3 -m pytest tests/test_medswin_policy.py tests/test_medswin_governance.py tests/test_medswin_retrieval.py -q
-python3 -m pytest tests/test_naive_rag.py tests/test_eval_harness.py tests/test_operator_cli.py -q
+python3 -m pytest tests/test_naive_rag.py tests/test_operator_cli.py tests/test_paper_eval_cli.py tests/test_trec_cds2016.py -q
 ```
 
-System-level TREC CDS audit lives under [`eval/`](eval/) and calls `/medswin/chat` or `/naive/chat` via `pipeline=medswin|naive_rag|both`. Start it with `./scripts/start-local.sh eval --open` or see [`eval/README.md`](eval/README.md).
+Official TREC CDS 2016 evaluation is [`docs/PAPER_EVAL.md`](docs/PAPER_EVAL.md): `./scripts/start-local.sh paper-eval`. T1 is a LIT-only retriever table scored with NIST `sample_eval` / `trec_eval`. T3/T4 are a separate clinician study and automatic ablation. The MSAS `:8200` portal is removed.
 
 ---
 
@@ -553,7 +552,8 @@ System-level TREC CDS audit lives under [`eval/`](eval/) and calls `/medswin/cha
 | [`app/cli/operator.py`](app/cli/operator.py) | Local operator console |
 | [`scripts/start-local.sh`](scripts/start-local.sh) | Bootstrap + command dispatcher |
 | [`web/`](web/) | Clinician CDSS UI (full / naive / both) |
-| [`eval/`](eval/) | TREC / smoke system audit |
+| [`benchmarks/`](benchmarks/) | Official TREC T1/T2 + T3/T4 packs |
+| [`docs/PAPER_EVAL.md`](docs/PAPER_EVAL.md) | Publication operator contract |
 | [`data/calibration/`](data/calibration/) | Fitted score & agent reliability artefacts |
 | [`docs/README.md`](docs/README.md) | Documentation index |
 | [`docs/ADMIN.md`](docs/ADMIN.md) | Administrator day-one runbook |

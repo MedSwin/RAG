@@ -30,6 +30,16 @@ key/
 # Docs
 docs/MedSwin.tex
 
+# Official TREC downloads and paper-eval outputs
+benchmarks/trec_cds2016/nist/*.xml
+benchmarks/trec_cds2016/nist/*.txt
+benchmarks/trec_cds2016/nist/*.pl
+benchmarks/trec_cds2016/bin/
+benchmarks/trec_cds2016/runs/
+benchmarks/trec_cds2016/scores/
+benchmarks/trec_cds2016/data/
+benchmarks/expert/packs/
+
 # Build
 *.bak
 *.tar*

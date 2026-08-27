@@ -6,7 +6,7 @@ Documentation index: [`docs/README.md`](README.md)
 Architecture: [`MEDSWIN.md`](MEDSWIN.md)  
 Local operator: [`OPERATOR.md`](OPERATOR.md)  
 API contract: [`ENDPOINTS.md`](ENDPOINTS.md)  
-System-level TREC harness: [`eval/README.md`](../eval/README.md)
+Publication eval: [`PAPER_EVAL.md`](PAPER_EVAL.md)
 
 ---
 
@@ -213,17 +213,17 @@ You want `index_exists=true` and a non-zero chunk count for `demo-org`.
 
 ## 5. Prompting from the terminal
 
-`scripts/start-local.sh` is the local operator. In a terminal it opens a console that can start the API, ask full / naive / both, run eval, and open the web portals. The clinician UI at `/app/` has the same pipeline switch.
+`scripts/start-local.sh` is the local operator. In a terminal it opens a console that can start the API, ask full / naive / both, and open the web portals. The clinician UI at `/app/` has the same pipeline switch.
 
 ```bash
 ./scripts/start-local.sh                  # console (starts API if needed)
 ./scripts/start-local.sh up --open        # start + open clinician + dashboard
 ./scripts/start-local.sh ask --mode both  # REPL or --question
-./scripts/start-local.sh eval --open      # benchmark UI on :8200
+./scripts/start-local.sh paper-eval       # official TREC T1 (see PAPER_EVAL.md)
 ./scripts/start-local.sh serve            # API only, foreground
 ```
 
-The console leaves servers running when you quit so you can keep watching `/app/`, `/api/v1/dashboard/`, and `:8200`. `./scripts/start-local.sh stop` shuts down processes this operator started.
+The console leaves servers running when you quit so you can keep watching `/app/` and `/api/v1/dashboard/`. `./scripts/start-local.sh stop` shuts down processes this operator started.
 
 ### 5.1 Interactive ask (choose full / naive / both)
 
@@ -326,90 +326,24 @@ Full MedSwin remains `POST /api/v1/medswin/chat`. Traces for **both** pipelines 
 
 ---
 
-## 7. Batch evaluation (same cases, two pipelines)
+## 7. Publication evaluation vs local compare
 
-The existing TREC harness in `eval/` now accepts `pipeline`.
+Local compare is `POST /api/v1/naive/compare` or `./scripts/start-local.sh ask --mode both`. That is a development surface, not a publication instrument.
 
-Start MedSwin on `:8100`, ingest the PMC / case corpus as in `eval/README.md`, then start the eval service **or** use the compare script.
+Official numbers use [`PAPER_EVAL.md`](PAPER_EVAL.md):
 
-### 7.1 Eval service
-
-```bash
-cd eval
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python3 -m uvicorn app.main:app --reload --port 8200
-```
-
-```bash
-# Preferred: operator starts :8200 from the repo root
-./scripts/start-local.sh eval --open
-
-# Full system
-curl -s http://127.0.0.1:8200/api/run \
-  -H 'Content-Type: application/json' \
-  -d '{"cases_path":"eval/data/sample/cases.jsonl","max_cases":2,"pipeline":"medswin"}'
-
-# Naive control
-curl -s http://127.0.0.1:8200/api/run \
-  -H 'Content-Type: application/json' \
-  -d '{"cases_path":"eval/data/sample/cases.jsonl","max_cases":2,"pipeline":"naive_rag"}'
-
-# Both, plus a comparison sidecar
-curl -s http://127.0.0.1:8200/api/run \
-  -H 'Content-Type: application/json' \
-  -d '{"cases_path":"eval/data/sample/cases.jsonl","max_cases":2,"pipeline":"both"}'
-```
-
-From the **repository root** (how the operator starts eval), the smoke file is `eval/data/sample/cases.jsonl`.
-
-### 7.2 One script, no eval UI
-
-From the repository root, with MedSwin healthy and a corpus already indexed for `BENCHMARK_ORG_ID` (default `bench-org`):
-
-```bash
-python3 eval/scripts/run_pipeline_compare.py \
-  --cases-path eval/data/sample/cases.jsonl \
-  --max-cases 2
-```
-
-Writes under `RUN_STORE_DIR` (default `/tmp/medswin-audits`):
-
-- `{medswin_run_id}.json`
-- `{naive_run_id}.json`
-- `{medswin_run_id}.comparison.json` with `delta_medswin_minus_naive` and per-case Jaccard / MSAS deltas
-
-For publication numbers, point `--cases-path` at the TREC JSONL produced by `eval/scripts/prepare_trec_cds.py` and use the judged PMC ingest in `eval/README.md`. Do not publish smoke-file scores.
-
-### 7.3 What the harness scores the same — and what it does not
-
-Both pipelines share the same cases, `BENCHMARK_ORG_ID`, EMR ingest, index provenance gates, qrel coverage gates, pure query text, `min_evidence_grade`, and audit extractors (`evidence_doc_recall`, facet recall, citation precision, MSAS).
-
-Naive-specific wiring:
-
-- Chat goes to `POST /api/v1/naive/chat` with an explicit `top_k` (eval default 5).
-- Preflight calls `GET /api/v1/naive/ready` and fails the run if Mongo is down or the corpus has chunks but 0 embeddings.
-- Case concurrency follows `max_concurrency`. The reranker budget is not applied (naive does not rerank).
-- Infrastructure failures (`degraded_mode.error` / `no_embeddings` / `empty_index`, `retrieval_backend` `error` / `dim_mismatch`) are case errors and raise `error_rate`. Do not publish those runs.
-- MedSwin-only architecture checks (sufficiency checks, specialist messages) are **not** applied. Those gaps are the baseline.
-
-`pipeline=both` writes `{medswin_run_id}.json` plus `{medswin_run_id}.comparison.json`. The returned audit is the MedSwin run; naive aggregates live under `diagnostics.pipeline_comparison`. The eval UI surfaces those deltas.
-
-Shared metrics still apply and are the ones to compare:
-
-| Metric | What it tells you |
+| Table | Naive role |
 | --- | --- |
-| `evidence_doc_recall` | Did top-K / selected bundle recover judged docs? |
-| `citation_precision` | Are cited docs in the qrel set? |
-| `facet_recall` / `critical_facet_recall` | Did selected docs cover gold clinical facets? |
-| `sufficiency_decision_score` | Naive always “passes”; if critical facets are missing this score goes to 0 — that is the ungated-generation penalty |
-| `unsafe_omission_penalty` | `1 - critical_facet_recall` |
-| `groundedness_proxy` | Citation / ledger support (replace with clinician adjudication for the paper) |
-| `trace_completeness` | Naive will score lower; that is expected |
-| `MSAS` | Composite; interpret per-term, not as a single trophy number |
-| `policy_pass_rate` | Naive ≈ 1.0; MedSwin < 1.0 can be correct abstention |
-| chunk Jaccard (compare) | Did the two pipelines even look at the same evidence? |
+| T1 | Not a chat control. T1 is LIT-only official IR (BM25 / dense / RRF / cascade). |
+| T3 | Naive is the ungated product-path control: same EMR note + type question, always answers. |
+| T4 | Naive is not the ablation. T4 is MedSwin `full` / `-gate` / `-MAC`. |
+
+```bash
+./scripts/start-local.sh paper-eval
+./scripts/start-local.sh paper-eval --pipeline both --generator cloud --stage t3
+```
+
+Do not restore `eval/`, `:8200`, or MSAS composites. Do not publish a local compare whose naive backend is not `ann`.
 
 ---
 
@@ -435,15 +369,13 @@ Set them in `.env`. `env.example` lists the naive keys.
 ```text
 app/medswin/naive.py                 NaiveRAGOrchestrator + compare_responses()
 app/api/v1/endpoints/naive.py        POST /naive/chat, POST /naive/compare
-app/cli/operator.py                  python -m app.cli.operator  (console / up / ask / eval)
+app/cli/operator.py                  python -m app.cli.operator  (console / up / ask)
 app/cli/prompt.py                    python -m app.cli.prompt
 app/cli/surfaces.py                  portal URLs, health probes, pid files
-scripts/start-local.sh               operator: console / ask / eval / portals
+scripts/start-local.sh               operator: console / ask / paper-eval / portals
 docs/OPERATOR.md                     operator manual
-eval/app/client.py                   pipeline=naive_rag uses /api/v1/naive/chat
-eval/app/runner.py                   pipeline=medswin|naive_rag|both
-eval/app/compare.py                  aggregate deltas
-eval/scripts/run_pipeline_compare.py CLI for pipeline=both
+docs/PAPER_EVAL.md                   official T1–T4
+benchmarks/expert/t3_packs.py        product-path naive vs MedSwin packs
 tests/test_naive_rag.py              control-pipeline unit tests
 ```
 
@@ -462,7 +394,7 @@ tests/test_naive_rag.py              control-pipeline unit tests
 | Full MedSwin 500 / degraded rerank | no `RERANKER_URL` / cloud reranker | expected for naive; fix before publishing full-system numbers |
 | Both answers ignore the patient | note never ingested as EMR | `ingest?source_type=EMR` with `patient_id`, or `--patient-id` after ingest |
 | Compare is very slow | full MAC loop + retrieve-more | expected; raise `--timeout` (CLI default 300s) |
-| Eval qrel coverage error | smoke cases have gold IDs that are not in `bench-org` | ingest those docs into the benchmark org, or use TREC prep scripts |
+| paper-eval T3 pack failed | isolated corpus or Foundry not ready | follow PAPER_EVAL.md prepare + warmup |
 | Script uses port 8000 | old habit | supervisor LLM is 8000; the API is 8100 |
 
 ---
@@ -476,10 +408,10 @@ Copy this and tick it before you treat a run as real:
 3. Record `org_id` and whether the ANN index was rebuilt (`force_rebuild`)
 4. Confirm `/health` and `storage/stats` for that org
 5. Confirm naive `retrieval_backend=ann` on a probe question
-6. Run the **same** `cases_path` / question twice: `pipeline=naive_rag` then `pipeline=medswin`, or one `pipeline=both`
-7. Save the three JSON artefacts (naive audit, MedSwin audit, comparison)
-8. Report per-metric deltas, abstention rate, and chunk Jaccard — not MSAS alone
-9. For TREC, follow `eval/README.md` judged-pool ingest and qrel coverage gates
+6. For a local compare, run the **same** question through `naive` and `medswin` (or `mode both`)
+7. For publication, follow [PAPER_EVAL.md](PAPER_EVAL.md): T1 official IR vs T3 product-path packs
+8. Report T1 as a retriever table. Gate/MAC claims live on T3/T4
+9. Do not publish homemade MSAS composites or `:8200` audits
 
 ---
 
@@ -488,7 +420,7 @@ Copy this and tick it before you treat a run as real:
 From the repository root:
 
 ```bash
-python3 -m pytest tests/test_naive_rag.py tests/test_eval_harness.py -q
+python3 -m pytest tests/test_naive_rag.py tests/test_paper_eval_cli.py tests/test_expert_protocol.py -q
 ```
 
 `test_naive_rag.py` asserts: dense top-K only, no reranker, generation with an empty pool, infrastructure-gap skip, and the compare helper’s Jaccard / abstention fields.

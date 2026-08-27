@@ -2,7 +2,7 @@
 
 # LEGACY: deploys root docker-compose.yml (API :8000, medical_rag_db) to a
 # hardcoded EC2 host. It does not start the operator CLI, clinician UI contract
-# on :8100, or the eval harness on :8200. Local/admin path: docs/ADMIN.md.
+# on :8100. Publication numbers use ./scripts/start-local.sh paper-eval. Local/admin path: docs/ADMIN.md.
 #
 # AWS EC2 Deployment Script for RAG System to Existing Instance
 # This script deploys the RAG system to an existing AWS EC2 instance

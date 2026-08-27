@@ -414,16 +414,19 @@ class MedSwinOrchestrator:
 
             routed = (hints or {}).get("routed_agents") or (hints or {}).get("routed_agent")
             missing = (hints or {}).get("missing_facets") or []
-            batches = await self._dispatch_agents(
-                query=query,
-                candidates=all_candidates[:40],
-                facets=facets,
-                patient_id=patient_id,
-                routed=routed,
-                missing=missing,
-                contradiction_review=bool((hints or {}).get("contradiction_review")),
-                trace=trace,
-            )
+            if constraints.get("disable_mac"):
+                batches = []
+            else:
+                batches = await self._dispatch_agents(
+                    query=query,
+                    candidates=all_candidates[:40],
+                    facets=facets,
+                    patient_id=patient_id,
+                    routed=routed,
+                    missing=missing,
+                    contradiction_review=bool((hints or {}).get("contradiction_review")),
+                    trace=trace,
+                )
 
             ledger = build_retrieval_ledger(all_candidates, facets)
             ledger = merge_agent_claims(ledger, batches, all_candidates)
@@ -442,11 +445,19 @@ class MedSwinOrchestrator:
                 query_spec=query_spec,
                 contradictions=contradictions,
             )
+            if constraints.get("disable_gate") and check.policy_decision is not None:
+                check.policy_decision.passed = True
+                check.policy_decision.action = PolicyAction.ACCEPT
+                check.policy_decision.reason = "T4 ablation: sufficiency gate disabled; generate from the packed bundle."
+                check.passed = True
+                check.action_taken = PolicyAction.ACCEPT.value
             final_check = check
             trace.sufficiency_checks.append(check)
             if check.policy_decision:
                 trace.policy_decisions.append(check.policy_decision)
 
+            if constraints.get("disable_gate"):
+                break
             if check.passed:
                 break
             if not self.gate.should_retrieve_more(check):

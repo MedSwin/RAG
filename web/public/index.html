@@ -48,7 +48,6 @@
         <a href="/app/">Clinician CDS</a>
         <a href="/api/v1/dashboard/">Ops dashboard</a>
         <a href="/docs">OpenAPI</a>
-        <a id="evalLink" href="http://127.0.0.1:8200/">Eval portal</a>
       </nav>
     </header>
     <div class="workspace">
@@ -85,9 +84,6 @@
     const err = document.getElementById('error');
     const btn = document.getElementById('btn');
     const pipelineEl = document.getElementById('pipeline');
-    document.getElementById('evalLink').href =
-      `${location.protocol}//${location.hostname}:8200/`;
-
     function pathFor(pipeline) {
       if (pipeline === 'naive') return '/api/v1/naive/chat';
       if (pipeline === 'both') return '/api/v1/naive/compare';

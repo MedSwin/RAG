@@ -21,6 +21,8 @@ A **naive-RAG control** lives on the same process so you can measure whether tha
 
 Both pipelines share: Mongo corpus, embeddings, ANN files, `org_id` / patient filters, and the same LLM backend. That is the fairness contract. Details: [NAIVE_RAG.md](NAIVE_RAG.md).
 
+Publication evaluation is [PAPER_EVAL.md](PAPER_EVAL.md). It is not a second web portal.
+
 ---
 
 ## 1. Identities, ports, files
@@ -28,7 +30,7 @@ Both pipelines share: Mongo corpus, embeddings, ANN files, `org_id` / patient fi
 | Name | Value | Used by |
 | --- | --- | --- |
 | API listen | **8100** (`APP_PORT`) | Chat, ingest, traces, clinician UI, dashboard, OpenAPI |
-| Eval listen | **8200** (`EVAL_PORT`) | Batch audit UI + `POST /api/run` |
+| Paper-eval API | **8110** (`FULL_EVAL_API_PORT`) | Isolated T3/T4 process; T1 exporter does not call `/chat` |
 | Supervisor LLM | 8000 (`SUPERVISOR_URL`) | Naive generate + MedSwin supervisor / synthesis |
 | Specialist LLMs | 8001–8003 | Optional; `CLOUD_MODE=true` collapses them |
 | Reranker | 8004 | Required for a fair **full** MedSwin compare |
@@ -36,15 +38,15 @@ Both pipelines share: Mongo corpus, embeddings, ANN files, `org_id` / patient fi
 | Mongo URL | `mongodb://localhost:27017` | |
 | Mongo database | **`medswin`** (`MONGODB_DB`) | Not `medical_rag_db` |
 | Local ask org | **`demo-org`** | Clinician UI, `ask`, `index` |
-| Eval org | **`bench-org`** (`BENCHMARK_ORG_ID`) | `eval --run` — **not** `--org-id` |
+| Paper-eval org | **`bench-org`** (`BENCHMARK_ORG_ID`) | `paper-eval` — **not** `--org-id` |
 | Ask user | `clinician-1` | |
 | Eval user | `bench-user` | |
-| Auto Mongo container | **`rag_mongodb`** (`mongo:6.0`) | Started by `start-local.sh` if ping fails |
+| Auto Mongo container | **`medswin-mongodb`** (`mongo:7.0`) | Started by `start-local.sh` if ping fails |
 | API PID / log | `logs/medswin-api.pid`, `logs/medswin-api.log` | Only if this operator started uvicorn |
-| Eval PID / log | `logs/medswin-eval.pid`, `logs/medswin-eval.log` | |
-| ANN files | `./data/hnsw_index.bin` + mapping; optional FAISS | |
+| Local 7B PID / log | `logs/medswin-llm.pid`, `logs/medswin-llm.log` | Optional T3 generator |
+| Ordinary ANN | `./data/hnsw_index.bin` + mapping; optional FAISS | Chat path |
+| Paper-eval artifacts | `FULL_EVAL_DATA_DIR` default `./data/full-trec-benchmark` | Isolated HNSW / BM25 |
 | Calibration | `./data/calibration/rerank.json`, `agents.json` | Identity `{b:0,T:1}` until you fit Platt |
-| Audits | `RUN_STORE_DIR` default `/tmp/medswin-audits` | |
 
 `q` in the console does **not** stop uvicorn. Use `./scripts/start-local.sh stop`.
 
@@ -59,6 +61,7 @@ Both pipelines share: Mongo corpus, embeddings, ANN files, `org_id` / patient fi
   - **Local models:** OpenAI-compatible `SUPERVISOR_URL` and either `EMBEDDING_URL` or weights under `models/MedEmbed-large-v0.1`.
 - Full MedSwin also needs a reranker (`RERANKER_URL` or `models/bge-reranker-v2-m3`). Naive-RAG does not.
 - Repository root as the working directory for every command below.
+- Paper-eval T1 scoring needs official NIST files and `trec_eval` (see [PAPER_EVAL.md](PAPER_EVAL.md)).
 
 ---
 
@@ -100,21 +103,24 @@ CLOUD_RERANKER=Cohere-rerank-v4.0-fast
 
 In cloud mode, startup **does not** download local HF weights and **does not** auto-refresh embeddings. After ingest, call `POST /api/v1/storage/embeddings/refresh` or `./scripts/start-local.sh index`.
 
-### Eval (same `.env` is fine)
+### Paper-eval (same `.env` is fine)
 
 ```text
 MEDSWIN_BASE_URL=http://127.0.0.1:8100
-EVAL_BASE_URL=http://127.0.0.1:8200
 BENCHMARK_ORG_ID=bench-org
 BENCHMARK_USER_ID=bench-user
-RUN_STORE_DIR=/tmp/medswin-audits
+TREC_EVAL_BIN=
+NIST_DIR=
+FULL_EVAL_API_PORT=8110
+FULL_EVAL_DATA_DIR=./data/full-trec-benchmark
+EVAL_WARMUP_ON_START=false
 ```
 
 ### Knobs you will actually change
 
 | Key | Default | When to touch it |
 | --- | --- | --- |
-| `NAIVE_TOP_K` | 5 | Fair compare; keep aligned with eval `top_k` |
+| `NAIVE_TOP_K` | 5 | Fair local compare |
 | `ENABLE_BM25` | true | MedSwin only |
 | `MAX_RETRIEVE_LOOPS` | 3 | Full-system latency |
 | `SUFF_CRITICAL_FACET_THRESHOLD` | 0.78 | How often MedSwin abstains |
@@ -160,7 +166,7 @@ You want naive `retrieval_backend=ann` on a probe question. `mongo_cosine` or `e
 
 ## 5. Operator commands
 
-Entry: [`scripts/start-local.sh`](../scripts/start-local.sh) → [`app/cli/operator.py`](../app/cli/operator.py).
+Entry: [`scripts/start-local.sh`](../scripts/start-local.sh) → [`app/cli/operator.py`](../app/cli/operator.py) for local ask/status. Paper numbers go through `paper-eval` in the shell.
 
 ```text
 ./scripts/start-local.sh [command] [options]
@@ -170,11 +176,12 @@ Entry: [`scripts/start-local.sh`](../scripts/start-local.sh) → [`app/cli/opera
 | --- | --- |
 | `console` | Default in a TTY. Bootstrap, print URLs, command menu |
 | `serve` | Default when stdin is not a TTY. Foreground `uvicorn app.main:app` |
-| `up` | Start API (optional eval), print status, optionally open browsers |
+| `up` | Start API, print status, optionally open browsers |
 | `ask` | One question or REPL. `--mode full\|naive\|both` |
-| `eval` | Start `:8200`, or `--run` a benchmark |
-| `open` | `clinician` \| `dashboard` \| `eval` \| `docs` \| `all` |
-| `status` | Health, naive ready, storage stats, eval portal |
+| `paper-eval` | Official TREC T1 (+ optional T3/T4). See [PAPER_EVAL.md](PAPER_EVAL.md) |
+| `eval` | Removed; exits 1 |
+| `open` | `clinician` \| `dashboard` \| `docs` \| `all` |
+| `status` | Health, naive ready, storage stats, paper-eval NIST/runs |
 | `index` | `POST /storage/embeddings/refresh` then `POST /storage/index/build` |
 | `stop` | SIGTERM PIDs this operator wrote under `logs/` |
 
@@ -185,15 +192,15 @@ Typical:
 
 ```bash
 ./scripts/start-local.sh
-./scripts/start-local.sh up --with-eval --open
+./scripts/start-local.sh up --open
 ./scripts/start-local.sh ask --mode both --question "What first-line therapy is appropriate?" --patient-id patient-7
-./scripts/start-local.sh eval --run --pipeline both --max-cases 2
+./scripts/start-local.sh paper-eval
 ./scripts/start-local.sh index --org-id demo-org
 ./scripts/start-local.sh status
 ./scripts/start-local.sh stop
 ```
 
-Console menu: `1` full, `2` naive, `3` both, `4–6` portals, `7` eval run, `8` index, `9` status, `q` quit (servers stay up). A line of three or more words (or a trailing `?`) is treated as a question in the current mode.
+Console menu: `1` full, `2` naive, `3` both, `4–5` portals, `6` paper-eval status, `7` index, `8` status, `q` quit (servers stay up). A line of three or more words (or a trailing `?`) is treated as a question in the current mode.
 
 `--port` wins over `APP_PORT` from `.env`. Full flag table: [OPERATOR.md](OPERATOR.md).
 
@@ -216,7 +223,6 @@ After the API is up, all of these share the **same** Mongo and the **same** uvic
 | OpenAPI | http://127.0.0.1:8100/docs | Live schemas |
 | Health | http://127.0.0.1:8100/health | Liveness; cloud adds embedding-space + refresh |
 | Naive preflight | http://127.0.0.1:8100/api/v1/naive/ready | Mongo, chunk vs embedded counts, index file |
-| Eval harness | http://127.0.0.1:8200/ | Batch `pipeline=medswin\|naive_rag\|both` |
 
 ### Clinician UI (`/app/`)
 
@@ -231,7 +237,7 @@ Served from `web/public/index.html` unless you build the React SPA (`cd web && n
 | `user_id` | yes | Default `clinician-1` |
 | Naive `top_k` | yes | 1–20; ignored by full MedSwin |
 | `session_id` | **no** | Use curl / operator if you need a sticky session |
-| `constraints` | **no** | `source_policy`, `min_evidence_grade`, … — use HTTP or eval |
+| `constraints` | **no** | `source_policy`, `min_evidence_grade`, `disable_gate`, `disable_mac` — use HTTP |
 
 Compare view: side-by-side answers + `diff` (Jaccard, overlap, `medswin_abstained`). Trace fetch (`GET /medswin/traces/{id}?include_details=true`) is on the single-pipeline path.
 
@@ -261,12 +267,10 @@ One-shot `ask` exits **1** on `no_embeddings` or `error`. The console stays open
 Honest compares require the same embedded ANN.
 
 ```bash
-# LIT / CPG / EMR / SAFETY — query params, JSON array body
 curl -s 'http://127.0.0.1:8100/api/v1/medswin/ingest?source_type=LIT&org_id=demo-org' \
   -H 'Content-Type: application/json' \
   -d '[{"doc_id":"sample-lit-metformin","title":"…","text":"…"}]'
 
-# EMR must include patient_id on the document
 curl -s 'http://127.0.0.1:8100/api/v1/medswin/ingest?source_type=EMR&org_id=demo-org' \
   -H 'Content-Type: application/json' \
   -d '[{"doc_id":"note-42","patient_id":"patient-42","title":"Admission","text":"…"}]'
@@ -292,31 +296,19 @@ curl -s http://127.0.0.1:8100/api/v1/storage/benchmark/reset \
 
 ## 9. Evaluation
 
-Eval talks to the **already running** API. It uses `BENCHMARK_ORG_ID=bench-org`, not `demo-org`.
+Publication path: [PAPER_EVAL.md](PAPER_EVAL.md).
 
 ```bash
-# UI
-./scripts/start-local.sh eval --open
-
-# Smoke (gold doc_ids in eval/data/sample/cases.jsonl must exist in bench-org)
-./scripts/start-local.sh eval --run --pipeline both --max-cases 2 \
-  --cases-path eval/data/sample/cases.jsonl
+./scripts/start-local.sh warmup
+./scripts/start-local.sh paper-eval
+./scripts/start-local.sh paper-eval --pipeline both --generator cloud --stage t3
 ```
 
-Or HTTP (cwd = **repository root** so paths resolve):
+T1 is LIT-only official IR (note + type question → 1000 PMCIDs → NIST `sample_eval` / `trec_eval`). It does **not** call `/chat`.  
+T3 is the product path: note ingested as EMR, query = type question, frozen Foundry GPT.  
+T4 is automatic `full` / `-gate` / `-MAC` rates. Human T4 is not confirmatory.
 
-```bash
-curl -s http://127.0.0.1:8200/api/run \
-  -H 'Content-Type: application/json' \
-  -d '{"cases_path":"eval/data/sample/cases.jsonl","max_cases":2,"pipeline":"both","top_k":5}'
-```
-
-`pipeline`: `medswin` | `naive_rag` | `both`.  
-`both` returns the MedSwin `RunAudit`; naive totals live in `diagnostics.pipeline_comparison` and `{run_id}.comparison.json` under `RUN_STORE_DIR`.
-
-Publication path (TREC CDS 2016 + PMC): [eval/README.md](../eval/README.md). Do **not** publish smoke-file scores. Do not publish a run whose naive backends are not `ann`.
-
-MSAS is a composite diagnostic. Report per-term deltas (evidence-doc recall, critical-facet recall, abstention, chunk Jaccard), not MSAS alone.
+`eval`, `eval --run`, and `:8200` are gone. Do not publish homemade MSAS composites. T1 does not authorize a “gated multi-agent CDSS is SOTA” sentence.
 
 ---
 
@@ -325,17 +317,14 @@ MSAS is a composite diagnostic. Report per-term deltas (evidence-doc recall, cri
 Base `http://127.0.0.1:8100`. Full contract: [ENDPOINTS.md](ENDPOINTS.md).
 
 ```bash
-# Full
 curl -s http://127.0.0.1:8100/api/v1/medswin/chat \
   -H 'Content-Type: application/json' \
   -d '{"query":"Can metformin continue?","user_id":"clinician-1","org_id":"demo-org","patient_id":"patient-42"}'
 
-# Naive
 curl -s http://127.0.0.1:8100/api/v1/naive/chat \
   -H 'Content-Type: application/json' \
   -d '{"query":"Can metformin continue?","user_id":"clinician-1","org_id":"demo-org","top_k":5}'
 
-# Trace (PHI-redacted by default)
 curl -s 'http://127.0.0.1:8100/api/v1/medswin/traces/TRACE_ID?org_id=demo-org&include_details=true'
 ```
 
@@ -353,11 +342,11 @@ Insufficient evidence is HTTP **200** with `policy_decision.passed=false`. That 
 | Naive “0 embeddings” / CLI exit 1 | `index --org-id <org>` |
 | `retrieval_backend=mongo_cosine` | Build ANN; do not publish |
 | Full MedSwin degraded rerank | Start reranker or set cloud reranker. Naive does not need it |
-| Eval qrel coverage error | Smoke gold IDs missing from `bench-org`; ingest them or use TREC prep |
-| Eval `cases_path` not found | Use repo-root path `eval/data/sample/cases.jsonl` (operator cwd) |
+| `eval` exits 1 | Use `paper-eval` |
+| paper-eval NIST / `trec_eval` missing | `./scripts/start-local.sh warmup` |
 | Answers ignore the patient | EMR ingest with matching `patient_id` + `org_id` |
 | Compare is slow | Full MAC + up to 3 retrieve-more loops; CLI timeout default 300s |
-| Browsers did not open | `open clinician` / `open eval`, or paste URLs from `status` |
+| Browsers did not open | `open clinician`, or paste URLs from `status` |
 | Followed Docker Compose and hit port 8000 / `medical_rag_db` | That file is **legacy**. Use this runbook |
 
 ---
@@ -370,32 +359,33 @@ Insufficient evidence is HTTP **200** with `policy_decision.passed=false`. That 
 | `lab/` | Pre-production HPC modules. Not the FastAPI path |
 | Root `docker-compose.yml` | Legacy: API **8000**, DB `medical_rag_db`, optional nginx. Does not match this runbook |
 | `Dockerfile` | Legacy `EXPOSE 8000` / uvicorn `--port 8000` |
-| `aws/deploy.sh` | Deploys that compose to a hardcoded EC2 host. Not the operator CLI, web, or eval |
-| `eval/docker-compose.yml` | Eval **only** on 8200; expects MedSwin already on host `:8100` |
+| `aws/deploy.sh` | Deploys that compose to a hardcoded EC2 host. Not the operator CLI or clinician UI |
+| `eval/` | Removed. Do not restore the MSAS portal |
 | `docs/MedSwin.tex` | Architecture paper; **not** a tracked runtime contract |
 
-If you must use Compose, you are on a different contract: set `APP_PORT` / `MONGODB_DB=medswin` yourself and do not mix those numbers with this runbook.
+If you must use Compose, you are on a different contract: set `APP_PORT` / `MONGODB_DB=medswin` yourself and do not mix those numbers with this runbook. Paper-eval prefers the Compose `mongodb` service (`medswin-mongodb` / `mongo:7.0`).
 
 ---
 
 ## 13. Governance checklist (before you treat a run as real)
 
 1. Record `git rev-parse HEAD`
-2. Record non-secret `.env` keys that change behaviour (`CLOUD_MODE`, embedding model, `NAIVE_TOP_K`, `ENABLE_BM25`, sufficiency thresholds)
+2. Record non-secret `.env` keys that change behaviour (`CLOUD_MODE`, embedding model, `NAIVE_TOP_K`, `ENABLE_BM25`, sufficiency thresholds, `FULL_EVAL_*`)
 3. Record `org_id` (demo vs bench) and whether ANN was rebuilt
 4. `GET /health` and `GET /api/v1/naive/ready` — `embedded_count > 0`, `index_exists`
-5. Probe question shows naive `retrieval_backend=ann`
-6. Same `cases_path` / question on `naive_rag` and `medswin`, or one `pipeline=both`
-7. Keep `{naive_run}.json`, `{medswin_run}.json`, `{id}.comparison.json`
-8. Report per-metric deltas + abstention + Jaccard — not MSAS alone
-9. TREC: follow [eval/README.md](../eval/README.md) judged-pool + qrel gates
+5. Probe question shows naive `retrieval_backend=ann` for local compares
+6. For T1: official NIST SHA256 pins, `validate.py`, then `sample_eval` + `trec_eval -q -c -M1000`
+7. For T3: note as EMR, type question as query, Foundry GPT freeze, persisted packs
+8. Report T1 as a retriever table. Gate/MAC claims live on T3/T4
+9. Follow [PAPER_EVAL.md](PAPER_EVAL.md)
 
 ---
 
 ## 14. Tests
 
 ```bash
-python3 -m pytest tests/test_operator_cli.py tests/test_naive_rag.py tests/test_eval_harness.py -q
+python3 -m pytest tests/test_operator_cli.py tests/test_naive_rag.py tests/test_paper_eval_cli.py -q
+python3 -m pytest tests/test_trec_cds2016.py tests/test_expert_protocol.py tests/test_full_eval_contract.py -q
 python3 -m pytest tests/test_medswin_policy.py tests/test_medswin_governance.py tests/test_medswin_retrieval.py -q
 ```
 
@@ -406,9 +396,9 @@ python3 -m pytest tests/test_medswin_policy.py tests/test_medswin_governance.py 
 | Document | Open it when |
 | --- | --- |
 | [OPERATOR.md](OPERATOR.md) | Console flags and menu |
-| [NAIVE_RAG.md](NAIVE_RAG.md) | Fairness contract and metric interpretation |
+| [PAPER_EVAL.md](PAPER_EVAL.md) | Official TREC T1–T4 |
+| [NAIVE_RAG.md](NAIVE_RAG.md) | Fairness contract and local compare |
 | [ENDPOINTS.md](ENDPOINTS.md) | Every HTTP route |
 | [MEDSWIN.md](MEDSWIN.md) | MAC, gate math, traces, fail-open |
 | [INDEXING.md](INDEXING.md) | Embed, refresh, HNSW ∪ IVF |
-| [eval/README.md](../eval/README.md) | TREC CDS 2016 + MSAS |
 | [../README.md](../README.md) | Product diagrams and data model |

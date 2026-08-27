@@ -6,7 +6,8 @@ Paper source (not tracked in git): `docs/MedSwin.tex`
 HTTP contract: [ENDPOINTS.md](ENDPOINTS.md)  
 Naive control: [NAIVE_RAG.md](NAIVE_RAG.md)  
 Admin runbook: [ADMIN.md](ADMIN.md)  
-Local operator: [OPERATOR.md](OPERATOR.md)
+Local operator: [OPERATOR.md](OPERATOR.md)  
+Publication eval: [PAPER_EVAL.md](PAPER_EVAL.md)
 
 ---
 
@@ -31,7 +32,7 @@ The answer is always clinician decision support, never a final diagnosis or orde
 ## 2. Request path
 
 ```text
-Clinician UI / operator / eval
+Clinician UI / operator / paper-eval T3 packs
         │
         ▼
 POST /api/v1/medswin/chat

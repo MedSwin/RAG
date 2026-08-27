@@ -34,7 +34,7 @@ def _parser() -> argparse.ArgumentParser:
 
             Preferred local entry point:
               ./scripts/start-local.sh
-            That opens the operator console (ask, eval, portals).
+            That opens the operator console (ask, portals). Publication numbers use paper-eval.
             This module is the ask engine used by that console:
               ./scripts/start-local.sh ask --mode both --question "..."
               python -m app.cli.prompt --mode naive --question "..."

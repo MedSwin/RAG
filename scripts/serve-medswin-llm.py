@@ -8,9 +8,8 @@ used by app.services.adapters.llm.LLMClient.
 
 Prompt overflow is fail-closed. The server never silently truncates benchmark
 prompts: if prompt tokens + requested completion exceed the model-declared
-context window, the request fails and the strict matrix records the case as a
-failure. The full-eval launcher therefore applies one conservative prompt/output
-envelope to both MedSwin and GPT-5.4.
+context window, the request fails. paper-eval therefore applies one conservative
+prompt/output envelope to both MedSwin and Foundry GPT.
 """
 
 from __future__ import annotations

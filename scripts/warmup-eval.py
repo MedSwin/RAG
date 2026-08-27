@@ -25,9 +25,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-EXPECTED_TREC_DOCS = 1_255_260
-EXPECTED_TREC_QUERIES = 30
-EXPECTED_TREC_QRELS = 37_707
+from benchmarks.trec_cds2016.contract import EXPECTED_DOCUMENTS, EXPECTED_QRELS, EXPECTED_QUERIES
+from benchmarks.trec_cds2016.nist import download_nist, ensure_trec_eval, verify_nist
+
+EXPECTED_TREC_DOCS = EXPECTED_DOCUMENTS
+EXPECTED_TREC_QUERIES = EXPECTED_QUERIES
+EXPECTED_TREC_QRELS = EXPECTED_QRELS
 DEFAULT_DATASET = "pmc/v2/trec-cds-2016"
 DEFAULT_MODEL_ID = "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
 EXPECTED_FOUNDRY_MODEL = "gpt-5.4"
@@ -265,10 +268,25 @@ async def warm_foundry() -> dict[str, Any]:
     return payload
 
 
+def warm_nist(force: bool) -> dict[str, Any]:
+    verified = download_nist(force=force)
+    print(f"[warmup] NIST CDS 2016 files verified: {', '.join(verified)}")
+    return {"complete": True, "sha256": verified, "completed_at": datetime.now(timezone.utc).isoformat()}
+
+
+def warm_trec_eval() -> dict[str, Any]:
+    path = ensure_trec_eval()
+    print(f"[warmup] trec_eval ready: {path}")
+    return {"complete": True, "path": str(path), "completed_at": datetime.now(timezone.utc).isoformat()}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-model", action="store_true")
+    parser.add_argument("--with-local-llm", action="store_true")
     parser.add_argument("--skip-trec", action="store_true")
+    parser.add_argument("--skip-nist", action="store_true")
+    parser.add_argument("--skip-trec-eval", action="store_true")
     parser.add_argument("--skip-foundry", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dataset", default=DEFAULT_DATASET)
@@ -284,7 +302,13 @@ def main() -> int:
     args = parse_args()
     MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
     results: dict[str, Any] = {}
-    if not args.skip_model:
+    if not args.skip_nist:
+        results["nist"] = warm_nist(args.force)
+        verify_nist()
+    if not args.skip_trec_eval:
+        results["trec_eval"] = warm_trec_eval()
+    need_local_llm = args.with_local_llm or os.getenv("PAPER_EVAL_NEED_LOCAL_LLM") == "1"
+    if need_local_llm and not args.skip_model:
         results["model"] = warm_model(args.model_id, Path(args.model_path), args.force)
     if not args.skip_trec:
         results["trec"] = warm_trec(args.dataset, args.force)

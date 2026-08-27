@@ -16,10 +16,9 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[2]
 LOG_DIR = ROOT / "logs"
 API_PID_PATH = LOG_DIR / "medswin-api.pid"
-EVAL_PID_PATH = LOG_DIR / "medswin-eval.pid"
+LLM_PID_PATH = LOG_DIR / "medswin-llm.pid"
 
 DEFAULT_API = "http://127.0.0.1:8100"
-DEFAULT_EVAL = "http://127.0.0.1:8200"
 
 PORTAL_PATHS = {
     "clinician": ("/app/", "Clinician CDS — full MedSwin, naive-RAG, or both"),
@@ -34,20 +33,13 @@ def join_url(base: str, path: str) -> str:
     return f"{base.rstrip('/')}{path if path.startswith('/') else '/' + path}"
 
 
-def portal_urls(api_base: str, eval_base: str) -> dict[str, str]:
-    urls = {name: join_url(api_base, path) for name, (path, _hint) in PORTAL_PATHS.items()}
-    urls["eval"] = eval_base.rstrip("/") + "/"
-    return urls
+def portal_urls(api_base: str) -> dict[str, str]:
+    return {name: join_url(api_base, path) for name, (path, _hint) in PORTAL_PATHS.items()}
 
 
-def portal_catalog(api_base: str, eval_base: str) -> list[tuple[str, str, str]]:
-    urls = portal_urls(api_base, eval_base)
-    rows = [
-        (name, urls[name], hint)
-        for name, (_path, hint) in PORTAL_PATHS.items()
-    ]
-    rows.append(("eval", urls["eval"], "TREC / smoke benchmark UI (starts separately)"))
-    return rows
+def portal_catalog(api_base: str) -> list[tuple[str, str, str]]:
+    urls = portal_urls(api_base)
+    return [(name, urls[name], hint) for name, (_path, hint) in PORTAL_PATHS.items()]
 
 
 def http_json(
@@ -85,7 +77,23 @@ def probe(url: str, *, timeout: float = 2.0, params: dict[str, Any] | None = Non
         return {"ok": False, "status": None, "error": str(exc)}
 
 
-def collect_status(api_base: str, eval_base: str, org_id: str) -> dict[str, Any]:
+def paper_eval_status() -> dict[str, Any]:
+    from benchmarks.trec_cds2016.contract import PACKAGE_ROOT
+    from benchmarks.trec_cds2016.nist import NIST_DIR, NIST_FILES
+
+    nist = {name: (NIST_DIR / name).is_file() for name in NIST_FILES}
+    runs = sorted(path.name for path in (PACKAGE_ROOT / "runs").glob("*.run"))
+    scores = sorted(path.name for path in (PACKAGE_ROOT / "scores").glob("*.json"))
+    return {
+        "nist_dir": str(NIST_DIR),
+        "nist_files": nist,
+        "nist_complete": all(nist.values()),
+        "runs": runs,
+        "scores": scores,
+    }
+
+
+def collect_status(api_base: str, org_id: str) -> dict[str, Any]:
     api = probe(join_url(api_base, "/health"))
     naive = probe(join_url(api_base, "/api/v1/naive/ready")) if api.get("ok") else {"ok": False, "error": "api_down"}
     storage = (
@@ -93,16 +101,16 @@ def collect_status(api_base: str, eval_base: str, org_id: str) -> dict[str, Any]
         if api.get("ok")
         else {"ok": False, "error": "api_down"}
     )
-    eval_health = probe(join_url(eval_base, "/health"))
+    llm = probe(os.environ.get("MEDSWIN_LLM_HEALTH", "http://127.0.0.1:8000/health"))
     return {
         "api_base": api_base,
-        "eval_base": eval_base,
         "org_id": org_id,
         "api": api,
         "naive_ready": naive,
         "storage": storage,
-        "eval": eval_health,
-        "portals": portal_urls(api_base, eval_base),
+        "local_llm": llm,
+        "paper_eval": paper_eval_status(),
+        "portals": portal_urls(api_base),
     }
 
 
@@ -110,11 +118,13 @@ def format_status(snapshot: dict[str, Any]) -> str:
     api = snapshot.get("api") or {}
     naive = snapshot.get("naive_ready") or {}
     storage = snapshot.get("storage") or {}
-    eval_health = snapshot.get("eval") or {}
+    llm = snapshot.get("local_llm") or {}
+    paper = snapshot.get("paper_eval") or {}
     api_body = api.get("body") if isinstance(api.get("body"), dict) else {}
     naive_body = naive.get("body") if isinstance(naive.get("body"), dict) else {}
     stats = storage.get("body") if isinstance(storage.get("body"), dict) else {}
     sources = stats.get("source_counts") or {}
+    nist = paper.get("nist_files") or {}
     lines = [
         f"API            : {'up' if api.get('ok') else 'down'}  {snapshot.get('api_base')}",
         f"  cloud_mode   : {api_body.get('cloud_mode', '-')}",
@@ -132,29 +142,33 @@ def format_status(snapshot: dict[str, Any]) -> str:
         f"LIT={sources.get('LIT', 0)} SAFETY={sources.get('SAFETY', 0)}",
         f"  index        : exists={stats.get('index_exists', '-')} "
         f"provenance={stats.get('index_provenance_valid', '-')}",
-        f"Eval portal    : {'up' if eval_health.get('ok') else 'down'}  {snapshot.get('eval_base')}",
+        f"Local 7B       : {'up' if llm.get('ok') else 'down'}",
+        f"paper-eval NIST: {'ready' if paper.get('nist_complete') else 'missing'}  "
+        f"{sum(1 for ok in nist.values() if ok)}/{len(nist) or 4}",
+        f"  runs         : {', '.join(paper.get('runs') or []) or '-'}",
+        f"  scores       : {', '.join(paper.get('scores') or []) or '-'}",
     ]
     if naive_body.get("chunk_count") and not naive_body.get("embedded_count"):
-        lines.append("  warning      : chunks exist but 0 embeddings — refresh before asking or evaluating")
+        lines.append("  warning      : chunks exist but 0 embeddings — refresh before asking")
     if stats.get("index_exists") is False:
         lines.append("  warning      : ANN index is missing — naive will fall back to mongo_cosine")
     return "\n".join(lines)
 
 
-def format_portals(api_base: str, eval_base: str) -> str:
+def format_portals(api_base: str) -> str:
     lines = ["Portals"]
-    for name, url, hint in portal_catalog(api_base, eval_base):
+    for name, url, hint in portal_catalog(api_base):
         lines.append(f"  {name:12} {url}")
         lines.append(f"               {hint}")
     return "\n".join(lines)
 
 
-def open_portal(name: str, api_base: str, eval_base: str) -> str:
-    urls = portal_urls(api_base, eval_base)
+def open_portal(name: str, api_base: str) -> str:
+    urls = portal_urls(api_base)
     if name == "all":
-        for key in ("clinician", "dashboard", "eval", "docs"):
+        for key in ("clinician", "dashboard", "docs"):
             webbrowser.open(urls[key])
-        return "opened clinician, dashboard, eval, docs"
+        return "opened clinician, dashboard, docs"
     if name not in urls:
         known = ", ".join(sorted(urls))
         raise ValueError(f"Unknown portal {name!r}. Choose: {known}, all")
@@ -242,17 +256,4 @@ def ensure_api(api_base: str, *, host: str, port: int) -> str:
     )
     if not wait_healthy(join_url(api_base, "/health"), timeout_s=60):
         raise RuntimeError(f"API at {api_base} did not become healthy (pid {pid}). See logs/medswin-api.log")
-    return "started"
-
-
-def ensure_eval(eval_base: str, *, host: str, port: int) -> str:
-    if probe(join_url(eval_base, "/health")).get("ok"):
-        return "reused"
-    pid = spawn_uvicorn(
-        ["eval.app.main:app", "--host", host, "--port", str(port)],
-        pid_path=EVAL_PID_PATH,
-        log_path=LOG_DIR / "medswin-eval.log",
-    )
-    if not wait_healthy(join_url(eval_base, "/health"), timeout_s=30):
-        raise RuntimeError(f"Eval portal at {eval_base} did not become healthy (pid {pid}). See logs/medswin-eval.log")
     return "started"

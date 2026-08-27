@@ -1,9 +1,10 @@
-"""MedSwin local operator: ask, compare, evaluate, and open portals."""
+"""MedSwin local operator: ask, compare, and open portals."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import textwrap
 from types import SimpleNamespace
@@ -15,11 +16,10 @@ import httpx
 from app.cli.prompt import MODES, run_once
 from app.cli.surfaces import (
     DEFAULT_API,
-    DEFAULT_EVAL,
+    LLM_PID_PATH,
     ROOT,
     collect_status,
     ensure_api,
-    ensure_eval,
     format_portals,
     format_status,
     http_json,
@@ -27,20 +27,17 @@ from app.cli.surfaces import (
     open_portal,
     stop_pid,
     API_PID_PATH,
-    EVAL_PID_PATH,
 )
 
-SMOKE_CASES = ROOT / "eval" / "data" / "sample" / "cases.jsonl"
 MENU = """
   1  ask full          Full MedSwin (MAC + gate)
   2  ask naive         Naive-RAG control
   3  ask both          Side-by-side compare
   4  open clinician    Clinician CDS UI
   5  open dashboard    Ops / corpus dashboard
-  6  open eval         Benchmark UI (starts it if needed)
-  7  eval run          Smoke or TREC compare on the API
-  8  index             Refresh embeddings and rebuild ANN
-  9  status            Refresh health / corpus
+  6  paper-eval        Last T1 run / score paths
+  7  index             Refresh embeddings and rebuild ANN
+  8  status            Refresh health / corpus
   h  help              This menu
   q  quit              Leave servers running
 """
@@ -55,18 +52,18 @@ def _parser() -> argparse.ArgumentParser:
             """
             Commands
               console   Interactive operator (default)
-              up        Start API (+ optional eval) and print / open portals
+              up        Start API and print / open portals
               ask       One question or the prompt REPL
-              eval      Start the eval portal, or run a benchmark
               open      Open a web portal in the browser
-              status    API, naive ready, corpus, eval
+              status    API, naive ready, corpus, paper-eval
               index     Refresh embeddings and rebuild the ANN index
-              stop      Stop API / eval processes this operator started
+              stop      Stop API / local-LLM processes this operator started
 
             Typical session
               ./scripts/start-local.sh
               → console starts the API, prints portal URLs, waits for a command
-              → type a clinical question, or `open clinician`, or `eval run`
+              → type a clinical question, or `open clinician`
+              Publication numbers: ./scripts/start-local.sh paper-eval
             """
         ),
     )
@@ -74,13 +71,11 @@ def _parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="console",
-        choices=("console", "up", "ask", "eval", "open", "status", "index", "stop"),
+        choices=("console", "up", "ask", "open", "status", "index", "stop"),
     )
     parser.add_argument("--base-url", default=DEFAULT_API)
-    parser.add_argument("--eval-url", default=DEFAULT_EVAL)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8100)
-    parser.add_argument("--eval-port", type=int, default=8200)
     parser.add_argument("--mode", choices=MODES, default="both")
     parser.add_argument("--question", default="")
     parser.add_argument("--org-id", default="demo-org")
@@ -92,12 +87,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--open", dest="open_browser", action="store_true")
     parser.add_argument("--no-open", dest="open_browser", action="store_false")
-    parser.add_argument("--with-eval", action="store_true", help="Also start the eval portal")
     parser.add_argument("--portal", default="clinician", help="Portal name for `open`")
-    parser.add_argument("--pipeline", choices=("medswin", "naive_rag", "both"), default="both")
-    parser.add_argument("--cases-path", default=str(SMOKE_CASES))
-    parser.add_argument("--max-cases", type=int, default=2)
-    parser.add_argument("--eval-action", choices=("ui", "run"), default="ui")
+    parser.add_argument("--stop-mongo", action="store_true")
     parser.set_defaults(open_browser=None)
     return parser
 
@@ -127,18 +118,14 @@ def _prompt_args(args: argparse.Namespace) -> SimpleNamespace:
     )
 
 
-def _print(text: str) -> None:
-    print(text)
-
-
 def cmd_status(args: argparse.Namespace) -> int:
-    snapshot = collect_status(args.base_url, args.eval_url, args.org_id)
+    snapshot = collect_status(args.base_url, args.org_id)
     if args.json:
         print(json.dumps(snapshot, indent=2, default=str))
         return 0
     print(format_status(snapshot))
     print()
-    print(format_portals(args.base_url, args.eval_url))
+    print(format_portals(args.base_url))
     return 0 if (snapshot.get("api") or {}).get("ok") else 1
 
 
@@ -146,23 +133,16 @@ def cmd_up(args: argparse.Namespace) -> int:
     api_host, api_port = _host_port(args.base_url, args.port)
     api_state = ensure_api(args.base_url, host=args.host or api_host, port=args.port or api_port)
     print(f"API {api_state}: {args.base_url}")
-    if args.with_eval:
-        eval_host, eval_port = _host_port(args.eval_url, args.eval_port)
-        eval_state = ensure_eval(args.eval_url, host=eval_host, port=eval_port)
-        print(f"Eval {eval_state}: {args.eval_url}")
     print()
-    print(format_portals(args.base_url, args.eval_url))
+    print(format_portals(args.base_url))
     print()
     cmd_status(args)
     should_open = True if args.open_browser is None else args.open_browser
     if args.command == "up" and args.open_browser is None:
         should_open = True
     if should_open:
-        opened = ["clinician", "dashboard"]
-        if args.with_eval:
-            opened.append("eval")
-        for name in opened:
-            print(f"Opening {open_portal(name, args.base_url, args.eval_url)}")
+        for name in ("clinician", "dashboard"):
+            print(f"Opening {open_portal(name, args.base_url)}")
     return 0
 
 
@@ -178,11 +158,12 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 
 def cmd_open(args: argparse.Namespace) -> int:
-    if args.portal in {"eval", "all"}:
-        ensure_eval(args.eval_url, host=_host_port(args.eval_url, args.eval_port)[0], port=args.eval_port)
-    elif args.portal != "eval":
+    if args.portal != "eval":
         ensure_api(args.base_url, host=args.host, port=args.port)
-    print(open_portal(args.portal, args.base_url, args.eval_url))
+    if args.portal == "eval":
+        print("The MSAS eval portal is removed. Use ./scripts/start-local.sh paper-eval")
+        return 1
+    print(open_portal(args.portal, args.base_url))
     return 0
 
 
@@ -218,67 +199,29 @@ def cmd_index(args: argparse.Namespace) -> int:
     return 0 if status < 400 else 1
 
 
-def cmd_eval(args: argparse.Namespace) -> int:
-    ensure_api(args.base_url, host=args.host, port=args.port)
-    if args.eval_action == "ui":
-        eval_host, eval_port = _host_port(args.eval_url, args.eval_port)
-        state = ensure_eval(args.eval_url, host=eval_host, port=eval_port)
-        print(f"Eval portal {state}: {args.eval_url}")
-        if args.open_browser is not False:
-            print(open_portal("eval", args.base_url, args.eval_url))
-        return 0
-
-    from eval.app.config import Settings as EvalSettings
-    from eval.app.runner import run_benchmark_sync
-    from eval.app.schemas import RunRequest
-
-    cases_path = args.cases_path
-    if not cases_path:
-        cases_path = str(SMOKE_CASES)
-    print(f"Running eval pipeline={args.pipeline} cases={cases_path} max_cases={args.max_cases}")
-    settings = EvalSettings(
-        medswin_base_url=args.base_url,
-        benchmark_org_id=os_benchmark_org(),
-        benchmark_user_id=args.user_id,
-    )
-    request = RunRequest(
-        cases_path=cases_path,
-        max_cases=args.max_cases,
-        pipeline=args.pipeline,
-        top_k=args.top_k or 5,
-        ingest_case_context=True,
-    )
-    try:
-        run = run_benchmark_sync(request, settings)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Evaluation failed: {exc}", file=sys.stderr)
-        return 1
-    if args.json:
-        print(json.dumps(run.model_dump(), indent=2, default=str))
-        return 0
-    print(f"run_id={run.run_id}")
-    print(f"pipeline={run.config.get('pipeline')}")
-    print(f"aggregate={run.aggregate}")
-    comparison = (run.diagnostics or {}).get("pipeline_comparison")
-    if comparison:
-        print(f"naive_run_id={comparison.get('naive_run_id')}")
-        print(f"delta={comparison.get('delta_medswin_minus_naive')}")
-    print(f"Open the eval portal to inspect the audit: {args.eval_url}")
+def cmd_paper_eval_status(args: argparse.Namespace) -> int:
+    snapshot = collect_status(args.base_url, args.org_id)
+    paper = snapshot.get("paper_eval") or {}
+    print("paper-eval")
+    print(f"  NIST complete : {paper.get('nist_complete')}")
+    print(f"  runs          : {', '.join(paper.get('runs') or []) or '-'}")
+    print(f"  scores        : {', '.join(paper.get('scores') or []) or '-'}")
+    print("  command       : ./scripts/start-local.sh paper-eval")
     return 0
-
-
-def os_benchmark_org() -> str:
-    import os
-
-    return os.environ.get("BENCHMARK_ORG_ID", "bench-org")
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
     stopped = []
-    if stop_pid(EVAL_PID_PATH):
-        stopped.append("eval")
+    if stop_pid(LLM_PID_PATH):
+        stopped.append("local-llm")
     if stop_pid(API_PID_PATH):
         stopped.append("api")
+    if args.stop_mongo:
+        try:
+            subprocess.run(["docker", "compose", "stop", "mongodb"], cwd=str(ROOT), check=False)
+            stopped.append("mongodb")
+        except Exception as exc:  # noqa: BLE001
+            print(f"Could not stop Compose Mongo: {exc}", file=sys.stderr)
     if stopped:
         print("Stopped: " + ", ".join(stopped))
     else:
@@ -323,7 +266,7 @@ def cmd_console(args: argparse.Namespace) -> int:
         if key in {"h", "help", "menu", "?"}:
             print(MENU)
             continue
-        if key in {"9", "status"}:
+        if key in {"8", "9", "status"}:
             cmd_status(args)
             continue
         if key in {"1", "ask full", "full"}:
@@ -352,19 +295,10 @@ def cmd_console(args: argparse.Namespace) -> int:
             args.portal = "dashboard"
             cmd_open(args)
             continue
-        if key in {"6", "open eval", "eval ui"}:
-            args.portal = "eval"
-            args.eval_action = "ui"
-            cmd_eval(args)
+        if key in {"6", "paper-eval", "eval"}:
+            cmd_paper_eval_status(args)
             continue
-        if key in {"7", "eval", "eval run"}:
-            args.eval_action = "run"
-            try:
-                cmd_eval(args)
-            except Exception as exc:  # noqa: BLE001
-                print(f"Eval failed: {exc}")
-            continue
-        if key in {"8", "index", "rebuild"}:
+        if key in {"7", "index", "rebuild"}:
             cmd_index(args)
             continue
         if key.startswith("open "):
@@ -418,7 +352,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         "console": cmd_console,
         "up": cmd_up,
         "ask": cmd_ask,
-        "eval": cmd_eval,
         "open": cmd_open,
         "status": cmd_status,
         "index": cmd_index,

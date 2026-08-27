@@ -78,7 +78,7 @@ def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
     """Render bounded specialist context.
 
     Normal application behavior retains the historical 12 × 1,200-character
-    envelope. The strict full-evaluation command sets the same smaller envelope
+    envelope. paper-eval sets the same smaller envelope
     for *both* local MedSwin and Foundry GPT child processes so generator
     comparisons do not silently give the larger-context model more evidence.
     """

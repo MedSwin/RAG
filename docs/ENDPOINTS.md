@@ -13,7 +13,7 @@ The production data contract is tenant scoped. Any route that reads or mutates c
 | `GET` | `/app/` | Clinician CDS UI |
 | `GET` | `/docs` | OpenAPI |
 
-Cloud startup validates the provider configuration before serving traffic. Strict `full-eval` adds live Foundry/model/corpus probes before the matrix starts.
+Cloud startup validates the provider configuration before serving traffic. `paper-eval` warmup performs the stronger live Foundry/model/corpus probes before a publication run.
 
 ## MedSwin (`/api/v1/medswin`)
 
@@ -57,7 +57,7 @@ The control is intentionally: query embedding → dense ANN top-K → shared-bud
 
 ## Storage and indexing (`/api/v1/storage`)
 
-The online application keeps one shared HNSW artifact containing active vectors from all ordinary tenants; ANN labels are resolved through tenant-filtered Mongo queries. The strict publication benchmark uses isolated artifact paths and its separate streaming full-corpus builder.
+The online application keeps one shared HNSW artifact containing active vectors from all ordinary tenants; ANN labels are resolved through tenant-filtered Mongo queries. `paper-eval` uses isolated artifact paths and its separate streaming full-corpus builder.
 
 ### `POST /storage/chunks`
 
@@ -92,7 +92,7 @@ Refreshes stale vectors for one tenant without publishing a tenant-only ANN. A g
 
 ### `POST /storage/index/build`
 
-Rebuilds the one ordinary global HNSW artifact from all active vectors. The builder refuses oversized in-memory corpora (`STORAGE_IN_MEMORY_INDEX_MAX_VECTORS`, default 250000); large publication corpora must use `full-eval`'s streaming builder.
+Rebuilds the one ordinary global HNSW artifact from all active vectors. The builder refuses oversized in-memory corpora (`STORAGE_IN_MEMORY_INDEX_MAX_VECTORS`, default 250000); the 1.25M TREC corpus must use `paper-eval`'s streaming builder.
 
 ```json
 {"force_rebuild":true}
@@ -156,17 +156,17 @@ Cloud mode uses a local `tiktoken` tokenizer for chunk accounting, so these endp
 
 ## Dashboard (`/api/v1/dashboard`)
 
-Operations/dashboard routes remain separate from clinician CDS. Dataset preloading can be disabled with `DISABLE_DATASET_PRELOAD=true`; the strict matrix always disables it to avoid benchmark noise.
+Operations/dashboard routes remain separate from clinician CDS. Dataset preloading can be disabled with `DISABLE_DATASET_PRELOAD=true`; paper-eval disables it to avoid benchmark noise.
 
 ## Evaluation
 
-The normal eval FastAPI harness listens on 8200. It is suitable for smoke/debug runs. Complete publication evaluation must use:
+There is no `:8200` eval service. Official TREC CDS 2016 evaluation is:
 
 ```bash
-./scripts/start-local.sh full-eval
+./scripts/start-local.sh paper-eval
 ```
 
-That command prepares/verifies the complete TREC CDS 2016 runtime and executes all four 30-topic cells. See `eval/FULL_EVALUATION.md`.
+T1 is a LIT-only retriever exporter (not `/chat`). T3/T4 use the product chat path on `FULL_EVAL_API_PORT` (default 8110). See [PAPER_EVAL.md](PAPER_EVAL.md).
 
 ## Authentication
 

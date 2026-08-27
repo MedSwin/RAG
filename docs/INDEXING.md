@@ -93,7 +93,7 @@ After a successful build, `GET /api/v1/storage/stats?org_id=…` should show:
 - `total_vectors` matching `active_embeddings`
 - LIT source counts > 0 for a literature benchmark
 
-The eval runner (`eval/app/runner.py`) fails the run if those provenance checks fail.
+`paper-eval` prepare/verify fails closed if those provenance checks fail. Ordinary chat does not run that verifier.
 
 `POST /api/v1/storage/benchmark/reset` clears a benchmark org (default `bench-org`) and optionally deletes index files before a fresh TREC ingest.
 
@@ -106,7 +106,7 @@ The eval runner (`eval/app/runner.py`) fails the run if those provenance checks 
 - always `org_id`
 - `source_type` when `guideline_only` / `source_policy` is CPG/EMR/LIT/SAFETY
 - `patient_id` on EMR
-- `min_evidence_grade` when the client sends it (eval default 0.3)
+- `min_evidence_grade` when the client sends it (T3 packs use the product default)
 
 Naive-RAG applies the same filter. That is intentional: the control must not see another org’s chunks.
 
