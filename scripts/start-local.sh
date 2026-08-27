@@ -257,8 +257,28 @@ export EVAL_WARMUP_ON_START="${EVAL_WARMUP_ON_START:-false}"
 export BENCHMARK_ORG_ID="${BENCHMARK_ORG_ID:-bench-org}"
 
 need_full_bootstrap() {
+    # warmup / official scoring only need the venv + NIST tools, not Mongo or torch.
     case "$COMMAND" in
-        stop|status|open|eval) return 1 ;;
+        stop|status|open|eval|warmup) return 1 ;;
+        paper-eval|full-eval)
+            if [[ "$STAGE" == "warmup" || "$STAGE" == "score" ]]; then
+                return 1
+            fi
+            return 0
+            ;;
+        *) return 0 ;;
+    esac
+}
+
+needs_mongo() {
+    case "$COMMAND" in
+        stop|status|open|eval|warmup) return 1 ;;
+        paper-eval|full-eval)
+            if [[ "$STAGE" == "warmup" || "$STAGE" == "score" ]]; then
+                return 1
+            fi
+            return 0
+            ;;
         *) return 0 ;;
     esac
 }
@@ -330,7 +350,9 @@ if need_full_bootstrap; then
         pip install 'ir-datasets==0.5.9'
     fi
 
-    ensure_mongo
+    if needs_mongo; then
+        ensure_mongo
+    fi
 
     mkdir -p models data logs storage
     export EMBEDDING_MODEL_PATH="${EMBEDDING_MODEL_PATH:-./models/MedEmbed-large-v0.1}"

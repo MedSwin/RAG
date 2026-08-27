@@ -15,6 +15,9 @@ def test_start_local_usage_lists_paper_eval_examples():
     assert "EVAL_WARMUP_ON_START:-false" in text
     assert "ensure_eval" not in text
     assert "EVAL_PORT" not in text
+    assert "needs_mongo()" in text
+    assert 'stop|status|open|eval|warmup) return 1' in text
+    assert '"$STAGE" == "warmup" || "$STAGE" == "score"' in text
 
 
 def test_warmup_downloads_nist_and_skips_hf_by_default():

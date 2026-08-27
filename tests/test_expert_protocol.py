@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 from benchmarks.expert.claims import CLAIM_CAP, attach_citations, split_claims
 from benchmarks.expert.kappa import cohen_kappa, randolph_kappa
 from benchmarks.expert.schema import Confusion2x2, score_action
@@ -37,3 +40,14 @@ def test_t3_query_is_type_question_only():
     topic = CdsTopic(1, "treatment", "long note", "description", "summary")
     assert topic.t3_query() == "How should the patient be treated?"
     assert topic.patient_id == "trec-cds-1"
+
+
+def test_t4_fails_closed_without_packs(tmp_path):
+    result = subprocess.run(
+        [sys.executable, "-m", "benchmarks.expert.t4_automatic", "--packs-dir", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "T4 packs missing" in result.stderr + result.stdout

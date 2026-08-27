@@ -70,7 +70,13 @@ def main() -> int:
         "no_gate": _load_packs(args.packs_dir, "no_gate"),
         "no_mac": _load_packs(args.packs_dir, "no_mac"),
     }
-    rows = {name: summarize_condition(packs, name) for name, packs in conditions.items() if packs}
+    missing = [name for name, packs in conditions.items() if not packs]
+    if missing:
+        raise SystemExit(
+            f"T4 packs missing for {', '.join(missing)} under {args.packs_dir}. "
+            "Generate them with paper-eval --stage t4 before scoring."
+        )
+    rows = {name: summarize_condition(packs, name) for name, packs in conditions.items()}
     family: list[tuple[str, float]] = []
     if "full" in rows:
         for name in ("no_gate", "no_mac"):
