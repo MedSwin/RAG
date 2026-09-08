@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
 import time
+import zipfile
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -57,21 +59,41 @@ def _download_source(cache: Path, *, username: str, password: str) -> tuple[list
             raise RuntimeError("Could not discover exactly one BioASQ 13b golden enriched download")
         archive = client.get(urljoin(DATASETS_URL, matches[0][0]))
         archive.raise_for_status()
-        if "login" in str(archive.url).lower() or archive.content.lstrip().lower().startswith(b"<!doctype html"):
+        body = archive.content
+        if "login" in str(archive.url).lower() or body.lstrip().lower().startswith(b"<!doctype html"):
             raise RuntimeError("BioASQ download resolved to authentication HTML")
-        try:
-            payload = archive.json()
-        except ValueError as exc:
-            raise RuntimeError("BioASQ golden enriched download is not JSON") from exc
+        payload = _parse_bioasq_payload(body)
     rows = payload.get("questions") if isinstance(payload, dict) else payload
     if not isinstance(rows, list):
         raise RuntimeError("BioASQ payload does not contain questions")
-    source_hash = _sha(archive.content)
+    source_hash = _sha(body)
     cache.mkdir(parents=True, exist_ok=True)
     # Never persist the redistributable source archive. The derived immutable
     # manifest records only its hash and the selected-question metadata.
     atomic_json(cache / "source.manifest.json", {"edition": "13b", "kind": "golden enriched", "source_sha256": source_hash})
     return rows, source_hash
+
+
+def _parse_bioasq_payload(body: bytes) -> Any:
+    """Parse BioASQ golden-enriched payload from raw JSON or a ZIP archive."""
+    stripped = body.lstrip()
+    if stripped[:1] in (b"{", b"["):
+        try:
+            return json.loads(body)
+        except ValueError as exc:
+            raise RuntimeError("BioASQ golden enriched download is not JSON") from exc
+    if stripped.startswith(b"PK"):
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
+            json_names = [name for name in archive.namelist() if name.lower().endswith(".json") and not name.endswith("/")]
+            if not json_names:
+                raise RuntimeError("BioASQ ZIP archive contains no JSON payload")
+            # Prefer the largest JSON member (full golden set vs tiny sidecars).
+            chosen = max(json_names, key=lambda name: archive.getinfo(name).file_size)
+            try:
+                return json.loads(archive.read(chosen))
+            except ValueError as exc:
+                raise RuntimeError(f"BioASQ ZIP member {chosen!r} is not JSON") from exc
+    raise RuntimeError("BioASQ golden enriched download is neither JSON nor ZIP")
 
 
 def deterministic_sample(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
