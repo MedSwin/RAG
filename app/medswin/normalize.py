@@ -40,6 +40,20 @@ class QueryNormalizer:
         data.setdefault("canonical_terms", [])
         data.setdefault("abbreviations", {})
         data.setdefault("retrieval_hints", {})
+        abbreviations = data.get("abbreviations") or {}
+        if isinstance(abbreviations, dict):
+            cleaned: Dict[str, str] = {}
+            for key, value in abbreviations.items():
+                if isinstance(value, list):
+                    value = next((str(item).strip() for item in value if str(item).strip()), "")
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if text:
+                    cleaned[str(key)] = text
+            data["abbreviations"] = cleaned
+        else:
+            data["abbreviations"] = {}
         try:
             data["clinical_scope"] = ClinicalScope(data.get("clinical_scope")).value
         except (TypeError, ValueError):

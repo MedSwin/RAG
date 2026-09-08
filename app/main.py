@@ -76,8 +76,8 @@ def _validate_cloud_configuration() -> None:
         missing.append("CLOUD_RERANKER_URI or AZURE_AI_FOUNDRY_ENDPOINT")
     backend, model = _active_generation_identity()
     if backend == "foundry":
-        if not str(settings.FOUNDRY_ENDPOINT or settings.AZURE_AI_FOUNDRY_ENDPOINT or "").strip():
-            missing.append("FOUNDRY_ENDPOINT or AZURE_AI_FOUNDRY_ENDPOINT")
+        if not str(settings.AZURE_AI_FOUNDRY_ENDPOINT or "").strip():
+            missing.append("AZURE_AI_FOUNDRY_ENDPOINT")
         if not str(model or "").strip():
             missing.append("FOUNDRY_MODEL")
     if missing:
@@ -225,7 +225,13 @@ async def health_check():
 
         generation_backend, generation_model = _active_generation_identity()
         if settings.CLOUD_MODE:
-            refresh = StorageService().get_embedding_refresh_status()
+            storage = StorageService()
+            refresh = storage.get_embedding_refresh_status()
+            try:
+                stats = await storage.get_storage_stats()
+                index_ready = bool(stats.get("index_exists")) and bool(stats.get("index_provenance_valid", True))
+            except Exception:  # noqa: BLE001
+                index_ready = False
             return {
                 "status": "healthy",
                 "contract_version": "2.0",
@@ -240,7 +246,7 @@ async def health_check():
                 "reranker_model": settings.CLOUD_RERANKER,
                 "active_embedding_space": settings.active_embedding_space(),
                 "active_embedding_dimension": settings.active_embedding_dimension(),
-                "active_index_ready": refresh.get("ready", False),
+                "active_index_ready": index_ready,
                 "embedding_refresh": refresh,
                 "dataset_preload_disabled": _disabled("DISABLE_DATASET_PRELOAD"),
                 "database": "connected",

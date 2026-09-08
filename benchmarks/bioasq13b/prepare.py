@@ -21,7 +21,9 @@ from benchmarks.system_eval.contracts import SAMPLING_ALGORITHM_VERSION
 LOGIN_URL = "https://participants-area.bioasq.org/accounts/login/"
 DATASETS_URL = "https://participants-area.bioasq.org/datasets/"
 CSRF = re.compile(r'<input[^>]+name=["\']csrf(?:middleware)?token["\'][^>]+value=["\']([^"\']+)', re.I)
-LINK = re.compile(r'href=["\']([^"\']+)["\'][^>]*>([^<]*13b[^<]*golden[^<]*enriched[^<]*)<', re.I)
+# Prefer Training 13b (≈5.3k questions). The "13b golden enriched" release is the
+# small test set (~85 questions) and cannot support the 30-per-type sample.
+LINK = re.compile(r'href=["\']([^"\']+)["\'][^>]*>([^<]*Training[^<]*13b[^<]*)<', re.I)
 
 
 def _sha(data: bytes | str) -> str:
@@ -37,9 +39,20 @@ def _normalise_question(row: dict[str, Any]) -> dict[str, Any] | None:
     ideal = row.get("ideal_answer") or row.get("ideal_answers")
     if isinstance(ideal, list):
         ideal = " ".join(str(value) for value in ideal)
-    if not (qid and body and question_type in {"yesno", "factoid", "list", "summary"} and pmids and row.get("exact_answer") is not None and ideal):
+    if not (qid and body and question_type in {"yesno", "factoid", "list", "summary"} and pmids and ideal):
         return None
-    return {"id": qid, "body": body, "question_type": question_type, "pmids": sorted(set(pmids)), "exact_answer": row["exact_answer"], "ideal_answer": str(ideal), "snippets": row.get("snippets") or []}
+    # Summary items may omit exact answers; other types require an exact field.
+    if question_type != "summary" and row.get("exact_answer") is None:
+        return None
+    return {
+        "id": qid,
+        "body": body,
+        "question_type": question_type,
+        "pmids": sorted(set(pmids)),
+        "exact_answer": row.get("exact_answer"),
+        "ideal_answer": str(ideal),
+        "snippets": row.get("snippets") or [],
+    }
 
 
 def _download_source(cache: Path, *, username: str, password: str) -> tuple[list[dict[str, Any]], str]:
@@ -56,7 +69,7 @@ def _download_source(cache: Path, *, username: str, password: str) -> tuple[list
         page.raise_for_status()
         matches = LINK.findall(page.text)
         if len(matches) != 1:
-            raise RuntimeError("Could not discover exactly one BioASQ 13b golden enriched download")
+            raise RuntimeError("Could not discover exactly one BioASQ Training 13b download")
         archive = client.get(urljoin(DATASETS_URL, matches[0][0]))
         archive.raise_for_status()
         body = archive.content
@@ -70,30 +83,30 @@ def _download_source(cache: Path, *, username: str, password: str) -> tuple[list
     cache.mkdir(parents=True, exist_ok=True)
     # Never persist the redistributable source archive. The derived immutable
     # manifest records only its hash and the selected-question metadata.
-    atomic_json(cache / "source.manifest.json", {"edition": "13b", "kind": "golden enriched", "source_sha256": source_hash})
+    atomic_json(cache / "source.manifest.json", {"edition": "13b", "kind": "training", "source_sha256": source_hash})
     return rows, source_hash
 
 
 def _parse_bioasq_payload(body: bytes) -> Any:
-    """Parse BioASQ golden-enriched payload from raw JSON or a ZIP archive."""
+    """Parse BioASQ training/golden payload from raw JSON or a ZIP archive."""
     stripped = body.lstrip()
     if stripped[:1] in (b"{", b"["):
         try:
             return json.loads(body)
         except ValueError as exc:
-            raise RuntimeError("BioASQ golden enriched download is not JSON") from exc
+            raise RuntimeError("BioASQ download is not JSON") from exc
     if stripped.startswith(b"PK"):
         with zipfile.ZipFile(io.BytesIO(body)) as archive:
             json_names = [name for name in archive.namelist() if name.lower().endswith(".json") and not name.endswith("/")]
             if not json_names:
                 raise RuntimeError("BioASQ ZIP archive contains no JSON payload")
-            # Prefer the largest JSON member (full golden set vs tiny sidecars).
+            # Prefer the largest JSON member (full set vs tiny sidecars).
             chosen = max(json_names, key=lambda name: archive.getinfo(name).file_size)
             try:
                 return json.loads(archive.read(chosen))
             except ValueError as exc:
                 raise RuntimeError(f"BioASQ ZIP member {chosen!r} is not JSON") from exc
-    raise RuntimeError("BioASQ golden enriched download is neither JSON nor ZIP")
+    raise RuntimeError("BioASQ download is neither JSON nor ZIP")
 
 
 def deterministic_sample(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
