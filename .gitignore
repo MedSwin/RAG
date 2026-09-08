@@ -22,6 +22,7 @@ model/
 
 # Environment
 .env*
+.plan*
 .rag_vevn/
 
 # Key
@@ -30,7 +31,9 @@ key/
 # Docs
 docs/MedSwin.tex
 
-# Official TREC downloads and paper-eval outputs
+# System-evaluation downloads and generated output
+artifacts/system-eval/
+data/system-eval/
 benchmarks/trec_cds2016/nist/*.xml
 benchmarks/trec_cds2016/nist/*.txt
 benchmarks/trec_cds2016/nist/*.pl
@@ -60,3 +63,6 @@ benchmarks/expert/packs/
 __pycache__*
 .pytest_cache*
 .venv*
+web/node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo

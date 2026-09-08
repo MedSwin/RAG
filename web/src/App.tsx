@@ -44,18 +44,20 @@ function ResultPanel({
   const contradictions: Contradiction[] =
     response?.contradictions || response?.contradiction_ledger?.pairs || [];
   const citations = response?.citations || [];
+  const artifact = response?.answer_artifact || {};
+  const rankingDepth = (response?.ranked_evidence || []).length;
 
   return (
     <div className="result">
       {title ? <h2>{title}</h2> : null}
       <div className={`chip ${action}`}>{String(action).replaceAll("_", " ")}</div>
       <p className="meta" style={{ marginTop: 10 }}>
-        {response.pipeline || "medswin"} · {response.retrieval_backend || "n/a"} · trace{" "}
-        {response.trace_id} · {citations.length} citations · uncertainty{" "}
+        {response.pipeline || "-"} · generator {response.generator_profile || "-"} · {response.retrieval_backend || "n/a"} · trace{" "}
+        {response.trace_id} · {citations.length} citations · rank depth {rankingDepth} · abstained {String(Boolean(artifact.abstained))} · uncertainty{" "}
         {response.uncertainty_level || "n/a"}
       </p>
       <p className="answer" style={{ marginTop: 16 }}>
-        {response.answer}
+        {artifact.rendered_text || response.answer}
       </p>
 
       <div style={{ marginTop: 22 }}>
@@ -165,7 +167,7 @@ export function App() {
   const [patientId, setPatientId] = useState("");
   const [orgId, setOrgId] = useState("demo-org");
   const [userId, setUserId] = useState("clinician-1");
-  const [pipeline, setPipeline] = useState<Pipeline>("full");
+  const [pipeline, setPipeline] = useState<Pipeline>("all");
   const [topK, setTopK] = useState(5);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -175,7 +177,7 @@ export function App() {
   const portals = portalUrls();
 
   const buttonLabel =
-    pipeline === "naive" ? "Ask naive-RAG" : pipeline === "both" ? "Compare both" : "Ask MedSwin";
+    pipeline === "naive" ? "Ask naive-RAG" : pipeline === "two-stage" ? "Ask two-stage" : pipeline === "all" ? "Compare all" : "Ask full MedSwin";
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -190,10 +192,10 @@ export function App() {
         user_id: userId,
         org_id: orgId,
         patient_id: patientId || undefined,
-        top_k: pipeline === "full" ? undefined : topK,
+        top_k: pipeline === "naive" ? topK : undefined,
       };
       const data = await runChat(pipeline, payload);
-      if (pipeline === "both") {
+      if (pipeline === "all") {
         setCompare(data);
       } else {
         setResponse(data);
@@ -218,7 +220,7 @@ export function App() {
         <h1>MedSwin</h1>
         <p>
           Evidence-gated clinician decision support. Run the full system, the
-          naive-RAG control, or both, then inspect the audit on this page.
+          naive, two-stage, and full clinician decision support, with a common audit surface.
         </p>
         <nav className="nav">
           <a href={portals.clinician}>Clinician CDS</a>
@@ -235,8 +237,9 @@ export function App() {
             {(
               [
                 ["full", "Full MedSwin"],
+                ["two-stage", "Two-stage"],
                 ["naive", "Naive RAG"],
-                ["both", "Compare both"],
+                ["all", "Compare all"],
               ] as const
             ).map(([value, label]) => (
               <label key={value} className={pipeline === value ? "on" : ""}>
@@ -270,7 +273,7 @@ export function App() {
           <input id="org" value={orgId} onChange={(e) => setOrgId(e.target.value)} />
           <label htmlFor="user">User</label>
           <input id="user" value={userId} onChange={(e) => setUserId(e.target.value)} />
-          {pipeline !== "full" ? (
+          {pipeline === "naive" ? (
             <>
               <label htmlFor="topk">Naive top-K</label>
               <input
@@ -294,12 +297,13 @@ export function App() {
           {compare ? (
             <>
               <div className="compare-grid">
-                <ResultPanel title="Naive RAG" response={compare.naive || {}} />
-                <ResultPanel title="Full MedSwin" response={compare.medswin || {}} />
+                <ResultPanel title="Naive RAG" response={(compare.results || {}).naive || {}} />
+                <ResultPanel title="Two-stage" response={(compare.results || {})["two-stage"] || {}} />
+                <ResultPanel title="Full MedSwin" response={(compare.results || {}).full || {}} />
               </div>
               <div className="drawer">
                 <h2>Diff</h2>
-                <pre>{JSON.stringify(compare.diff || {}, null, 2)}</pre>
+                <pre>{JSON.stringify(compare.adjacent_diffs || {}, null, 2)}</pre>
               </div>
             </>
           ) : response ? (
@@ -307,8 +311,8 @@ export function App() {
           ) : (
             <p className="meta">
               Submit a clinical question to see the answer, evidence, and
-              sufficiency decision. Use Compare both to watch naive-RAG against
-              the gated pipeline on the same query.
+              sufficiency decision. Use Compare all to inspect every pipeline on
+              the same query.
             </p>
           )}
         </section>

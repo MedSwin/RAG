@@ -5,7 +5,7 @@ set -euo pipefail
 if [ "$#" -gt 0 ]; then
   ROOT_DIRS=("$@")
 else
-  ROOT_DIRS=(app eval lab tests)
+  ROOT_DIRS=(app eval lab tests benchmarks models web scripts)
 fi
 
 removed=0

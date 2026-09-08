@@ -50,3 +50,11 @@ class AgentRole(str, Enum):
     CRITIC = "critic"
     SYNTHESIS = "synthesis"
     RETRIEVAL = "retrieval"
+
+
+class PipelineId(str, Enum):
+    """The three supported end-to-end application pipelines."""
+
+    NAIVE = "naive"
+    TWO_STAGE = "two-stage"
+    FULL = "full"

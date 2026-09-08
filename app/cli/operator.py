@@ -31,11 +31,11 @@ from app.cli.surfaces import (
 
 MENU = """
   1  ask full          Full MedSwin (MAC + gate)
-  2  ask naive         Naive-RAG control
-  3  ask both          Side-by-side compare
-  4  open clinician    Clinician CDS UI
-  5  open dashboard    Ops / corpus dashboard
-  6  paper-eval        Last T1 run / score paths
+  2  ask two-stage     Hybrid/rerank/gate without MAC
+  3  ask naive         Naive-RAG control
+  4  ask all           Side-by-side compare
+  5  open clinician    Clinician CDS UI
+  6  open dashboard    Ops / corpus dashboard
   7  index             Refresh embeddings and rebuild ANN
   8  status            Refresh health / corpus
   h  help              This menu
@@ -55,7 +55,7 @@ def _parser() -> argparse.ArgumentParser:
               up        Start API and print / open portals
               ask       One question or the prompt REPL
               open      Open a web portal in the browser
-              status    API, naive ready, corpus, paper-eval
+              status    API, pipeline readiness, and corpus
               index     Refresh embeddings and rebuild the ANN index
               stop      Stop API / local-LLM processes this operator started
 
@@ -63,7 +63,7 @@ def _parser() -> argparse.ArgumentParser:
               ./scripts/start-local.sh
               → console starts the API, prints portal URLs, waits for a command
               → type a clinical question, or `open clinician`
-              Publication numbers: ./scripts/start-local.sh paper-eval
+              Benchmark results: ./scripts/start-local.sh system-eval
             """
         ),
     )
@@ -76,7 +76,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url", default=DEFAULT_API)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8100)
-    parser.add_argument("--mode", choices=MODES, default="both")
+    parser.add_argument("--mode", choices=MODES, default="all")
     parser.add_argument("--question", default="")
     parser.add_argument("--org-id", default="demo-org")
     parser.add_argument("--user-id", default="clinician-1")
@@ -158,11 +158,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 
 def cmd_open(args: argparse.Namespace) -> int:
-    if args.portal != "eval":
-        ensure_api(args.base_url, host=args.host, port=args.port)
-    if args.portal == "eval":
-        print("The MSAS eval portal is removed. Use ./scripts/start-local.sh paper-eval")
-        return 1
+    ensure_api(args.base_url, host=args.host, port=args.port)
     print(open_portal(args.portal, args.base_url))
     return 0
 
@@ -197,17 +193,6 @@ def cmd_index(args: argparse.Namespace) -> int:
     else:
         print(f"index HTTP {status}: {built.get('message') or built}")
     return 0 if status < 400 else 1
-
-
-def cmd_paper_eval_status(args: argparse.Namespace) -> int:
-    snapshot = collect_status(args.base_url, args.org_id)
-    paper = snapshot.get("paper_eval") or {}
-    print("paper-eval")
-    print(f"  NIST complete : {paper.get('nist_complete')}")
-    print(f"  runs          : {', '.join(paper.get('runs') or []) or '-'}")
-    print(f"  scores        : {', '.join(paper.get('scores') or []) or '-'}")
-    print("  command       : ./scripts/start-local.sh paper-eval")
-    return 0
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
@@ -275,28 +260,31 @@ def cmd_console(args: argparse.Namespace) -> int:
             if return_code:
                 print("Ask failed; console stays open.")
             continue
-        if key in {"2", "ask naive", "naive"}:
+        if key in {"2", "ask two-stage", "two-stage"}:
+            args.mode = "two-stage"
+            return_code = _ask_from_console(args)
+            if return_code:
+                print("Ask failed; console stays open.")
+            continue
+        if key in {"3", "ask naive", "naive"}:
             args.mode = "naive"
             return_code = _ask_from_console(args)
             if return_code:
                 print("Ask failed; console stays open.")
             continue
-        if key in {"3", "ask both", "both", "compare"}:
-            args.mode = "both"
+        if key in {"4", "ask all", "all", "compare"}:
+            args.mode = "all"
             return_code = _ask_from_console(args)
             if return_code:
                 print("Ask failed; console stays open.")
             continue
-        if key in {"4", "open clinician", "ui"}:
+        if key in {"5", "open clinician", "ui"}:
             args.portal = "clinician"
             cmd_open(args)
             continue
-        if key in {"5", "open dashboard", "dashboard"}:
+        if key in {"6", "open dashboard", "dashboard"}:
             args.portal = "dashboard"
             cmd_open(args)
-            continue
-        if key in {"6", "paper-eval", "eval"}:
-            cmd_paper_eval_status(args)
             continue
         if key in {"7", "index", "rebuild"}:
             cmd_index(args)
@@ -314,7 +302,7 @@ def cmd_console(args: argparse.Namespace) -> int:
                 args.mode = mode
                 print(f"Default ask mode is now {mode}")
             else:
-                print("Mode must be full, naive, or both.")
+                print("Mode must be naive, two-stage, full, or all.")
             continue
         if _looks_like_question(raw):
             args.question = raw

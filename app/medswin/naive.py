@@ -26,14 +26,16 @@ from app.repositories.traces import TraceRepository
 from app.retrieval.dense import DenseRetriever
 from app.retrieval.filters import retrieval_filter
 from app.retrieval.hybrid import HybridRetriever
-from app.schemas.enums import PolicyAction, SourceType
+from app.schemas.enums import PipelineId, PolicyAction, SourceType
 from app.schemas.evidence import (
+    AnswerArtifact,
     AnswerProvenance,
     CandidatePassage,
     EvidenceBundle,
     EvidenceClaim,
     EvidenceLedgerEntry,
     PolicyDecision,
+    RankedEvidenceItem,
 )
 from app.schemas.sessions import Session
 from app.schemas.traces import AgentMessage, AuditTrace, ChatResponse, RetrievalTrace, ToolCall
@@ -41,10 +43,11 @@ from app.scoring.utility import token_count
 from app.services.adapters.embedding import EmbeddingClient
 from app.services.adapters.llm import LLMClient
 from app.services.medswin.governance import build_citation
+from app.services.prompts.structured import extract_json_object
 
 logger = logging.getLogger(__name__)
 
-PIPELINE_ID = "naive_rag"
+PIPELINE_ID = PipelineId.NAIVE
 NAIVE_POLICY_REASON = (
     "Naive RAG does not apply an evidence-sufficiency gate. "
     "Generation always proceeds from dense top-K (or from an empty context)."
@@ -181,6 +184,7 @@ class NaiveRAGOrchestrator:
         patient_id: Optional[str] = None,
         constraints: Optional[Dict[str, Any]] = None,
         top_k: Optional[int] = None,
+        benchmark: Optional[Dict[str, Any]] = None,
     ) -> ChatResponse:
         started = time.perf_counter()
         constraints = constraints or {}
@@ -215,8 +219,9 @@ class NaiveRAGOrchestrator:
                 raise RuntimeError("Embedding service returned no vector for the query")
 
             retrieve_started = time.perf_counter()
+            ranking_depth = max(k, min(int(constraints.get("ranking_depth", 20)), settings.MAX_TOP_K))
             passages, backend, retrieval_trace = await self._retrieve(
-                query_embedding, org_id, k, patient_id, constraints
+                query_embedding, org_id, ranking_depth, patient_id, constraints
             )
             retrieve_ms = (time.perf_counter() - retrieve_started) * 1000.0
             trace.retrieval_traces.append(retrieval_trace)
@@ -224,7 +229,7 @@ class NaiveRAGOrchestrator:
             trace.tool_calls.append(
                 ToolCall(
                     tool_name="retrieval.naive_dense",
-                    parameters={"top_k": k, "backend": backend},
+                    parameters={"top_k": ranking_depth, "generation_top_k": k, "backend": backend},
                     result={"count": len(passages)},
                 )
             )
@@ -236,7 +241,7 @@ class NaiveRAGOrchestrator:
                 return await self._respond(
                     trace,
                     org_id,
-                    passages=[],
+                    passages=[], ranked_passages=[],
                     backend=backend,
                     answer=note,
                     notes=note,
@@ -248,7 +253,7 @@ class NaiveRAGOrchestrator:
                 )
 
             packed = _truncate_context(
-                passages,
+                passages[:k],
                 settings.NAIVE_MAX_CONTEXT_CHARS,
                 settings.TOKEN_BUDGET_B,
             )
@@ -268,12 +273,13 @@ class NaiveRAGOrchestrator:
                 )
             )
             generate_started = time.perf_counter()
-            answer = await self._generate(query, packed)
+            answer, benchmark_artifact = await self._generate(query, packed, benchmark=benchmark)
             generate_ms = (time.perf_counter() - generate_started) * 1000.0
             return await self._respond(
                 trace,
                 org_id,
                 passages=packed,
+                ranked_passages=passages,
                 backend=backend,
                 answer=answer,
                 notes=NAIVE_POLICY_REASON,
@@ -281,13 +287,14 @@ class NaiveRAGOrchestrator:
                 embed_ms=embed_ms,
                 retrieve_ms=retrieve_ms,
                 generate_ms=generate_ms,
+                benchmark_artifact=benchmark_artifact,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("Naive RAG failed: %s", exc, exc_info=True)
             return await self._respond(
                 trace,
                 org_id,
-                passages=[],
+                passages=[], ranked_passages=[],
                 backend="error",
                 answer=f"Naive RAG failed: {exc}",
                 notes=str(exc),
@@ -385,7 +392,9 @@ class NaiveRAGOrchestrator:
         scored.sort(key=lambda item: item.dense_score or 0.0, reverse=True)
         return scored[:k], skipped_dim
 
-    async def _generate(self, query: str, passages: List[CandidatePassage]) -> str:
+    async def _generate(
+        self, query: str, passages: List[CandidatePassage], *, benchmark: Optional[Dict[str, Any]] = None
+    ) -> tuple[str, Optional[AnswerArtifact]]:
         if passages:
             context = "\n\n".join(
                 f"[{idx}] chunk_id={passage.chunk_id} doc_id={passage.doc_id}\n{passage.text}"
@@ -409,8 +418,21 @@ class NaiveRAGOrchestrator:
             },
             {"role": "user", "content": f"Question:\n{query}\n\nPassages:\n{context}"},
         ]
+        if benchmark:
+            from app.services.prompts import benchmark as benchmark_prompt
+            messages[0]["content"] += benchmark_prompt.SYSTEM_SUFFIX
+            response = await self.llm.call_llm(messages, temperature=0.2, json_schema=benchmark_prompt.SCHEMA)
+            data = extract_json_object(str(response.get("content") or ""))
+            answer = str(data.get("answer") or "").strip() or "No answer was generated."
+            return answer, AnswerArtifact(
+                content=answer,
+                rendered_text=answer,
+                exact_answer=data.get("exact_answer"),
+                ideal_answer=" ".join(str(data.get("ideal_answer") or answer).split()[:200]),
+                cited_chunk_ids=[passage.chunk_id for passage in passages],
+            )
         response = await self.llm.call_llm(messages, temperature=0.2)
-        return str(response.get("content") or "").strip() or "No answer was generated."
+        return str(response.get("content") or "").strip() or "No answer was generated.", None
 
     async def _diagnose_corpus(
         self,
@@ -472,6 +494,7 @@ class NaiveRAGOrchestrator:
         org_id: str,
         *,
         passages: List[CandidatePassage],
+        ranked_passages: List[CandidatePassage],
         backend: str,
         answer: str,
         notes: str,
@@ -480,6 +503,7 @@ class NaiveRAGOrchestrator:
         retrieve_ms: float,
         generate_ms: float,
         degraded: Optional[Dict[str, bool]] = None,
+        benchmark_artifact: Optional[AnswerArtifact] = None,
     ) -> ChatResponse:
         if answer and not any(message.content == answer for message in trace.messages):
             trace.messages.append(AgentMessage(role="user", agent_id="naive_rag", content=trace.query))
@@ -522,6 +546,12 @@ class NaiveRAGOrchestrator:
             degraded["trace_persist"] = True
         return ChatResponse(
             answer=answer,
+            answer_artifact=benchmark_artifact or AnswerArtifact(
+                content=answer,
+                rendered_text=answer,
+                cited_chunk_ids=[p.chunk_id for p in passages],
+                abstained=False,
+            ),
             evidence_bundle=bundle,
             safety_notes=notes,
             trace_id=trace.trace_id,
@@ -533,9 +563,34 @@ class NaiveRAGOrchestrator:
             answer_provenance=provenance,
             retrieval_traces=trace.retrieval_traces,
             pipeline=PIPELINE_ID,
+            generator_profile=("cloud" if getattr(self.llm, "backend", "") == "foundry" else "medswin" if getattr(self.llm, "backend", "") == "medswin_local" else getattr(self.llm, "backend", "test")),
+            ranked_evidence=self._document_rank(ranked_passages),
             retrieval_backend=backend,
             timing_ms=timing,
         )
+
+    @staticmethod
+    def _document_rank(passages: List[CandidatePassage], depth: int = 20) -> List[RankedEvidenceItem]:
+        by_doc: Dict[str, CandidatePassage] = {}
+        for passage in passages:
+            doc_id = str(passage.doc_id or passage.chunk_id)
+            current = by_doc.get(doc_id)
+            if current is None or (passage.dense_score or 0.0) > (current.dense_score or 0.0) or (
+                (passage.dense_score or 0.0) == (current.dense_score or 0.0) and passage.chunk_id < current.chunk_id
+            ):
+                by_doc[doc_id] = passage
+        ordered = sorted(by_doc.items(), key=lambda item: (-(item[1].dense_score or 0.0), item[0]))[:depth]
+        return [
+            RankedEvidenceItem(
+                doc_id=doc_id,
+                winning_chunk_id=passage.chunk_id,
+                rank=index,
+                score=float(passage.dense_score or 0.0),
+                dense_score=passage.dense_score,
+                source_type=passage.source_type,
+            )
+            for index, (doc_id, passage) in enumerate(ordered, start=1)
+        ]
 
     def _naive_ledger(self, passages: List[CandidatePassage]) -> List[EvidenceLedgerEntry]:
         if not passages:

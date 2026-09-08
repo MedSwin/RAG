@@ -3,7 +3,7 @@
 
 This command has no sample mode and never truncates PMC article bodies before
 MedSwin's section-aware chunker. It performs the exact corpus preparation needed
-by the official paper-eval T1 runtime:
+by the MedSwin 2.0 system-evaluation runtime:
 
 * all 1,255,260 ``pmc/v2/trec-cds-2016`` documents are read;
 * title + abstract + complete body are chunked by ``app.medswin.chunking``;
@@ -153,7 +153,7 @@ def _full_text(doc: Any) -> str:
 
 
 def _topic_text(query: Any) -> str:
-    """Sidecar metadata only. T1 scoring never reads this file."""
+    """Sidecar metadata only; online system-eval ranking never reads this file."""
     for name in ("note", "summary", "description"):
         value = getattr(query, name, None)
         if value and str(value).strip():

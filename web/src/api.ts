@@ -1,6 +1,6 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "/api/v1";
 
-export type Pipeline = "full" | "naive" | "both";
+export type Pipeline = "full" | "naive" | "two-stage" | "all";
 
 export type ChatPayload = {
   query: string;
@@ -26,17 +26,14 @@ async function post(path: string, payload: ChatPayload) {
 }
 
 export async function runChat(pipeline: Pipeline, payload: ChatPayload) {
-  if (pipeline === "naive") {
-    return post("/naive/chat", payload);
-  }
-  if (pipeline === "both") {
-    return post("/naive/compare", payload);
-  }
-  return post("/medswin/chat", payload);
+  const { top_k, ...rest } = payload;
+  const body = top_k ? { ...rest, constraints: { ...(payload.constraints || {}), top_k } } : rest;
+  if (pipeline === "all") return post("/pipelines/compare", body);
+  return post(`/pipelines/${pipeline}/chat`, body);
 }
 
 export async function getTrace(traceId: string, orgId: string) {
-  const url = new URL(`${API_BASE}/medswin/traces/${traceId}`, window.location.origin);
+  const url = new URL(`${API_BASE}/pipelines/traces/${traceId}`, window.location.origin);
   url.searchParams.set("org_id", orgId);
   url.searchParams.set("include_details", "true");
   const res = await fetch(url.toString().replace(window.location.origin, ""));

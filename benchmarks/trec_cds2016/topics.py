@@ -1,4 +1,4 @@
-"""T1 vs T3 query construction. ir_datasets default_text() is description — never use it."""
+"""TREC CDS topic parsing for the fixed system-eval query representation."""
 
 from __future__ import annotations
 
@@ -25,12 +25,13 @@ class CdsTopic:
     def type_question(self) -> str:
         return TYPE_QUESTIONS[self.topic_type]
 
+    def system_eval_query(self) -> str:
+        """The benchmark's immutable full-note plus type-question query."""
+        return f"{self.note.strip()}\n\n{self.type_question}"
+
     def t1_query(self, field: TopicField = "note") -> str:
         body = self.note if field == "note" else self.summary
         return f"{body.strip()}\n\n{self.type_question}"
-
-    def t3_query(self) -> str:
-        return self.type_question
 
     @property
     def patient_id(self) -> str:

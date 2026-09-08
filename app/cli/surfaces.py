@@ -21,11 +21,11 @@ LLM_PID_PATH = LOG_DIR / "medswin-llm.pid"
 DEFAULT_API = "http://127.0.0.1:8100"
 
 PORTAL_PATHS = {
-    "clinician": ("/app/", "Clinician CDS — full MedSwin, naive-RAG, or both"),
+    "clinician": ("/app/", "Clinician CDS — naive, two-stage, full, or all"),
     "dashboard": ("/api/v1/dashboard/", "Ops dashboard — corpus, ingest, models"),
     "docs": ("/docs", "OpenAPI explorer"),
     "health": ("/health", "API health"),
-    "naive_ready": ("/api/v1/naive/ready", "Naive-RAG service preflight"),
+    "pipelines_ready": ("/api/v1/pipelines/ready", "v2 pipeline preflight"),
 }
 
 
@@ -77,25 +77,9 @@ def probe(url: str, *, timeout: float = 2.0, params: dict[str, Any] | None = Non
         return {"ok": False, "status": None, "error": str(exc)}
 
 
-def paper_eval_status() -> dict[str, Any]:
-    from benchmarks.trec_cds2016.contract import PACKAGE_ROOT
-    from benchmarks.trec_cds2016.nist import NIST_DIR, NIST_FILES
-
-    nist = {name: (NIST_DIR / name).is_file() for name in NIST_FILES}
-    runs = sorted(path.name for path in (PACKAGE_ROOT / "runs").glob("*.run"))
-    scores = sorted(path.name for path in (PACKAGE_ROOT / "scores").glob("*.json"))
-    return {
-        "nist_dir": str(NIST_DIR),
-        "nist_files": nist,
-        "nist_complete": all(nist.values()),
-        "runs": runs,
-        "scores": scores,
-    }
-
-
 def collect_status(api_base: str, org_id: str) -> dict[str, Any]:
     api = probe(join_url(api_base, "/health"))
-    naive = probe(join_url(api_base, "/api/v1/naive/ready")) if api.get("ok") else {"ok": False, "error": "api_down"}
+    pipelines = probe(join_url(api_base, "/api/v1/pipelines/ready")) if api.get("ok") else {"ok": False, "error": "api_down"}
     storage = (
         probe(join_url(api_base, "/api/v1/storage/stats"), params={"org_id": org_id})
         if api.get("ok")
@@ -106,35 +90,29 @@ def collect_status(api_base: str, org_id: str) -> dict[str, Any]:
         "api_base": api_base,
         "org_id": org_id,
         "api": api,
-        "naive_ready": naive,
+        "pipelines_ready": pipelines,
         "storage": storage,
         "local_llm": llm,
-        "paper_eval": paper_eval_status(),
         "portals": portal_urls(api_base),
     }
 
 
 def format_status(snapshot: dict[str, Any]) -> str:
     api = snapshot.get("api") or {}
-    naive = snapshot.get("naive_ready") or {}
+    pipelines = snapshot.get("pipelines_ready") or {}
     storage = snapshot.get("storage") or {}
     llm = snapshot.get("local_llm") or {}
-    paper = snapshot.get("paper_eval") or {}
     api_body = api.get("body") if isinstance(api.get("body"), dict) else {}
-    naive_body = naive.get("body") if isinstance(naive.get("body"), dict) else {}
+    pipelines_body = pipelines.get("body") if isinstance(pipelines.get("body"), dict) else {}
     stats = storage.get("body") if isinstance(storage.get("body"), dict) else {}
     sources = stats.get("source_counts") or {}
-    nist = paper.get("nist_files") or {}
     lines = [
         f"API            : {'up' if api.get('ok') else 'down'}  {snapshot.get('api_base')}",
         f"  cloud_mode   : {api_body.get('cloud_mode', '-')}",
         f"  embeddings   : {api_body.get('embedding_model', '-')}",
         f"  reranker     : {api_body.get('reranker_model', '-')}",
-        f"Naive ready    : {'up' if naive.get('ok') else 'down'}",
-        f"  mongo        : {naive_body.get('mongo', '-')}",
-        f"  chunks       : {naive_body.get('chunk_count', '-')}",
-        f"  embedded     : {naive_body.get('embedded_count', '-')}",
-        f"  index_file   : {naive_body.get('index_exists', '-')}",
+        f"Pipelines ready: {'up' if pipelines.get('ok') else 'down'}",
+        f"  pipelines    : {pipelines_body.get('pipelines', '-')}",
         f"Storage ({snapshot.get('org_id')})",
         f"  chunks       : {stats.get('total_chunks', '-')}",
         f"  embeddings   : {stats.get('active_embeddings', stats.get('total_embeddings', '-'))}",
@@ -143,13 +121,7 @@ def format_status(snapshot: dict[str, Any]) -> str:
         f"  index        : exists={stats.get('index_exists', '-')} "
         f"provenance={stats.get('index_provenance_valid', '-')}",
         f"Local 7B       : {'up' if llm.get('ok') else 'down'}",
-        f"paper-eval NIST: {'ready' if paper.get('nist_complete') else 'missing'}  "
-        f"{sum(1 for ok in nist.values() if ok)}/{len(nist) or 4}",
-        f"  runs         : {', '.join(paper.get('runs') or []) or '-'}",
-        f"  scores       : {', '.join(paper.get('scores') or []) or '-'}",
     ]
-    if naive_body.get("chunk_count") and not naive_body.get("embedded_count"):
-        lines.append("  warning      : chunks exist but 0 embeddings — refresh before asking")
     if stats.get("index_exists") is False:
         lines.append("  warning      : ANN index is missing — naive will fall back to mongo_cosine")
     return "\n".join(lines)

@@ -189,11 +189,42 @@ class HybridRetriever:
         facets: Optional[List[ClinicalFacet]] = None,
         agent_weights: Optional[Dict[str, float]] = None,
     ) -> List[CandidatePassage]:
+        """Compatibility wrapper for callers that only need packed evidence."""
+        ranked = self.rank(candidates, facets=facets)
+        return self.select(ranked, facets=facets, agent_weights=agent_weights)
+
+    def rank(
+        self,
+        candidates: List[CandidatePassage],
+        facets: Optional[List[ClinicalFacet]] = None,
+    ) -> List[CandidatePassage]:
+        """Score and order candidates before MMR/token packing.
+
+        This is intentionally separate from :meth:`select`: application
+        generation still receives the compact evidence bundle while v2 callers
+        can audit the final document ranking without increasing context size.
+        """
         for candidate in candidates:
             if facets:
                 score_passage_facets(candidate, facets)
         fused = compute_fusion_scores(candidates)
-        return select_bundle(fused, facets=facets, agent_weights=agent_weights)
+        return sorted(
+            fused,
+            key=lambda candidate: (
+                -(candidate.fusion_score if candidate.fusion_score is not None else -1.0),
+                str(candidate.doc_id or candidate.chunk_id),
+                candidate.chunk_id,
+            ),
+        )
+
+    def select(
+        self,
+        ranked_candidates: List[CandidatePassage],
+        facets: Optional[List[ClinicalFacet]] = None,
+        agent_weights: Optional[Dict[str, float]] = None,
+    ) -> List[CandidatePassage]:
+        """Apply MMR/token selection to an already-ranked candidate pool."""
+        return select_bundle(ranked_candidates, facets=facets, agent_weights=agent_weights)
 
     def build_bundle(
         self,

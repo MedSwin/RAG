@@ -8,7 +8,7 @@ used by app.services.adapters.llm.LLMClient.
 
 Prompt overflow is fail-closed. The server never silently truncates benchmark
 prompts: if prompt tokens + requested completion exceed the model-declared
-context window, the request fails. paper-eval therefore applies one conservative
+context window, the request fails. system-eval therefore applies one conservative
 prompt/output envelope to both MedSwin and Foundry GPT.
 """
 
@@ -194,7 +194,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
             detail=(
                 "MedSwin prompt exceeds the declared context window without truncation: "
                 f"prompt_tokens={prompt_tokens}, max_new_tokens={max_new_tokens}, "
-                f"context_window={context_window}. Reduce the shared full-eval prompt/evidence envelope."
+                f"context_window={context_window}. Reduce the shared system-eval prompt/evidence envelope."
             ),
         )
     inputs = {key: value.to(device) for key, value in inputs.items()}

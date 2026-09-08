@@ -34,7 +34,7 @@ def _generation_backend() -> str:
 def _default_max_tokens() -> Optional[int]:
     """Return an optional shared generation cap.
 
-    paper-eval sets this value for both generator profiles. This prevents
+    system-eval sets this value for both generator profiles. This prevents
     Foundry GPT from receiving a larger output allowance than the local MedSwin
     model merely because one backend has a larger context window. Ordinary
     application behavior remains uncapped when the variable is absent/zero.

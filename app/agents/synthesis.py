@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from app.schemas.evidence import AnswerProvenance, EvidenceBundle
+from app.schemas.evidence import AnswerArtifact, AnswerProvenance, EvidenceBundle
 from app.schemas.facets import FacetCoverage
 from app.services.adapters.llm import LLMClient
 from app.services.medswin.governance import ensure_cds_language
@@ -55,6 +55,19 @@ class SynthesisAgent:
         facet_coverage: Optional[List[FacetCoverage]] = None,
         safety_notes: Optional[List[str]] = None,
     ) -> tuple[str, AnswerProvenance]:
+        rendered, provenance, _artifact = await self.synthesize_with_artifact(
+            query, evidence_bundle, facet_coverage=facet_coverage, safety_notes=safety_notes
+        )
+        return rendered, provenance
+
+    async def synthesize_with_artifact(
+        self,
+        query: str,
+        evidence_bundle: EvidenceBundle,
+        facet_coverage: Optional[List[FacetCoverage]] = None,
+        safety_notes: Optional[List[str]] = None,
+        benchmark: bool = False,
+    ) -> tuple[str, AnswerProvenance, AnswerArtifact]:
         evidence_text = "\n\n".join(f"[{p.chunk_id}] {p.text}" for p in evidence_bundle.passages)
         coverage_text = "\n".join(
             f"- {row.facet}: {row.status} (LCB={row.lower_confidence_bound:.2f})"
@@ -74,6 +87,21 @@ class SynthesisAgent:
                 ),
             },
         ]
-        response = await self.client.call_llm(messages, json_schema=answer_prompt.SCHEMA)
+        schema = answer_prompt.SCHEMA
+        if benchmark:
+            from app.services.prompts import benchmark as benchmark_prompt
+            messages[-1]["content"] += benchmark_prompt.SYSTEM_SUFFIX
+            schema = benchmark_prompt.SCHEMA
+        response = await self.client.call_llm(messages, json_schema=schema)
         answer_data = extract_json_object(response["content"])
-        return self._render(answer_data, evidence_bundle)
+        rendered, provenance = self._render(answer_data, evidence_bundle)
+        ideal = " ".join(str(answer_data.get("ideal_answer") or answer_data.get("answer") or "").split()[:200]) if benchmark else None
+        artifact = AnswerArtifact(
+            content=str(answer_data.get("answer") or ""),
+            rendered_text=rendered,
+            exact_answer=answer_data.get("exact_answer") if benchmark else None,
+            ideal_answer=ideal,
+            cited_chunk_ids=provenance.cited_chunk_ids,
+            abstained=bool(answer_data.get("insufficient_evidence", False)),
+        )
+        return rendered, provenance, artifact

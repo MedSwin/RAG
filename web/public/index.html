@@ -35,7 +35,7 @@
     .meta{color:rgba(20,32,28,.62);font-size:.86rem}
     pre{overflow:auto;max-height:280px;background:#13241f;color:#d7f3ea;border-radius:12px;padding:12px;font-size:12px}
     .error{color:var(--bad);font-weight:600;margin-top:12px}
-    .compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .compare{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
     @media(max-width:1100px){.compare{grid-template-columns:1fr}}
   </style>
 </head>
@@ -43,7 +43,7 @@
   <div class="shell">
     <header class="brand">
       <h1>MedSwin</h1>
-      <p>Evidence-gated clinician decision support. Run the full system, the naive-RAG control, or both, then inspect the audit on this page.</p>
+      <p>Evidence-gated clinician decision support. Compare naive, two-stage, and full pipelines through one audit surface.</p>
       <nav class="nav">
         <a href="/app/">Clinician CDS</a>
         <a href="/api/v1/dashboard/">Ops dashboard</a>
@@ -55,9 +55,10 @@
         <h2>Clinical query</h2>
         <label>Pipeline</label>
         <select id="pipeline">
-          <option value="full">Full MedSwin</option>
           <option value="naive">Naive RAG</option>
-          <option value="both">Compare both</option>
+          <option value="two-stage">Two-stage</option>
+          <option value="full">Full MedSwin</option>
+          <option value="all">Compare all</option>
         </select>
         <label>Question</label>
         <textarea id="query" required placeholder="Can this patient continue metformin after the latest renal-function result?"></textarea>
@@ -85,14 +86,14 @@
     const btn = document.getElementById('btn');
     const pipelineEl = document.getElementById('pipeline');
     function pathFor(pipeline) {
-      if (pipeline === 'naive') return '/api/v1/naive/chat';
-      if (pipeline === 'both') return '/api/v1/naive/compare';
-      return '/api/v1/medswin/chat';
+      if (pipeline === 'all') return '/api/v1/pipelines/compare';
+      return `/api/v1/pipelines/${pipeline}/chat`;
     }
     function buttonLabel(pipeline) {
       if (pipeline === 'naive') return 'Ask naive-RAG';
-      if (pipeline === 'both') return 'Compare both';
-      return 'Ask MedSwin';
+      if (pipeline === 'two-stage') return 'Ask two-stage';
+      if (pipeline === 'all') return 'Compare all';
+      return 'Ask full MedSwin';
     }
     pipelineEl.onchange = () => { btn.textContent = buttonLabel(pipelineEl.value); };
 
@@ -104,8 +105,8 @@
       return `
         ${title ? `<h2>${title}</h2>` : ''}
         <div class="chip ${action}">${escapeHtml(String(action).replaceAll('_',' '))}</div>
-        <p class="meta">${escapeHtml(data.pipeline || 'medswin')} · ${escapeHtml(data.retrieval_backend || 'n/a')} · trace ${escapeHtml(data.trace_id || '')} · ${(data.citations||[]).length} citations</p>
-        <p class="answer">${escapeHtml(data.answer || '')}</p>
+        <p class="meta">${escapeHtml(data.pipeline || '-')} · generator ${escapeHtml(data.generator_profile || '-')} · ${escapeHtml(data.retrieval_backend || 'n/a')} · trace ${escapeHtml(data.trace_id || '')} · ${(data.citations||[]).length} citations · rank depth ${(data.ranked_evidence||[]).length} · abstained ${Boolean((data.answer_artifact||{}).abstained)}</p>
+        <p class="answer">${escapeHtml((data.answer_artifact||{}).rendered_text || data.answer || '')}</p>
         <h2 style="margin-top:22px">Facet coverage</h2>
         ${facets.map(r => `<div class="row"><strong>${escapeHtml(r.facet)} · ${escapeHtml(r.status)}</strong><div class="meta">LCB ${(r.lower_confidence_bound||0).toFixed(2)}</div></div>`).join('') || '<p class="meta">None — expected for naive-RAG.</p>'}
         <h2 style="margin-top:22px">Citations</h2>
@@ -130,25 +131,26 @@
           org_id: document.getElementById('org').value,
           user_id: document.getElementById('user').value,
         };
-        if (pipeline !== 'full') payload.top_k = Number(document.getElementById('topk').value) || 5;
+        if (pipeline === 'naive') payload.constraints = {top_k: Number(document.getElementById('topk').value) || 5};
         const res = await fetch(pathFor(pipeline), {
           method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
         });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        if (pipeline === 'both') {
+        if (pipeline === 'all') {
           out.innerHTML = `
             <div class="compare">
-              <div>${renderOne(data.naive || {}, 'Naive RAG')}</div>
-              <div>${renderOne(data.medswin || {}, 'Full MedSwin')}</div>
+              <div>${renderOne((data.results||{}).naive || {}, 'Naive RAG')}</div>
+              <div>${renderOne((data.results||{})['two-stage'] || {}, 'Two-stage')}</div>
+              <div>${renderOne((data.results||{}).full || {}, 'Full MedSwin')}</div>
             </div>
             <h2 style="margin-top:22px">Diff</h2>
-            <pre>${escapeHtml(JSON.stringify(data.diff || {}, null, 2))}</pre>
+            <pre>${escapeHtml(JSON.stringify(data.adjacent_diffs || {}, null, 2))}</pre>
           `;
         } else {
           let trace = null;
           try {
-            const tr = await fetch(`/api/v1/medswin/traces/${data.trace_id}?org_id=${encodeURIComponent(payload.org_id)}&include_details=true`);
+            const tr = await fetch(`/api/v1/pipelines/traces/${data.trace_id}?org_id=${encodeURIComponent(payload.org_id)}&include_details=true`);
             if (tr.ok) trace = await tr.json();
           } catch (_) {}
           out.innerHTML = renderOne(data) + `

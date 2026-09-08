@@ -3,7 +3,7 @@ import asyncio
 import numpy as np
 
 from app.medswin.naive import NaiveRAGOrchestrator, compare_responses
-from app.schemas.enums import PolicyAction, SourceType
+from app.schemas.enums import PipelineId, PolicyAction, SourceType
 from app.schemas.evidence import CandidatePassage, EvidenceBundle, PolicyDecision
 from app.schemas.traces import ChatResponse
 
@@ -97,7 +97,7 @@ def test_naive_retrieves_dense_top_k_and_always_generates():
         )
     )
 
-    assert response.pipeline == "naive_rag"
+    assert response.pipeline == PipelineId.NAIVE
     assert response.retrieval_backend == "ann"
     assert len(response.evidence_bundle.passages) == 1
     assert response.evidence_bundle.passages[0].chunk_id == "c1"
@@ -107,7 +107,8 @@ def test_naive_retrieves_dense_top_k_and_always_generates():
     assert "sufficiency" in (response.safety_notes or "").lower()
     assert response.answer == "Naive answer from top-K passages."
     assert llm.calls
-    assert dense.calls[0]["k"] == 1
+    assert dense.calls[0]["k"] == 20
+    assert len(response.ranked_evidence) == 2
     assert response.retrieval_traces[0].lexical_count == 0
     assert response.rerank_traces == []
 
@@ -128,7 +129,7 @@ def test_naive_generates_when_retrieval_is_empty():
 
     orch._mongo_cosine = _empty
     response = asyncio.run(orch.chat(query="q", user_id="u1", org_id="org1"))
-    assert response.pipeline == "naive_rag"
+    assert response.pipeline == PipelineId.NAIVE
     assert response.evidence_bundle.passages == []
     assert response.policy_decision.passed is True
     assert "No passages were retrieved" in llm.calls[0]["messages"][0]["content"]
@@ -173,7 +174,7 @@ def test_compare_responses_reports_overlap_and_medswin_abstention():
             lit_count=2,
         ),
         trace_id="n1",
-        pipeline="naive_rag",
+        pipeline=PipelineId.NAIVE,
         retrieval_backend="ann",
         policy_decision=PolicyDecision(passed=True, action=PolicyAction.ACCEPT, reason="naive"),
     )
@@ -190,7 +191,7 @@ def test_compare_responses_reports_overlap_and_medswin_abstention():
             lit_count=1,
         ),
         trace_id="m1",
-        pipeline="medswin",
+        pipeline=PipelineId.FULL,
         policy_decision=PolicyDecision(
             passed=False,
             action=PolicyAction.INSUFFICIENT_EVIDENCE,

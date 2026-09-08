@@ -55,7 +55,7 @@ def _validate_cloud_configuration() -> None:
     """Fail before serving traffic when cloud mode is structurally unusable.
 
     This validates configuration only and deliberately does not spend provider
-    quota. The publication `paper-eval` warmup performs the stronger live probes.
+    quota. ``system-eval`` performs the stronger live profile probes.
     """
     if not settings.CLOUD_MODE:
         return
@@ -87,21 +87,11 @@ def _validate_cloud_configuration() -> None:
 async def _cleanup_endpoint_runtimes() -> None:
     """Close endpoint singletons that own HTTP clients and ANN mappings."""
     try:
-        from app.api.v1.endpoints.naive import cleanup_naive_orchestrator
+        from app.api.v1.endpoints.pipelines import cleanup_pipeline_orchestrators
 
-        await cleanup_naive_orchestrator()
+        await cleanup_pipeline_orchestrators()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Naive RAG client cleanup failed: %s", exc)
-
-    try:
-        from app.api.v1.endpoints import medswin as medswin_endpoint
-
-        orchestrator = getattr(medswin_endpoint, "_orchestrator", None)
-        if orchestrator is not None:
-            await orchestrator.close()
-            medswin_endpoint._orchestrator = None
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("MedSwin client cleanup failed: %s", exc)
+        logger.warning("Pipeline client cleanup failed: %s", exc)
 
 
 @asynccontextmanager
@@ -238,9 +228,13 @@ async def health_check():
             refresh = StorageService().get_embedding_refresh_status()
             return {
                 "status": "healthy",
+                "contract_version": "2.0",
+                "supported_pipelines": ["naive", "two-stage", "full"],
+                "system_eval_mode": _disabled("SYSTEM_EVAL_MODE"),
                 "cloud_mode": True,
                 "generation_backend": generation_backend,
                 "generation_model": generation_model,
+                "resolved_local_model_revision": os.getenv("MEDSWIN_MODEL_REVISION") or settings.MEDSWIN_MODEL_REVISION,
                 "llm_model": generation_model,
                 "embedding_model": settings.CLOUD_EMBEDDING,
                 "reranker_model": settings.CLOUD_RERANKER,
@@ -257,9 +251,13 @@ async def health_check():
         reranker_loaded = model_manager.reranker_model is not None
         return {
             "status": "healthy",
+            "contract_version": "2.0",
+            "supported_pipelines": ["naive", "two-stage", "full"],
+            "system_eval_mode": _disabled("SYSTEM_EVAL_MODE"),
             "cloud_mode": False,
             "generation_backend": generation_backend,
             "generation_model": generation_model,
+            "resolved_local_model_revision": os.getenv("MEDSWIN_MODEL_REVISION") or settings.MEDSWIN_MODEL_REVISION,
             "llm_model": generation_model,
             "embedding_model": "loaded" if embedding_loaded else "not_loaded",
             "reranker_model": "loaded" if reranker_loaded else "not_loaded",

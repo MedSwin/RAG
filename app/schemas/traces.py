@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.schemas.agents import EMRSummary, GuidelineSummary, SafetyReport
 from app.schemas.enums import PolicyAction
 from app.schemas.evidence import (
+    AnswerArtifact,
     AnswerProvenance,
     ContradictionLedger,
     ContradictionPair,
@@ -15,7 +16,9 @@ from app.schemas.evidence import (
     EvidenceLedgerEntry,
     PolicyDecision,
     SufficiencyDecision,
+    RankedEvidenceItem,
 )
+from app.schemas.enums import PipelineId
 from app.schemas.facets import FacetCoverage, FacetMatrix
 
 
@@ -81,6 +84,7 @@ class ChatResponse(BaseModel):
     """Final chat response with provenance."""
 
     answer: str
+    answer_artifact: Optional[AnswerArtifact] = None
     evidence_bundle: EvidenceBundle
     safety_notes: Optional[str] = None
     trace_id: str
@@ -97,7 +101,9 @@ class ChatResponse(BaseModel):
     answer_provenance: Optional[AnswerProvenance] = None
     retrieval_traces: List[RetrievalTrace] = Field(default_factory=list)
     rerank_traces: List[RerankTrace] = Field(default_factory=list)
-    pipeline: str = "medswin"
+    pipeline: PipelineId = PipelineId.FULL
+    generator_profile: Optional[str] = None
+    ranked_evidence: List[RankedEvidenceItem] = Field(default_factory=list)
     retrieval_backend: Optional[str] = None
     timing_ms: Dict[str, float] = Field(default_factory=dict)
 
@@ -129,7 +135,7 @@ class AuditTrace(BaseModel):
     contradiction_ledger: Optional[ContradictionLedger] = None
     sufficiency_decision: Optional[SufficiencyDecision] = None
     answer_provenance: Optional[AnswerProvenance] = None
-    pipeline: str = "medswin"
+    pipeline: PipelineId = PipelineId.FULL
     retrieval_backend: Optional[str] = None
     timing_ms: Dict[str, float] = Field(default_factory=dict)
     emr_summary: Optional[EMRSummary] = None

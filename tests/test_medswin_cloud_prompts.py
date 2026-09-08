@@ -61,9 +61,10 @@ async def test_llm_client_injects_schema_once_and_uses_cloud_headers():
 
 
 @pytest.mark.asyncio
-async def test_cloud_embedding_payload_uses_deployment_model_and_api_key():
+async def test_cloud_embedding_payload_uses_deployment_model_and_api_key(monkeypatch):
     # Local/non-cloud compatibility path remains OpenAI-shaped when cloud mode
     # is not enabled for the process.
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
     seen = {}
     client = EmbeddingClient("https://example.test/openai/v1/embeddings", model="embed-v-4-0", api_key="key")
 
@@ -110,6 +111,7 @@ async def test_foundry_embedding_payload_preserves_document_intent(monkeypatch):
 @pytest.mark.asyncio
 async def test_embedding_client_retries_after_rate_limit_cooldown(monkeypatch):
     calls = 0
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
     monkeypatch.setattr(settings, "MODEL_RATE_LIMIT_BASE_COOLDOWN_S", 0.0)
     monkeypatch.setattr(settings, "MODEL_RATE_LIMIT_MAX_COOLDOWN_S", 0.0)
     monkeypatch.setattr(settings, "MODEL_RATE_LIMIT_JITTER_S", 0.0)
@@ -177,7 +179,21 @@ def test_orchestrator_no_longer_contains_inline_you_are_prompts():
     assert "json_schema={" not in source
 
 
-def test_settings_accept_azure_and_cloud_defaults_without_env_file():
+def test_settings_accept_azure_and_cloud_defaults_without_env_file(monkeypatch):
+    # Ignore process/.env cloud profile so this asserts constructor defaults only.
+    for key in (
+        "CLOUD_MODE",
+        "CLOUD_MODEL",
+        "FOUNDRY_MODEL",
+        "CLOUD_EMBEDDING",
+        "CLOUD_RERANKER",
+        "CLOUD_EMBEDDING_URI",
+        "CLOUD_RERANKER_URI",
+        "AZURE_AI_FOUNDRY_ENDPOINT",
+        "AZURE_AI_FOUNDRY_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
     config = Settings(
         _env_file=None,
         AZURE_AI_FOUNDRY_ENDPOINT="https://example.services.ai.azure.com",

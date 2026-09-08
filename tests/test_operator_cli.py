@@ -26,7 +26,7 @@ def test_format_status_flags_missing_embeddings_and_index():
             "api_base": "http://127.0.0.1:8100",
             "org_id": "demo-org",
             "api": {"ok": True, "body": {"cloud_mode": False, "embedding_model": "loaded", "reranker_model": "not_loaded"}},
-            "naive_ready": {"ok": True, "body": {"mongo": True, "chunk_count": 12, "embedded_count": 0, "index_exists": False}},
+            "pipelines_ready": {"ok": True, "body": {"pipelines": ["naive", "two-stage", "full"]}},
             "storage": {
                 "ok": True,
                 "body": {
@@ -38,12 +38,11 @@ def test_format_status_flags_missing_embeddings_and_index():
                 },
             },
             "local_llm": {"ok": False},
-            "paper_eval": {"nist_complete": False, "nist_files": {}, "runs": [], "scores": []},
         }
     )
-    assert "chunks exist but 0 embeddings" in text
+    assert "Pipelines ready" in text
     assert "ANN index is missing" in text
-    assert "paper-eval" in text
+    assert "paper-eval" not in text
     assert "Eval portal" not in text
 
 
@@ -67,7 +66,7 @@ def test_prompt_args_namespace_has_run_once_fields():
     args = _prompt_args(
         Namespace(
             base_url="http://127.0.0.1:8100",
-            mode="both",
+            mode="all",
             question="q",
             org_id="demo-org",
             user_id="clinician-1",
@@ -78,5 +77,5 @@ def test_prompt_args_namespace_has_run_once_fields():
             json=False,
         )
     )
-    assert args.mode == "both"
+    assert args.mode == "all"
     assert args.top_k == 5

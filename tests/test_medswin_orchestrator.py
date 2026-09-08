@@ -3,6 +3,7 @@ import numpy as np
 from app.agents.base import parse_claims
 from app.medswin.normalize import QueryNormalizer
 from app.models.medswin import CandidatePassage, ClinicalFacet, ClinicalScope, QuerySpec, SourceType
+from app.schemas.enums import PipelineId
 from app.schemas.traces import RerankTrace, RetrievalTrace
 from app.services.medswin.orchestrator import MedSwinOrchestrator
 
@@ -31,6 +32,12 @@ class FakeRetriever:
         return candidates, RerankTrace(calibration_version="test")
 
     def fuse_and_select(self, candidates, facets=None, agent_weights=None):
+        return candidates
+
+    def rank(self, candidates, facets=None):
+        return candidates
+
+    def select(self, candidates, facets=None, agent_weights=None):
         return candidates
 
     def build_bundle(self, passages, **kwargs):
@@ -135,19 +142,16 @@ def test_retrieve_with_sufficiency_returns_policy_artifacts_for_insufficient_bun
     assert final_check.passed is False
 
 
-def test_t4_disable_gate_forces_accept_without_dispatching_mac():
+def test_two_stage_skips_mac_but_keeps_gate():
     import asyncio
 
     dispatched = {"n": 0}
 
-    async def _fail_if_dispatched(*args, **kwargs):
-        dispatched["n"] += 1
-        raise AssertionError("MAC should not run when disable_mac is set")
-
-    orchestrator = MedSwinOrchestrator(embedding_client=FakeEmbeddingClient(), reranker_client=None)
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
     orchestrator.retriever = FakeRetriever()
     orchestrator.chunk_repo = EmptyRepo()
-    orchestrator._dispatch_agents = _fail_if_dispatched
     from app.schemas.traces import AuditTrace
 
     trace = AuditTrace(trace_id="t4", session_id="s1", user_id="u1", org_id="org1", query="q", patient_id="patient1")
@@ -157,14 +161,14 @@ def test_t4_disable_gate_forces_accept_without_dispatching_mac():
             query_spec=QuerySpec(canonical_terms=["treatment"]),
             org_id="org1",
             patient_id="patient1",
-            constraints={"disable_gate": True, "disable_mac": True},
+            constraints={},
             trace=trace,
         )
     )
 
     assert dispatched["n"] == 0
     assert final_check is not None
-    assert final_check.passed is True
+    assert final_check.passed is False
     assert bundle.policy_decision is not None
-    assert bundle.policy_decision.passed is True
-    assert bundle.policy_decision.action.value == "accept"
+    assert bundle.policy_decision.passed is False
+    assert any(call.tool_name == "pipeline.mac" for call in trace.tool_calls)

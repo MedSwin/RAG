@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # Application settings
     APP_NAME: str = "MedSwin"
     DEBUG: bool = False
-    VERSION: str = "1.1.0"
+    VERSION: str = "2.0.0"
 
     # Server settings
     APP_HOST: str = "0.0.0.0"
@@ -58,6 +58,18 @@ class Settings(BaseSettings):
     MEDSWIN_MODEL_PATH: str = "./models/MedSwin-DaRE-TIES-KD-0.7"
     MEDSWIN_LLM_MODEL: str = "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
     MEDSWIN_LLM_URL: str = "http://127.0.0.1:8000/v1/chat/completions"
+    MEDSWIN_MODEL_REVISION: Optional[str] = None
+    SYSTEM_EVAL_MODE: bool = False
+    SYSTEM_EVAL_ARTIFACT_DIR: str = "./artifacts/system-eval"
+    SYSTEM_EVAL_REPLICATES: int = 3
+    BIOASQ_USERNAME: Optional[str] = None
+    BIOASQ_PASSWORD: Optional[str] = None
+    BIOASQ_CACHE_DIR: str = "./data/system-eval/bioasq13b"
+    NCBI_EMAIL: Optional[str] = None
+    NCBI_API_KEY: Optional[str] = None
+    SYSTEM_EVAL_NLI_MODEL: str = "lighteternal/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext-finetuned-mnli"
+    SYSTEM_EVAL_NLI_REVISION: str = "e9c646143e4b88035c7a5505dc4dfaba59656bfd"
+    SYSTEM_EVAL_NLI_PATH: str = "./models/system-eval-nli"
 
     # Service timeouts
     LLM_TIMEOUT_S: int = 60

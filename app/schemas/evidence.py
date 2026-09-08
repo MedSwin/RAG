@@ -146,6 +146,31 @@ class CandidatePassage(BaseModel):
     retrieved_by: List[str] = Field(default_factory=list)
 
 
+class RankedEvidenceItem(BaseModel):
+    """A document-level ranking captured before generation-context packing."""
+
+    doc_id: str
+    winning_chunk_id: str
+    rank: int
+    score: float
+    dense_score: Optional[float] = None
+    lexical_score: Optional[float] = None
+    rerank_score: Optional[float] = None
+    fusion_score: Optional[float] = None
+    source_type: SourceType = SourceType.LIT
+
+
+class AnswerArtifact(BaseModel):
+    """Structured answer content shared by every v2 pipeline."""
+
+    content: str = ""
+    rendered_text: str = ""
+    exact_answer: Optional[Any] = None
+    ideal_answer: Optional[str] = None
+    cited_chunk_ids: List[str] = Field(default_factory=list)
+    abstained: bool = False
+
+
 class RerankScore(BaseModel):
     """Reranker output with calibration."""
 

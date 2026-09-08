@@ -1,10 +1,10 @@
-"""Interactive terminal client for naive-RAG vs full MedSwin.
+"""Interactive terminal client for the three MedSwin v2 pipelines.
 
 Run after the API is healthy:
 
     python -m app.cli.prompt
     python -m app.cli.prompt --mode naive --question "Can metformin continue?"
-    python -m app.cli.prompt --mode both --org-id demo-org
+    python -m app.cli.prompt --mode all --org-id demo-org
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import Any, Optional
 import httpx
 
 
-MODES = ("full", "naive", "both")
+MODES = ("naive", "two-stage", "full", "all")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -28,21 +28,22 @@ def _parser() -> argparse.ArgumentParser:
         epilog=textwrap.dedent(
             """
             Modes
-              full    POST /api/v1/medswin/chat   (MAC + gate + hybrid retrieval)
-              naive   POST /api/v1/naive/chat     (embed → dense top-K → generate)
-              both    POST /api/v1/naive/compare  (same query, side-by-side)
+              naive      dense retrieval → generate
+              two-stage  hybrid → rerank → gate → generate (no MAC)
+              full       two-stage + MAC
+              all        side-by-side comparison of all three
 
             Preferred local entry point:
               ./scripts/start-local.sh
-            That opens the operator console (ask, portals). Publication numbers use paper-eval.
+            That opens the operator console (ask, portals). Benchmark results use system-eval.
             This module is the ask engine used by that console:
-              ./scripts/start-local.sh ask --mode both --question "..."
+              ./scripts/start-local.sh ask --mode all --question "..."
               python -m app.cli.prompt --mode naive --question "..."
             """
         ),
     )
     parser.add_argument("--base-url", default="http://localhost:8100", help="MedSwin API origin")
-    parser.add_argument("--mode", choices=MODES, default="both")
+    parser.add_argument("--mode", choices=MODES, default="all")
     parser.add_argument("--question", default="", help="One-shot question. Omit for a REPL.")
     parser.add_argument("--org-id", default="demo-org")
     parser.add_argument("--user-id", default="clinician-1")
@@ -71,16 +72,14 @@ def _payload(args: argparse.Namespace, question: str) -> dict[str, Any]:
     if args.session_id:
         body["session_id"] = args.session_id
     if args.top_k is not None:
-        body["top_k"] = args.top_k
+        body["constraints"] = {"top_k": args.top_k}
     return body
 
 
 def _path(mode: str) -> str:
-    if mode == "naive":
-        return "/api/v1/naive/chat"
-    if mode == "both":
-        return "/api/v1/naive/compare"
-    return "/api/v1/medswin/chat"
+    if mode == "all":
+        return "/api/v1/pipelines/compare"
+    return f"/api/v1/pipelines/{mode}/chat"
 
 
 def _wrap(label: str, text: str) -> str:
@@ -134,27 +133,18 @@ def _print_single(title: str, response: dict[str, Any]) -> None:
 
 
 def _print_compare(payload: dict[str, Any]) -> None:
-    _print_single("NAIVE RAG", payload.get("naive") or {})
-    _print_single("FULL MEDSWIN", payload.get("medswin") or {})
-    diff = payload.get("diff") or {}
+    for pipeline in ("naive", "two-stage", "full"):
+        _print_single(pipeline.upper(), (payload.get("results") or {}).get(pipeline) or {})
+    diff = payload.get("adjacent_diffs") or {}
     print()
     print("=" * 88)
     print("DIFF")
     print("=" * 88)
     for key in (
-        "jaccard",
-        "overlap_count",
-        "naive_passage_count",
-        "medswin_passage_count",
-        "medswin_abstained",
-        "medswin_policy_action",
-        "naive_backend",
-        "timing_ms",
+        "naive_to_two_stage",
+        "two_stage_to_full",
     ):
         print(f"{key:24}: {diff.get(key)}")
-    print(f"{'overlap_chunk_ids':24}: {diff.get('overlap_chunk_ids')}")
-    print(f"{'naive_only_chunk_ids':24}: {diff.get('naive_only_chunk_ids')}")
-    print(f"{'medswin_only_chunk_ids':24}: {diff.get('medswin_only_chunk_ids')}")
 
 
 def run_once(client: httpx.Client, args: argparse.Namespace, question: str) -> int:
@@ -171,13 +161,12 @@ def run_once(client: httpx.Client, args: argparse.Namespace, question: str) -> i
     if args.json:
         print(json.dumps(data, indent=2, default=str))
         return 0
-    if args.mode == "both":
+    if args.mode == "all":
         _print_compare(data)
-        naive = data.get("naive") or {}
-        if (naive.get("degraded_mode") or {}).get("error") or (naive.get("degraded_mode") or {}).get("no_embeddings"):
+        if any((value.get("degraded_mode") or {}).get("error") for value in (data.get("results") or {}).values()):
             return 1
     else:
-        title = "NAIVE RAG" if args.mode == "naive" else "FULL MEDSWIN"
+        title = args.mode.upper()
         _print_single(title, data)
         degraded = data.get("degraded_mode") or {}
         if degraded.get("error") or degraded.get("no_embeddings"):
@@ -192,7 +181,7 @@ def _read_line(prompt: str, default: str = "") -> str:
 
 
 def repl(client: httpx.Client, args: argparse.Namespace) -> int:
-    print("Interactive MedSwin / naive-RAG prompt. Type 'exit' to quit.")
+    print("Interactive MedSwin v2 prompt. Type 'exit' to quit.")
     print(f"API {args.base_url}  org={args.org_id}  default_mode={args.mode}")
     while True:
         try:
@@ -200,7 +189,7 @@ def repl(client: httpx.Client, args: argparse.Namespace) -> int:
             if mode.lower() in {"exit", "quit"}:
                 return 0
             if mode not in MODES:
-                print(f"Unknown mode {mode!r}. Use full, naive, or both.")
+                print(f"Unknown mode {mode!r}. Use {', '.join(MODES)}.")
                 continue
             question = _read_line("Question: ")
             if not question:
@@ -239,7 +228,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 file=sys.stderr,
             )
         try:
-            ready = client.get(f"{args.base_url.rstrip('/')}/api/v1/naive/ready")
+            ready = client.get(f"{args.base_url.rstrip('/')}/api/v1/pipelines/ready")
             if ready.is_success:
                 payload = ready.json()
                 print(

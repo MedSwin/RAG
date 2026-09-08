@@ -14,10 +14,12 @@ from app.schemas.enums import (
     ClinicalScope,
     EvidencePolarity,
     PolicyAction,
+    PipelineId,
     SourceType,
 )
 from app.schemas.evidence import (
     AnswerProvenance,
+    AnswerArtifact,
     CandidatePassage,
     ContradictionLedger,
     ContradictionPair,
@@ -28,6 +30,7 @@ from app.schemas.evidence import (
     PolicyDecision,
     QuerySpec,
     RerankScore,
+    RankedEvidenceItem,
     SufficiencyDecision,
 )
 from app.schemas.facets import ClinicalFacet, FacetCoverage, FacetMatrix
@@ -47,6 +50,7 @@ __all__ = [
     "AgentMessage",
     "AgentRole",
     "AnswerProvenance",
+    "AnswerArtifact",
     "AuditTrace",
     "CandidatePassage",
     "ChatResponse",
@@ -67,10 +71,12 @@ __all__ = [
     "FacetMatrix",
     "GuidelineSummary",
     "PolicyAction",
+    "PipelineId",
     "PolicyDecision",
     "QualityReport",
     "QuerySpec",
     "RerankScore",
+    "RankedEvidenceItem",
     "RerankTrace",
     "RetrievalTrace",
     "SafetyReport",

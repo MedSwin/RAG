@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from app.agents.critic import ContradictionAgent
@@ -32,8 +34,8 @@ from app.repositories.chunks import ChunkRepository
 from app.repositories.sessions import SessionRepository
 from app.repositories.traces import TraceRepository
 from app.retrieval.hybrid import HybridRetriever
-from app.schemas.enums import ClinicalScope, PolicyAction, SourceType
-from app.schemas.evidence import ContradictionLedger, EvidenceBundle, PolicyDecision, QuerySpec
+from app.schemas.enums import ClinicalScope, PipelineId, PolicyAction, SourceType
+from app.schemas.evidence import AnswerArtifact, ContradictionLedger, EvidenceBundle, PolicyDecision, QuerySpec, RankedEvidenceItem
 from app.schemas.facets import FacetMatrix
 from app.schemas.sessions import Session
 from app.schemas.traces import AgentMessage, AuditTrace, ChatResponse, ToolCall
@@ -46,6 +48,36 @@ from app.services.medswin.governance import build_citation, redact_phi_text
 logger = logging.getLogger(__name__)
 
 
+def _generator_profile(client: LLMClient) -> str:
+    return "cloud" if client.backend == "foundry" else "medswin" if client.backend == "medswin_local" else client.backend
+
+
+@dataclass(frozen=True)
+class PipelinePolicy:
+    """Immutable behavior contract for the non-naive pipelines."""
+
+    pipeline: PipelineId
+    enable_query_normalization: bool
+    enable_hybrid_retrieval: bool
+    enable_reranker: bool
+    enable_mac: bool
+    enable_gate: bool
+    enable_retrieve_more: bool
+    enable_fusion: bool
+    ranking_depth: int
+    generation_token_budget: int
+
+
+PIPELINE_POLICIES = {
+    PipelineId.TWO_STAGE: PipelinePolicy(
+        PipelineId.TWO_STAGE, True, True, True, False, True, True, True, 20, settings.TOKEN_BUDGET_B
+    ),
+    PipelineId.FULL: PipelinePolicy(
+        PipelineId.FULL, True, True, True, True, True, True, True, 20, settings.TOKEN_BUDGET_B
+    ),
+}
+
+
 class MedSwinOrchestrator:
     """Centralized orchestrator-mediated multi-agent CDSS runtime."""
 
@@ -53,14 +85,16 @@ class MedSwinOrchestrator:
         self,
         embedding_client: Optional[EmbeddingClient] = None,
         reranker_client: Optional[RerankerClient] = None,
+        pipeline: PipelineId = PipelineId.FULL,
     ):
+        if pipeline not in PIPELINE_POLICIES:
+            raise ValueError(f"MedSwinOrchestrator only supports two-stage/full, got {pipeline}")
+        self.policy = PIPELINE_POLICIES[pipeline]
+        self.pipeline = pipeline
         cloud_model = settings.CLOUD_MODEL if settings.CLOUD_MODE else None
         self.supervisor = LLMClient(settings.active_llm_url(settings.SUPERVISOR_URL), model=cloud_model)
-        self.emr_llm = LLMClient(settings.active_llm_url(settings.AGENT2_URL), model=cloud_model)
-        self.guideline_llm = LLMClient(settings.active_llm_url(settings.AGENT3_URL), model=cloud_model)
-        self.safety_llm = LLMClient(settings.active_llm_url(settings.AGENT1_URL), model=cloud_model)
-        self.quality_llm = LLMClient(settings.active_llm_url(settings.SUPERVISOR_URL), model=cloud_model)
-        self.critic_llm = LLMClient(settings.active_llm_url(settings.SUPERVISOR_URL), model=cloud_model)
+        self.emr_llm = self.guideline_llm = self.safety_llm = None
+        self.quality_llm = self.critic_llm = None
 
         self.embedding_client = embedding_client or EmbeddingClient(settings.active_embedding_url())
         self.reranker_client = reranker_client or RerankerClient(settings.active_reranker_url())
@@ -70,16 +104,25 @@ class MedSwinOrchestrator:
         self.weights = ReliabilityWeights()
         self.calibration = get_calibration_store()
 
-        self.emr_agent = EMRAgent(self.emr_llm)
-        self.guideline_agent = GuidelineAgent(self.guideline_llm)
-        self.safety_agent = SafetyAgent(self.safety_llm)
-        self.quality_agent = QualityAgent(self.quality_llm)
-        self.critic_agent = ContradictionAgent(self.critic_llm)
+        self.emr_agent = self.guideline_agent = self.safety_agent = None
+        self.quality_agent = self.critic_agent = None
+        if self.policy.enable_mac:
+            self.emr_llm = LLMClient(settings.active_llm_url(settings.AGENT2_URL), model=cloud_model)
+            self.guideline_llm = LLMClient(settings.active_llm_url(settings.AGENT3_URL), model=cloud_model)
+            self.safety_llm = LLMClient(settings.active_llm_url(settings.AGENT1_URL), model=cloud_model)
+            self.quality_llm = LLMClient(settings.active_llm_url(settings.SUPERVISOR_URL), model=cloud_model)
+            self.critic_llm = LLMClient(settings.active_llm_url(settings.SUPERVISOR_URL), model=cloud_model)
+            self.emr_agent = EMRAgent(self.emr_llm)
+            self.guideline_agent = GuidelineAgent(self.guideline_llm)
+            self.safety_agent = SafetyAgent(self.safety_llm)
+            self.quality_agent = QualityAgent(self.quality_llm)
+            self.critic_agent = ContradictionAgent(self.critic_llm)
         self.synthesis_agent = SynthesisAgent(self.supervisor)
 
         self.chunk_repo = ChunkRepository()
         self.session_repo = SessionRepository()
         self.trace_repo = TraceRepository()
+        self._last_ranked_evidence: List[RankedEvidenceItem] = []
 
     async def chat(
         self,
@@ -89,7 +132,9 @@ class MedSwinOrchestrator:
         session_id: Optional[str] = None,
         patient_id: Optional[str] = None,
         constraints: Optional[Dict[str, Any]] = None,
+        benchmark: Optional[Dict[str, Any]] = None,
     ) -> ChatResponse:
+        started = time.perf_counter()
         trace_id = str(uuid.uuid4())
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -104,13 +149,16 @@ class MedSwinOrchestrator:
             org_id=org_id,
             query=query,
             patient_id=patient_id,
+            pipeline=self.pipeline,
         )
         degraded: Dict[str, bool] = {}
         if not self.calibration.loaded:
             degraded["calibration"] = True
 
         try:
+            normalize_started = time.perf_counter()
             query_spec = await self.normalizer.normalize(query, trace)
+            trace.timing_ms["normalize"] = round((time.perf_counter() - normalize_started) * 1000.0, 2)
             facets = self.normalizer.build_facets(query, query_spec, constraints, patient_id)
             query_spec.facets = facets
             if constraints and constraints.get("clinical_scope"):
@@ -119,6 +167,7 @@ class MedSwinOrchestrator:
                 except ValueError:
                     query_spec.clinical_scope = ClinicalScope.CLINICIAN_CDS
 
+            retrieve_started = time.perf_counter()
             evidence_bundle, final_check = await self._retrieve_with_sufficiency(
                 query=query,
                 query_spec=query_spec,
@@ -127,6 +176,8 @@ class MedSwinOrchestrator:
                 constraints=constraints or {},
                 trace=trace,
             )
+            trace.timing_ms["retrieve_gate"] = round((time.perf_counter() - retrieve_started) * 1000.0, 2)
+            ranked_evidence = list(self._last_ranked_evidence)
 
             decision = evidence_bundle.policy_decision
             facet_matrix = FacetMatrix(
@@ -164,9 +215,11 @@ class MedSwinOrchestrator:
                 trace.completed_at = datetime.utcnow()
                 trace.final_answer = answer
                 trace.citations = citations
+                trace.timing_ms["total"] = round((time.perf_counter() - started) * 1000.0, 2)
                 await self.trace_repo.create(trace, org_id)
                 return ChatResponse(
                     answer=answer,
+                    answer_artifact=AnswerArtifact(content="", rendered_text=answer, exact_answer=None, ideal_answer="" if benchmark else None, cited_chunk_ids=[c["chunk_id"] for c in citations], abstained=True),
                     evidence_bundle=evidence_bundle,
                     safety_notes=decision.reason,
                     trace_id=trace_id,
@@ -182,23 +235,31 @@ class MedSwinOrchestrator:
                     contradiction_ledger=contradiction_ledger,
                     retrieval_traces=trace.retrieval_traces,
                     rerank_traces=trace.rerank_traces,
-                    pipeline="medswin",
+                    pipeline=self.pipeline,
+                    generator_profile=_generator_profile(self.supervisor),
+                    ranked_evidence=ranked_evidence,
+                    timing_ms=trace.timing_ms,
                 )
 
-            answer, provenance = await self.synthesis_agent.synthesize(
+            synthesis_started = time.perf_counter()
+            answer, provenance, answer_artifact = await self.synthesis_agent.synthesize_with_artifact(
                 query,
                 evidence_bundle,
                 facet_coverage=evidence_bundle.facet_coverage,
                 safety_notes=[n for n in [decision.reason if decision else None] if n],
+                benchmark=bool(benchmark),
             )
+            trace.timing_ms["synthesis"] = round((time.perf_counter() - synthesis_started) * 1000.0, 2)
             citations = self._citations(evidence_bundle)
             trace.answer_provenance = provenance
             trace.completed_at = datetime.utcnow()
             trace.final_answer = answer
             trace.citations = citations
+            trace.timing_ms["total"] = round((time.perf_counter() - started) * 1000.0, 2)
             await self.trace_repo.create(trace, org_id)
             return ChatResponse(
                 answer=answer,
+                answer_artifact=answer_artifact,
                 evidence_bundle=evidence_bundle,
                 safety_notes=None,
                 trace_id=trace_id,
@@ -215,16 +276,25 @@ class MedSwinOrchestrator:
                 answer_provenance=provenance,
                 retrieval_traces=trace.retrieval_traces,
                 rerank_traces=trace.rerank_traces,
-                pipeline="medswin",
+                pipeline=self.pipeline,
+                generator_profile=_generator_profile(self.supervisor),
+                ranked_evidence=ranked_evidence,
+                timing_ms=trace.timing_ms,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("Orchestration failed: %s", exc, exc_info=True)
             degraded["error"] = True
             trace.completed_at = datetime.utcnow()
             trace.degraded_mode = degraded
+            trace.timing_ms["total"] = round((time.perf_counter() - started) * 1000.0, 2)
             await self.trace_repo.create(trace, org_id)
             return ChatResponse(
                 answer="I encountered an error processing your query. Please try again or contact support.",
+                answer_artifact=AnswerArtifact(
+                    content="",
+                    rendered_text="I encountered an error processing your query. Please try again or contact support.",
+                    abstained=True,
+                ),
                 evidence_bundle=EvidenceBundle(
                     passages=[], total_tokens=0, cpg_count=0, emr_count=0, lit_count=0, safety_count=0
                 ),
@@ -232,7 +302,10 @@ class MedSwinOrchestrator:
                 degraded_mode=degraded,
                 citations=[],
                 uncertainty_level="high",
-                pipeline="medswin",
+                pipeline=self.pipeline,
+                generator_profile=_generator_profile(self.supervisor),
+                ranked_evidence=list(self._last_ranked_evidence),
+                timing_ms=trace.timing_ms,
             )
 
     async def _patient_query(
@@ -282,6 +355,9 @@ class MedSwinOrchestrator:
         contradiction_review: bool,
         trace: AuditTrace,
     ):
+        if not self.policy.enable_mac:
+            trace.tool_calls.append(ToolCall(tool_name="pipeline.mac", parameters={}, result={"status": "skipped_by_pipeline"}))
+            return []
         batches = []
         always = {"quality"}
         targets = set(always)
@@ -322,15 +398,15 @@ class MedSwinOrchestrator:
                 )
             )
 
-        if "emr" in targets:
+        if "emr" in targets and self.emr_agent:
             await _run("emr", self.emr_agent.explore(query, candidates, facets, patient_id))
-        if "guideline" in targets:
+        if "guideline" in targets and self.guideline_agent:
             await _run("guideline", self.guideline_agent.explore(query, candidates, facets))
-        if "safety" in targets:
+        if "safety" in targets and self.safety_agent:
             await _run("safety", self.safety_agent.explore(query, candidates, facets))
-        if "quality" in targets:
+        if "quality" in targets and self.quality_agent:
             await _run("quality", self.quality_agent.explore(query, candidates, facets))
-        if "critic" in targets:
+        if "critic" in targets and self.critic_agent:
             await _run("critic", self.critic_agent.explore(query, candidates, facets))
         return batches
 
@@ -414,28 +490,32 @@ class MedSwinOrchestrator:
 
             routed = (hints or {}).get("routed_agents") or (hints or {}).get("routed_agent")
             missing = (hints or {}).get("missing_facets") or []
-            if constraints.get("disable_mac"):
-                batches = []
-            else:
-                batches = await self._dispatch_agents(
-                    query=query,
-                    candidates=all_candidates[:40],
-                    facets=facets,
-                    patient_id=patient_id,
-                    routed=routed,
-                    missing=missing,
-                    contradiction_review=bool((hints or {}).get("contradiction_review")),
-                    trace=trace,
-                )
+            batches = await self._dispatch_agents(
+                query=query,
+                candidates=all_candidates[:40],
+                facets=facets,
+                patient_id=patient_id,
+                routed=routed,
+                missing=missing,
+                contradiction_review=bool((hints or {}).get("contradiction_review")),
+                trace=trace,
+            )
 
             ledger = build_retrieval_ledger(all_candidates, facets)
-            ledger = merge_agent_claims(ledger, batches, all_candidates)
-            apply_claim_alignment(all_candidates, batches, facets)
-            selected = self.retriever.fuse_and_select(all_candidates, facets=facets, agent_weights=agent_weights)
+            if self.policy.enable_mac:
+                ledger = merge_agent_claims(ledger, batches, all_candidates)
+                apply_claim_alignment(all_candidates, batches, facets)
+            ranked_candidates = self.retriever.rank(all_candidates, facets=facets)
+            selected = self.retriever.select(ranked_candidates, facets=facets, agent_weights=agent_weights)
             selected = pack_bundle(selected, facets=facets)
             selected_ids = {p.chunk_id for p in selected}
             selected_ledger = filter_ledger(ledger, selected_ids)
-            contradictions = adjudicate_contradictions(detect_contradictions(selected_ledger), batches)
+            detected_contradictions = detect_contradictions(selected_ledger)
+            contradictions = (
+                adjudicate_contradictions(detected_contradictions, batches)
+                if self.policy.enable_mac
+                else detected_contradictions
+            )
             check = self.gate.check(
                 selected_ledger,
                 facets,
@@ -445,22 +525,14 @@ class MedSwinOrchestrator:
                 query_spec=query_spec,
                 contradictions=contradictions,
             )
-            if constraints.get("disable_gate") and check.policy_decision is not None:
-                check.policy_decision.passed = True
-                check.policy_decision.action = PolicyAction.ACCEPT
-                check.policy_decision.reason = "T4 ablation: sufficiency gate disabled; generate from the packed bundle."
-                check.passed = True
-                check.action_taken = PolicyAction.ACCEPT.value
             final_check = check
             trace.sufficiency_checks.append(check)
             if check.policy_decision:
                 trace.policy_decisions.append(check.policy_decision)
 
-            if constraints.get("disable_gate"):
-                break
             if check.passed:
                 break
-            if not self.gate.should_retrieve_more(check):
+            if not self.policy.enable_retrieve_more or not self.gate.should_retrieve_more(check):
                 break
             hints = check.policy_decision.retrieval_hints if check.policy_decision else {"increase_k": True}
             iteration += 1
@@ -473,6 +545,12 @@ class MedSwinOrchestrator:
             coverage = decision.facet_coverage
             contradictions = decision.contradictions
 
+        # ``ranked_candidates`` is the final post-rerank/fusion state, before
+        # MMR/token packing. It is the evaluator's observation point.
+        self._last_ranked_evidence = self._document_rank(
+            ranked_candidates if "ranked_candidates" in locals() else all_candidates,
+            depth=self.policy.ranking_depth,
+        )
         if selected:
             for trace_row in trace.rerank_traces[-1:]:
                 trace_row.selected_chunk_ids = [p.chunk_id for p in selected]
@@ -488,6 +566,36 @@ class MedSwinOrchestrator:
             policy_decision=decision,
         )
         return bundle, final_check
+
+    @staticmethod
+    def _document_rank(candidates: List, depth: int = 20) -> List[RankedEvidenceItem]:
+        """Collapse final pre-pack chunk scores into a stable document ranking."""
+        by_doc = {}
+        for candidate in candidates:
+            doc_id = str(candidate.doc_id or candidate.chunk_id)
+            score = float(candidate.fusion_score if candidate.fusion_score is not None else (
+                candidate.calibrated_score if candidate.calibrated_score is not None else (
+                    candidate.rerank_score if candidate.rerank_score is not None else (candidate.dense_score or 0.0)
+                )
+            ))
+            current = by_doc.get(doc_id)
+            if current is None or score > current[0] or (score == current[0] and candidate.chunk_id < current[1].chunk_id):
+                by_doc[doc_id] = (score, candidate)
+        ordered = sorted(by_doc.items(), key=lambda item: (-item[1][0], item[0]))[:depth]
+        return [
+            RankedEvidenceItem(
+                doc_id=doc_id,
+                winning_chunk_id=candidate.chunk_id,
+                rank=index,
+                score=score,
+                dense_score=candidate.dense_score,
+                lexical_score=candidate.lexical_score,
+                rerank_score=candidate.rerank_score,
+                fusion_score=candidate.fusion_score,
+                source_type=candidate.source_type,
+            )
+            for index, (doc_id, (score, candidate)) in enumerate(ordered, start=1)
+        ]
 
     def _render_final_answer(self, answer_data: Dict[str, Any], evidence_bundle: EvidenceBundle) -> str:
         """Backward-compatible grounded renderer used by safety/unit callers.

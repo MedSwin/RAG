@@ -1,0 +1,30 @@
+name: system-eval-contract
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements.txt
+      - run: python -m compileall -q app benchmarks scripts tests
+      - run: bash -n scripts/start-local.sh
+      - run: pytest -q
+      - run: npm --prefix web install
+      - run: npm --prefix web run build
+      - run: docker compose config
+      - name: Assert v2 evaluator surface
+        run: |
+          ! rg 'disable_mac|disable_gate' app/api/v1 benchmarks/system_eval
+          rg 'system-eval' scripts/start-local.sh
+          rg 'combination-september' benchmarks/system_eval scripts/start-local.sh
+          rg '/api/v1/pipelines' web/src web/public/index.html

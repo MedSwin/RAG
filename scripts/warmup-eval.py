@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Idempotent MedSwin publication-evaluation warmup.
+"""Idempotent MedSwin system-evaluation warmup.
 
 Warmup invariants:
 1. The exact MedSwin generator snapshot is present locally and pinned to a
@@ -39,6 +39,8 @@ EXPECTED_RERANKER_MODEL = "Cohere-rerank-v4.0-fast"
 FOUNDRY_PROBE_MARKER = "MEDSWIN_FOUNDRY_OK"
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_DIR = ROOT / "data" / "eval-warmup"
+NLI_MODEL = "lighteternal/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext-finetuned-mnli"
+NLI_REVISION = "e9c646143e4b88035c7a5505dc4dfaba59656bfd"
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -63,7 +65,7 @@ def warm_model(model_id: str, target: Path, force: bool) -> dict[str, Any]:
 
     if model_id != DEFAULT_MODEL_ID:
         raise RuntimeError(
-            f"Publication warmup requires {DEFAULT_MODEL_ID}; got {model_id}. "
+            f"System-evaluation warmup requires {DEFAULT_MODEL_ID}; got {model_id}. "
             "Use a separate experiment profile for other generator models."
         )
 
@@ -117,12 +119,29 @@ def warm_model(model_id: str, target: Path, force: bool) -> dict[str, Any]:
     return payload
 
 
+def warm_nli(force: bool) -> dict[str, Any]:
+    """Materialize the fixed local evaluator without using either generator."""
+    from huggingface_hub import snapshot_download
+    target = ROOT / "models" / "system-eval-nli"
+    marker = target / ".nli_snapshot.json"
+    if marker.exists() and not force:
+        cached = json.loads(marker.read_text(encoding="utf-8"))
+        if cached.get("model") == NLI_MODEL and cached.get("revision") == NLI_REVISION and (target / "config.json").exists():
+            return cached
+    snapshot_download(repo_id=NLI_MODEL, revision=NLI_REVISION, local_dir=str(target), token=os.getenv("HF_TOKEN") or None)
+    if not (target / "config.json").exists():
+        raise RuntimeError("Pinned BioMedNLI evaluator snapshot is incomplete")
+    payload = {"model": NLI_MODEL, "revision": NLI_REVISION, "path": str(target), "complete": True}
+    _write_json(marker, payload)
+    return payload
+
+
 def warm_trec(dataset_name: str, force: bool) -> dict[str, Any]:
     """Materialize and exact-count verify the complete TREC-CDS 2016 collection."""
     import ir_datasets
 
     if dataset_name != DEFAULT_DATASET:
-        raise RuntimeError(f"Publication warmup requires {DEFAULT_DATASET}; got {dataset_name}")
+        raise RuntimeError(f"System-evaluation warmup requires {DEFAULT_DATASET}; got {dataset_name}")
 
     marker = MANIFEST_DIR / "trec-cds-2016-materialized.json"
     if marker.exists() and not force:
@@ -289,6 +308,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-trec-eval", action="store_true")
     parser.add_argument("--skip-foundry", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--system-eval", action="store_true", help="Use the MedSwin 2.0 system-eval contract.")
     parser.add_argument("--dataset", default=DEFAULT_DATASET)
     parser.add_argument("--model-id", default=os.getenv("MEDSWIN_MODEL_REPO", DEFAULT_MODEL_ID))
     parser.add_argument(
@@ -307,9 +327,11 @@ def main() -> int:
         verify_nist()
     if not args.skip_trec_eval:
         results["trec_eval"] = warm_trec_eval()
-    need_local_llm = args.with_local_llm or os.getenv("PAPER_EVAL_NEED_LOCAL_LLM") == "1"
+    need_local_llm = args.with_local_llm or args.system_eval or os.getenv("SYSTEM_EVAL_NEED_LOCAL_LLM") == "1"
     if need_local_llm and not args.skip_model:
         results["model"] = warm_model(args.model_id, Path(args.model_path), args.force)
+    if args.system_eval and not args.skip_model:
+        results["nli"] = warm_nli(args.force)
     if not args.skip_trec:
         results["trec"] = warm_trec(args.dataset, args.force)
     if not args.skip_foundry:
