@@ -339,6 +339,10 @@ def test_a_chart_order_to_resume_or_switch_conflicts_with_that_drug():
         "Warfarin was given.",
         "The patient was given warfarin.",
         "Warfarin was used.",
+        "Put the patient on warfarin.",
+        "The patient was put on warfarin.",
+        "Place the patient on warfarin.",
+        "The patient was placed on warfarin.",
     ):
         pairs = chart_contradictions(chart, [warning, other])
         assert len(pairs) == 1, chart
@@ -365,11 +369,25 @@ def test_a_chart_order_to_resume_or_switch_conflicts_with_that_drug():
         "Warfarin was not given.",
         "Warfarin was used to monitor the INR.",
         "History of warfarin use.",
+        "Put the patient on hold.",
+        "Put warfarin on hold.",
+        "Do not put the patient on warfarin.",
         "Warfarin was not restarted.",
         "The patient was not recommenced on warfarin.",
         "Warfarin was kept on hold.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
+    refused = _entry(
+        "rec",
+        "guideline_concordance",
+        "Start warfarin.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    blocked = chart_contradictions("Do not put the patient on warfarin.", [refused])
+    assert len(blocked) == 1
+    assert "warfarin" in blocked[0].reason
+    assert blocked[0].reason.startswith("Chart caution:")
 
 
 def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():

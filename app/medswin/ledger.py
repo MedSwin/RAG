@@ -986,6 +986,10 @@ _START_VERB = re.compile(
     re.I,
 )
 _ADMIN_VERB = re.compile(r"\b(?:given|gave|used)\b", re.I)
+_PUT_ON = re.compile(
+    r"\b(?:put|puts|putting|placed?|placing)\b(?:\s+\w+){0,5}\s+on\b",
+    re.I,
+)
 _SWITCH_TO = re.compile(
     r"\b(?:switch|change)\b(?:\s+\w+){0,6}\s+to\b|\breplace\b(?:\s+\w+){0,4}\s+with\b",
     re.I,
@@ -1049,6 +1053,12 @@ def _has_recommendation_verb(text: str) -> bool:
         if _LOCAL_NEGATION.search(window):
             continue
         if _verb_orders_named_drug(text, match.start(), match.end()):
+            return True
+    for match in _PUT_ON.finditer(text or ""):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        if _object_is_drug(text[match.end():]):
             return True
     for match in _SWITCH_TO.finditer(text or ""):
         if _object_is_drug(text[match.end():]):

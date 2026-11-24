@@ -226,6 +226,12 @@ class LexicalRetriever:
         for anchor in caution_at:
             nearby = [index for index in drug_at if anchor - 4 <= index <= anchor + 4]
             begin = anchor
+            if (
+                anchor > 0
+                and words[anchor].lower().strip(".,;") == "not"
+                and words[anchor - 1].lower().strip(".,;") in {"do", "should"}
+            ):
+                begin = anchor - 1
             end = min(len(words), anchor + 3)
             if nearby:
                 if nearby[0] < anchor:
