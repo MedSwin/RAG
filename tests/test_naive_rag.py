@@ -2,7 +2,7 @@ import asyncio
 
 import numpy as np
 
-from app.medswin.naive import NaiveRAGOrchestrator, compare_responses
+from app.medswin.naive import NAIVE_POLICY_REASON, NaiveRAGOrchestrator, compare_responses
 from app.schemas.enums import PipelineId, PolicyAction, SourceType
 from app.schemas.evidence import AnswerArtifact, CandidatePassage, EvidenceBundle, PolicyDecision
 from app.schemas.traces import ChatResponse
@@ -249,3 +249,5 @@ def test_compare_responses_reports_overlap_and_medswin_abstention():
     naive_stop = naive.model_copy(update={"answer_artifact": AnswerArtifact(content="", rendered_text="", abstained=True)})
     assert compare_responses(naive_stop, medswin)["naive_always_generated"] is False
     assert diff["jaccard"] == 1 / 3
+    assert "empty context" not in NAIVE_POLICY_REASON
+    assert "only when dense retrieval returns passages" in NAIVE_POLICY_REASON

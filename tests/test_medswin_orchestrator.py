@@ -211,8 +211,6 @@ def test_retrieve_with_sufficiency_returns_policy_artifacts_for_insufficient_bun
 def test_two_stage_skips_mac_but_keeps_gate():
     import asyncio
 
-    dispatched = {"n": 0}
-
     orchestrator = MedSwinOrchestrator(
         embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
     )
@@ -232,12 +230,13 @@ def test_two_stage_skips_mac_but_keeps_gate():
         )
     )
 
-    assert dispatched["n"] == 0
     assert final_check is not None
     assert final_check.passed is False
     assert bundle.policy_decision is not None
     assert bundle.policy_decision.passed is False
-    assert any(call.tool_name == "pipeline.mac" for call in trace.tool_calls)
+    mac = [call for call in trace.tool_calls if call.tool_name == "pipeline.mac"]
+    assert mac
+    assert mac[0].result["status"] == "skipped_by_pipeline"
 
 
 def test_retrieval_packs_with_the_policy_token_budget(monkeypatch):

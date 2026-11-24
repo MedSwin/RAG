@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 PIPELINE_ID = PipelineId.NAIVE
 NAIVE_POLICY_REASON = (
     "Naive RAG does not apply an evidence-sufficiency gate. "
-    "Generation always proceeds from dense top-K (or from an empty context)."
+    "Generation proceeds only when dense retrieval returns passages."
 )
 
 
