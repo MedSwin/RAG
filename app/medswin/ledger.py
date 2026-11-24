@@ -830,6 +830,41 @@ def _content_words(text: str) -> list[str]:
     return content
 
 
+def _dose_before_verb(text: str, match_start: int) -> bool:
+    """True when the drug or its dose sits before a passive dose verb."""
+    raw = text or ""
+    words = raw.split()
+    if not words:
+        return False
+    spans = []
+    cursor = 0
+    for word in words:
+        at = raw.find(word, cursor)
+        spans.append(at)
+        cursor = at + len(word)
+    anchor = 0
+    for index, begin in enumerate(spans):
+        if begin <= match_start < begin + len(words[index]):
+            anchor = index
+            break
+    before = words[max(0, anchor - 8):anchor]
+    if not before:
+        return False
+    for index, word in enumerate(before):
+        if word.lower() != "dose" or index + 2 >= len(before):
+            continue
+        if before[index + 1].lower() == "of" and intervention_tokens(before[index + 2]):
+            return True
+    for index, word in enumerate(before):
+        if not intervention_tokens(word):
+            continue
+        nxt = before[index + 1] if index + 1 < len(before) else ""
+        if _NOT_DOSE_NOUN.match(nxt):
+            continue
+        return True
+    return False
+
+
 def _dose_order_object(text: str) -> bool:
     """True when the dose change names the drug, not a level or a clearance."""
     if not _direct_drug_object(text):
@@ -985,7 +1020,7 @@ def _has_recommendation_verb(text: str) -> bool:
         tail = text[match.end():]
         if _RECORD_NOT_ORDER.search(tail):
             continue
-        if _dose_order_object(tail):
+        if _dose_order_object(tail) or _dose_before_verb(text, match.start()):
             return True
     if _DRUG_OF_CHOICE.search(text or "") and intervention_tokens(text) and not _MONITOR_WORD.search(text or ""):
         return True
