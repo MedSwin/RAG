@@ -31,7 +31,7 @@ from app.medswin.ledger import (
     merge_agent_claims,
 )
 from app.retrieval.hints import expand_query
-from app.scoring.coverage import _ungoverned_caution
+from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 from app.medswin.normalize import QueryNormalizer
 from app.medswin.packing import pack_bundle
 from app.repositories.chunks import ChunkRepository
@@ -198,6 +198,11 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _CAUTION_KEEP = 16
 
 
+def _note_priority(text: str) -> bool:
+    """True for a caution or a qualifier the gate already treats as a limit."""
+    return _ungoverned_caution(text) or bool(_QUALIFY.search(text or ""))
+
+
 def _caution_window(words: List[str], room: int) -> List[str]:
     """Keep the caution when it sits past the start of a long note."""
     if room <= 0 or not words:
@@ -205,7 +210,7 @@ def _caution_window(words: List[str], room: int) -> List[str]:
     anchor = 0
     for index, _word in enumerate(words):
         start = max(0, index - 5)
-        if _ungoverned_caution(" ".join(words[start:index + 1])):
+        if _note_priority(" ".join(words[start:index + 1])):
             anchor = index
             break
     begin = max(0, anchor - max(0, room - 8))
@@ -222,7 +227,7 @@ def _fit_row(text: str, allowance: int) -> List[str]:
     if len(words) <= allowance:
         return words
     sentences = [part.strip() for part in _SENTENCE_SPLIT.split(text) if part.strip()] or [text]
-    caution_indexes = [index for index, sentence in enumerate(sentences) if _ungoverned_caution(sentence)]
+    caution_indexes = [index for index, sentence in enumerate(sentences) if _note_priority(sentence)]
     caution_bits: List[str] = []
     used = 0
     for index in caution_indexes:

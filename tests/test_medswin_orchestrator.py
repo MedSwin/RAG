@@ -156,6 +156,43 @@ def test_a_second_caution_in_a_long_note_stays_in_the_synopsis():
     assert len(returned.split()) <= 160
 
 
+def test_a_caution_qualifier_at_the_end_of_a_long_note_stays():
+    import asyncio
+
+    note = " ".join(["history"] * 150) + " Use apixaban with caution."
+
+    class Charts:
+        async def get_by_patient_id(self, patient_id, org_id, **_kwargs):
+            return [{"source_type": "EMR", "text": note}]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.chunk_repo = Charts()
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
+    returned = asyncio.run(orchestrator._patient_query("Which dose?", "org", "pt-1", {}, trace))
+    assert "Use apixaban with caution." in returned
+
+
+def test_monitoring_at_the_end_of_a_long_note_does_not_replace_the_start():
+    import asyncio
+
+    note = "Creatinine is 1.4. " + " ".join(["history"] * 150) + " The plan includes monitoring."
+
+    class Charts:
+        async def get_by_patient_id(self, patient_id, org_id, **_kwargs):
+            return [{"source_type": "EMR", "text": note}]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.chunk_repo = Charts()
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
+    returned = asyncio.run(orchestrator._patient_query("Which dose?", "org", "pt-1", {}, trace))
+    assert "Creatinine is 1.4." in returned
+    assert "monitoring" not in returned
+
+
 def test_the_model_question_drops_the_phone():
     import asyncio
 
