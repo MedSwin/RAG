@@ -102,6 +102,7 @@ def merge_agent_claims(
             if text_score <= 0.0:
                 continue
             text_polarity = infer_polarity(passage, ClinicalFacet(name=claim.facet))
+            updates: Dict[str, object] = {}
             if (
                 text_polarity
                 in {
@@ -111,7 +112,11 @@ def merge_agent_claims(
                 }
                 and claim.polarity == EvidencePolarity.SUPPORTS
             ):
-                claim = claim.model_copy(update={"polarity": text_polarity})
+                updates["polarity"] = text_polarity
+            if text_score < 0.50 and float(claim.confidence or 0.0) > text_score:
+                updates["confidence"] = text_score
+            if updates:
+                claim = claim.model_copy(update=updates)
             entry = by_chunk.get(claim.chunk_id)
             if entry is None:
                 entry = EvidenceLedgerEntry(
@@ -153,26 +158,8 @@ def apply_claim_alignment(
     batches: List[AgentClaimBatch],
     facets: List[ClinicalFacet],
 ) -> None:
-    """Lift specialist claim confidence into passage facet scores for utility."""
-    names = {facet.name for facet in facets}
-    for batch in batches:
-        for claim in batch.claims:
-            if claim.facet not in names:
-                continue
-            for passage in passages:
-                if passage.chunk_id != claim.chunk_id:
-                    continue
-                current = passage.facet_scores.get(claim.facet, 0.0)
-                if current <= 0.0:
-                    continue
-                text_polarity = infer_polarity(passage, ClinicalFacet(name=claim.facet))
-                if text_polarity in {
-                    EvidencePolarity.CONTRADICTS,
-                    EvidencePolarity.SAFETY,
-                    EvidencePolarity.QUALIFIES,
-                }:
-                    continue
-                passage.facet_scores[claim.facet] = max(current, clamp(claim.confidence))
+    """Keep the text score. A specialist confidence does not raise it."""
+    del passages, batches, facets
 
 
 _STALE_TERMS = ("outdated", "obsolete", "superseded", "population mismatch")

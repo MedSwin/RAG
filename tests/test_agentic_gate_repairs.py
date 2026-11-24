@@ -1066,6 +1066,42 @@ def test_a_stored_facet_score_does_not_satisfy_a_weak_sentence():
     assert row.status != "satisfied"
 
 
+def test_a_specialist_confidence_does_not_satisfy_a_weak_sentence():
+    facet = ClinicalFacet(
+        name="guideline_concordance",
+        keywords=["apixaban"],
+        required=True,
+        threshold=0.70,
+    )
+    weak = _passage("weak", "See apixaban in the appendix.")
+    weak.calibrated_score = 0.95
+    weak.evidence_grade_score = 0.95
+    score_passage_facets(weak, [facet])
+    text_score = weak.facet_scores["guideline_concordance"]
+    ledger = build_retrieval_ledger([weak], [facet])
+    batch = AgentClaimBatch(
+        agent_id="guideline",
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Apixaban is indicated.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="weak",
+                confidence=1.0,
+                calibrated_relevance=1.0,
+                evidence_grade=EvidenceGrade(score=1.0),
+            )
+        ],
+    )
+    merged = merge_agent_claims(ledger, [batch], [weak])
+    apply_claim_alignment([weak], [batch], [facet])
+    row = compute_facet_coverage([facet], merged)[0]
+    assert weak.facet_scores["guideline_concordance"] == text_score
+    assert row.coverage_probability < facet.threshold
+    assert row.status != "satisfied"
+    assert all(claim.confidence <= text_score + 1e-9 for claim in merged[0].claims)
+
+
 def test_a_specialist_confidence_cannot_cover_a_facet_the_passage_does_not_support():
     passage = _passage("cpg-1", "Metformin is first-line for type 2 diabetes.")
     passage.calibrated_score = 1.0
