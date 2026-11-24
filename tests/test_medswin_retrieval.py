@@ -227,7 +227,8 @@ def test_a_long_chart_keeps_the_question_drug_in_the_lexical_query():
     assert '"metformin"' in terms
     assert '"history79"' not in terms
     assert len(terms) <= 64
-    tokens = [term.strip('"') for term in terms]
+    tokens = LexicalRetriever._lexical_terms(query)
+    assert tokens == [term.strip('"') for term in terms]
     history = LexicalRetriever._bm25_tokens(" ".join(f"history{i} note" for i in range(40)))
     drug = LexicalRetriever._bm25_tokens("Metformin is first-line treatment.")
     caution = LexicalRetriever._bm25_tokens("Avoid apixaban when bleeding is present.")

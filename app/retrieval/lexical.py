@@ -166,8 +166,8 @@ class LexicalRetriever:
         return LexicalRetriever._fts_terms(" ".join(kept))
 
     @staticmethod
-    def _fts_query(query: str) -> str:
-        """Keep chart-caution terms when the question already fills the term cap."""
+    def _lexical_terms(query: str) -> List[str]:
+        """Caution sentences, then the question. History filler stays out."""
         raw = query or ""
         marker = "patient retrieval context:"
         index = raw.lower().find(marker)
@@ -176,9 +176,6 @@ class LexicalRetriever:
             context = raw[index + len(marker):]
         else:
             question, context = raw, ""
-        # Legacy BM25 is an any-term scorer, so use OR rather than requiring all
-        # clinical terms to occur in one passage. History filler terms outrank
-        # the question drug, so only caution sentences join the question.
         ordered = LexicalRetriever._caution_terms(context)[:32] + LexicalRetriever._fts_terms(question)
         chosen = []
         seen = set()
@@ -186,10 +183,17 @@ class LexicalRetriever:
             if term in seen:
                 continue
             seen.add(term)
-            chosen.append(f'"{term}"')
+            chosen.append(term)
             if len(chosen) >= 64:
                 break
-        return " OR ".join(chosen)
+        return chosen
+
+    @staticmethod
+    def _fts_query(query: str) -> str:
+        """Keep chart-caution terms when the question already fills the term cap."""
+        # Legacy BM25 is an any-term scorer, so use OR rather than requiring all
+        # clinical terms to occur in one passage.
+        return " OR ".join(f'"{term}"' for term in LexicalRetriever._lexical_terms(query))
 
     async def _fts_candidates(
         self,
@@ -349,7 +353,7 @@ class LexicalRetriever:
                 return []
             bm25 = bundle["bm25"]
             chunk_ids = bundle["chunk_ids"]
-            query_tokens = self._bm25_tokens(query)
+            query_tokens = self._lexical_terms(query)
             top_indices = _matching_indexes(bm25, query_tokens, k)
             selected_ids = [chunk_ids[idx] for idx in top_indices if idx < len(chunk_ids)]
             if not selected_ids:
