@@ -1,3 +1,4 @@
+from app.api.v1.endpoints.storage import _stale_refresh_filter
 from app.retrieval.filters import retrieval_filter
 from app.schemas.enums import SourceType
 
@@ -10,6 +11,13 @@ def test_a_query_without_a_patient_excludes_charts():
 def test_a_chart_search_without_a_patient_matches_nothing():
     query_filter = retrieval_filter("org-1", SourceType.EMR, None, {})
     assert {"patient_id": {"$in": []}} in query_filter["$and"]
+
+
+def test_a_clinician_refresh_does_not_select_charts():
+    clinician = _stale_refresh_filter("org-1", include_charts=False)
+    operator = _stale_refresh_filter("org-1", include_charts=True)
+    assert clinician["source_type"] == {"$ne": "EMR"}
+    assert "source_type" not in operator
 
 
 def test_a_named_patient_keeps_that_chart_and_shared_evidence():

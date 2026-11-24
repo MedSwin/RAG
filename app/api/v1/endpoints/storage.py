@@ -218,10 +218,8 @@ async def _attach_missing_embeddings(chunks: List[Dict[str, Any]], batch_size: i
         await client.close()
 
 
-async def _refresh_tenant_embeddings(org_id: str, batch_size: int) -> Dict[str, Any]:
-    """Refresh one tenant in place without ever publishing a tenant-only ANN."""
-    db = get_database()
-    coll = db["chunks"]
+def _stale_refresh_filter(org_id: str, *, include_charts: bool) -> Dict[str, Any]:
+    """Select stale vectors. A clinician refresh does not read chart text."""
     expected_dim = settings.active_embedding_dimension()
     stale_filter: Dict[str, Any] = {
         "org_id": org_id,
@@ -233,6 +231,21 @@ async def _refresh_tenant_embeddings(org_id: str, batch_size: int) -> Dict[str, 
             {"embedding_dim": {"$ne": expected_dim}},
         ],
     }
+    if not include_charts:
+        stale_filter["source_type"] = {"$ne": "EMR"}
+    return stale_filter
+
+
+async def _refresh_tenant_embeddings(
+    org_id: str,
+    batch_size: int,
+    *,
+    include_charts: bool = False,
+) -> Dict[str, Any]:
+    """Refresh one tenant in place without ever publishing a tenant-only ANN."""
+    db = get_database()
+    coll = db["chunks"]
+    stale_filter = _stale_refresh_filter(org_id, include_charts=include_charts)
     stale = await coll.count_documents(stale_filter)
     updated = 0
     client = EmbeddingClient(settings.active_embedding_url())
@@ -363,7 +376,11 @@ async def refresh_cloud_embeddings(
     request = bind_body_org(http_request, request)
     try:
         batch_size = request.batch_size or settings.CLOUD_EMBED_BATCH_SIZE
-        result = await _refresh_tenant_embeddings(request.org_id, max(1, int(batch_size)))
+        result = await _refresh_tenant_embeddings(
+            request.org_id,
+            max(1, int(batch_size)),
+            include_charts=_is_operator(http_request),
+        )
         scheduled = _schedule_shared_index_rebuild(background_tasks, http_request, storage_service)
         result["index_rebuild"] = "scheduled" if scheduled else "operator_required"
         return result

@@ -338,13 +338,15 @@ def test_operator_refresh_schedules_the_shared_index(monkeypatch):
     monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
     monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
     built = []
+    charts = []
 
     class Storage:
         async def build_hnsw_index_async(self, **kwargs):
             built.append(kwargs)
             return {"success": True}
 
-    async def _refresh(org_id, batch_size):
+    async def _refresh(org_id, batch_size, *, include_charts=True):
+        charts.append(include_charts)
         return {"org_id": org_id, "updated": 1}
 
     monkeypatch.setattr(storage, "_refresh_tenant_embeddings", _refresh)
@@ -361,6 +363,7 @@ def test_operator_refresh_schedules_the_shared_index(monkeypatch):
     assert held.status_code == 200
     assert held.json()["index_rebuild"] == "operator_required"
     assert built == []
+    assert charts == [False]
     operator = _token(secret, {"sub": "ops-1", "org_id": "org-a", "role": "operator", "exp": int(time.time()) + 60})
     allowed = TestClient(app).post(
         "/api/v1/storage/embeddings/refresh",
@@ -369,6 +372,7 @@ def test_operator_refresh_schedules_the_shared_index(monkeypatch):
     )
     assert allowed.status_code == 200
     assert allowed.json()["index_rebuild"] == "scheduled"
+    assert charts == [False, True]
     assert built[0]["org_id"] is None
     assert built[0]["force_rebuild"] is True
 
