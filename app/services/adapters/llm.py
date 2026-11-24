@@ -154,6 +154,9 @@ def _fit_block(text: str, width: int) -> str:
     prefix = f"{header}{gap}" if header else ""
     room = width - len(prefix)
     if room < 8:
+        extra = _with_named_drugs(kept, body, 80)
+        if extra:
+            return f"{prefix}{extra}".strip()
         return text[:width]
     return prefix + _with_named_drugs(kept, body, room)
 
