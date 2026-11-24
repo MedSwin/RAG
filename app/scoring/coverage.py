@@ -205,6 +205,7 @@ _LOCAL_NEGATION = re.compile(
     re.I,
 )
 _BENIGN_DO_NOT = re.compile(r"^\s+(?:delay|withhold|wait|hesitate)\b", re.I)
+_QUALIFY = re.compile(r"\b(?:unless|except|caution|monitor)\b", re.I)
 
 
 def _ungoverned_caution(text: str) -> bool:
@@ -230,6 +231,6 @@ def infer_polarity(passage: CandidatePassage, facet: ClinicalFacet) -> EvidenceP
     text = passage.text.lower()
     if _ungoverned_caution(text):
         return EvidencePolarity.CONTRADICTS if facet.name != "safety_contraindications" else EvidencePolarity.SAFETY
-    if any(term in text for term in ["unless", "except", "caution", "monitor"]):
+    if _QUALIFY.search(text):
         return EvidencePolarity.QUALIFIES
     return EvidencePolarity.SUPPORTS
