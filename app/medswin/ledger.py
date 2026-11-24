@@ -843,6 +843,14 @@ _ANTICOAGULATED_WITH = re.compile(
     r"\banticoagulat(?:ed|ing)\b(?:\s+\w+){0,4}\s+with\b",
     re.I,
 )
+_HAS_DRUG = re.compile(
+    r"(?:^|\b(?:patients?|is|was|were|are|am|been)\s+)ha(?:s|ve)\b",
+    re.I,
+)
+_NOT_HAS_OBJECT = re.compile(
+    r"^(?:allerg(?:y|ies|ic)|toxicity|histories|history|reactions?|intolerances?|problems?)$",
+    re.I,
+)
 _COMPLIANT_WORD = re.compile(r"\b(?:compliant|adherent)\b", re.I)
 _ARRIVAL_ON = re.compile(
     r"\b(?:came|come|comes|coming|admitted|admission|discharg(?:e|ed|ing)|"
@@ -1031,6 +1039,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
     if _compliant_drug(sentence):
         return True
     if _anticoagulated_with_drug(sentence):
+        return True
+    if _has_current_drug(sentence):
         return True
     if _arrival_on_drug(sentence):
         return True
@@ -1284,6 +1294,33 @@ def _anticoagulated_with_drug(sentence: str) -> bool:
             continue
         if _on_object_is_drug(text[match.end():]):
             return True
+    return False
+
+
+def _has_current_drug(sentence: str) -> bool:
+    """True when the patient has a named drug, not an allergy or a history."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _ON_TOPIC
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text):
+        return False
+    started = bool(re.match(r"\s*ha(?:s|ve)\b", text, re.I))
+    if not re.search(r"\bpatients?\b", text, re.I) and not started:
+        return False
+    for match in _HAS_DRUG.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        tail = text[match.end():]
+        if re.match(r"\s*(?:no|not)\b", tail, re.I):
+            continue
+        if not _direct_drug_object(tail):
+            continue
+        content = _content_words(tail)
+        nxt = content[1] if len(content) >= 2 else ""
+        if nxt and (_ON_TOPIC.match(nxt) or _NOT_HAS_OBJECT.match(nxt)):
+            continue
+        return True
     return False
 
 
@@ -1760,6 +1797,7 @@ def _chart_caution_text(chart: str) -> str:
         _not_tolerating_stop,
         _not_compliant_stop,
         _not_anticoagulated_stop,
+        _not_have_stop,
         _med_list_stop,
         _refused_stop,
         _negated_away_split,
@@ -1786,6 +1824,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _not_tolerating_stop(sentence)
                 or _not_compliant_stop(sentence)
                 or _not_anticoagulated_stop(sentence)
+                or _not_have_stop(sentence)
                 or _med_list_stop(sentence)
                 or _refused_stop(sentence)
             ):

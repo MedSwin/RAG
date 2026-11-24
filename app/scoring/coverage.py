@@ -445,6 +445,12 @@ _NOT_ANTICOAGULATED = re.compile(
     r"|\bnever\s+(?:been\s+)?anticoagulat(?:ed|ing)\b(?:\s+\w+){0,4}\s+with\b",
     re.I,
 )
+_NOT_HAVE = re.compile(
+    r"\bnot\s+ha(?:s|ve|d)\b"
+    r"|\bha(?:s|ve)\s+no\b"
+    r"|\bnever\s+had\b",
+    re.I,
+)
 _NOT_ON = re.compile(
     r"\bnot\s+on\b"
     r"|\bnot\s+(?:currently|now|still|back)\s+on\b"
@@ -686,6 +692,37 @@ def _not_anticoagulated_stop(text: str) -> bool:
     return False
 
 
+def _not_have_stop(text: str) -> bool:
+    """True when the patient does not have a named drug."""
+    raw = text or ""
+    if re.search(r"\b(?:counsel|discuss|advise|update|inform|educat\w*|ask)\b", raw, re.I):
+        return False
+    for match in _NOT_HAVE.finditer(raw):
+        window = raw[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        words = re.findall(r"[A-Za-z0-9'-]+", raw[match.end():])
+        content: list[str] = []
+        skipping = True
+        for word in words:
+            if skipping and word.lower() in {"to", "the", "a", "an", "his", "her", "their", "this", "that"}:
+                continue
+            skipping = False
+            content.append(word)
+            if len(content) >= 3:
+                break
+        if not content or not _token_names_drug(content[0]):
+            continue
+        nxt = content[1] if len(content) > 1 else ""
+        if nxt and (
+            _ON_TOPIC.match(nxt)
+            or re.match(r"^(?:allerg|toxicit|histor|reaction|intoleran|problem)", nxt, re.I)
+        ):
+            continue
+        return True
+    return False
+
+
 def _not_for_stop(text: str) -> bool:
     """True when the line says the patient is not for a named drug."""
     if _negated_off_keep(text):
@@ -893,6 +930,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _not_tolerating_stop(text)
         or _not_compliant_stop(text)
         or _not_anticoagulated_stop(text)
+        or _not_have_stop(text)
         or _med_list_stop(text)
         or _refused_stop(text)
     )
