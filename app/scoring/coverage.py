@@ -89,8 +89,10 @@ def score_passage_facets(
             # An exact source match is 0.45. It still needs a keyword or a safety hit.
             text_score = 0.0
         else:
+            # One keyword does not collect the source bonus. Two keywords, or a safety hit, do.
             # The section heading stays in the fusion rank. It does not raise facet certainty.
-            text_score = clamp(0.20 + source_bonus + keyword_score + safety_bonus)
+            applied_source = source_bonus if len(matched) >= 2 or safety_bonus > 0.0 else 0.0
+            text_score = clamp(0.20 + applied_source + keyword_score + safety_bonus)
         scores[facet.name] = text_score
     passage.facet_scores = scores
     return scores

@@ -284,6 +284,35 @@ def test_exact_source_match_without_a_keyword_does_not_cover_the_facet():
     assert score_passage_facets(named, [facet])["guideline_concordance"] > 0.0
 
 
+def test_one_keyword_on_a_matching_source_does_not_clear_the_facet():
+    weak_facet = ClinicalFacet(
+        name="guideline_concordance",
+        keywords=["apixaban"],
+        source_policy="CPG",
+        required=True,
+        threshold=0.70,
+    )
+    weak = _passage("weak", "See apixaban in the appendix.")
+    weak.calibrated_score = 1.0
+    weak.evidence_grade_score = 1.0
+    weak_row = compute_facet_coverage([weak_facet], build_retrieval_ledger([weak], [weak_facet]))[0]
+    assert weak_row.coverage_probability < 0.70
+    assert weak_row.status != "satisfied"
+
+    strong_facet = ClinicalFacet(
+        name="guideline_concordance",
+        keywords=["apixaban", "first-line"],
+        source_policy="CPG",
+        required=True,
+        threshold=0.70,
+    )
+    strong = _passage("strong", "Apixaban is recommended as first-line therapy for atrial fibrillation.")
+    strong.calibrated_score = 1.0
+    strong.evidence_grade_score = 1.0
+    strong_row = compute_facet_coverage([strong_facet], build_retrieval_ledger([strong], [strong_facet]))[0]
+    assert strong_row.status == "satisfied"
+
+
 def test_a_missing_calibrated_score_fails_inclusion():
     passage = CandidatePassage(
         chunk_id="c1",
