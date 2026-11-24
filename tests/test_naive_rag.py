@@ -315,6 +315,21 @@ def test_a_late_caution_stays_in_the_naive_context():
     assert "Avoid apixaban." in packed[0].text
 
 
+def test_the_naive_claim_keeps_a_late_caution():
+    filler = "History note. " * 40
+    passage = CandidatePassage(
+        chunk_id="emr-late",
+        doc_id="emr-late",
+        source_type=SourceType.EMR,
+        text=f"{filler}Avoid apixaban.",
+        dense_score=0.8,
+    )
+    ledger = NaiveRAGOrchestrator._naive_ledger(object(), [passage])
+    claim = ledger[0].claims[0].claim
+    assert claim.startswith("Avoid apixaban.")
+    assert "History note." in claim
+
+
 def test_the_naive_prompt_keeps_a_late_caution():
     class RecordingEmbed:
         async def embed(self, texts):

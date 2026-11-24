@@ -710,7 +710,7 @@ class NaiveRAGOrchestrator:
             entry.agent_id = PIPELINE_ID
             entry.calibrated_relevance = passage.dense_score or 0.0
             entry.fusion_score = passage.dense_score or 0.0
-            snippet = " ".join((passage.text or "").split())[:240]
+            snippet = " ".join(lead_with_caution(passage.text or "").split())[:240]
             if snippet:
                 entry.claims = [
                     EvidenceClaim(

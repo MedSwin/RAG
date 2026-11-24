@@ -592,6 +592,24 @@ async def test_the_cloud_prompt_puts_the_caution_before_the_filler():
 
 
 @pytest.mark.asyncio
+async def test_the_cloud_prompt_keeps_a_late_caution_inside_one_passage():
+    filler = "History note. " * 80
+    passage = _passage("emr-late", SourceType.EMR, f"{filler} Avoid apixaban.", calibrated_score=0.8)
+    seen = []
+
+    class _Cloud:
+        backend = "foundry"
+
+        async def call_llm(self, messages, json_schema=None, **kwargs):
+            seen.append(messages)
+            return {"content": json.dumps({"answer": "See the caution.", "evidence_used": ["emr-late"]})}
+
+    await SynthesisAgent(_Cloud()).synthesize_with_artifact("Which dose?", _bundle([passage]))
+    evidence = seen[0][1]["content"]
+    assert evidence.index("Avoid apixaban.") < evidence.index("History note.")
+
+
+@pytest.mark.asyncio
 async def test_local_llm_defaults_and_clamps_completion_inside_2048(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_MODE", False)
     monkeypatch.setenv("GENERATION_BACKEND", "medswin_local")
