@@ -427,6 +427,18 @@ def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():
         "Taper off warfarin.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
+    mixed_dose = "The dose of warfarin was reduced and apixaban was started."
+    from app.medswin.cds import _caution_drug_name
+
+    warfarin_only = chart_contradictions(mixed_dose, [warning])
+    assert _caution_drug_name([], None, warfarin_only, severity="high") == "warfarin"
+    apixaban_only = chart_contradictions(mixed_dose, [other])
+    assert _caution_drug_name([], None, apixaban_only, severity="high") == "apixaban"
+    both = chart_contradictions(mixed_dose, [warning, other])
+    assert set(_caution_drug_name([], None, both, severity="high").split(", ")) == {
+        "apixaban",
+        "warfarin",
+    }
 
 
 def test_a_chart_order_qualifies_against_an_unscored_caution():

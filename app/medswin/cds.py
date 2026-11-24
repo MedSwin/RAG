@@ -325,6 +325,19 @@ def _caution_summary(drug_name: str) -> str:
     return "An unresolved caution qualifies this recommendation."
 
 
+def _named_conflict_drugs(reason: str) -> List[str]:
+    """Use the drug after 'for' when the order sentence names another drug."""
+    from app.medswin.ledger import intervention_tokens
+
+    text = reason or ""
+    marker = " for "
+    if marker in text:
+        named = sorted(intervention_tokens(text.rsplit(marker, 1)[1]))
+        if named:
+            return named
+    return sorted(intervention_tokens(text))
+
+
 def _caution_drug_name(
     passages: List[Any],
     decision: Any,
@@ -383,7 +396,7 @@ def _caution_drug_name(
             continue
         if PATIENT_CHART_ID not in {item.chunk_id_a, item.chunk_id_b}:
             continue
-        for drug in sorted(intervention_tokens(getattr(item, "reason", "") or "")):
+        for drug in _named_conflict_drugs(getattr(item, "reason", "") or ""):
             if drug not in found:
                 found.append(drug)
     if not found:
@@ -394,7 +407,7 @@ def _caution_drug_name(
             cited = {item.chunk_id_a, item.chunk_id_b}
             if cited <= known and PATIENT_CHART_ID not in cited:
                 continue
-            for drug in sorted(intervention_tokens(getattr(item, "reason", "") or "")):
+            for drug in _named_conflict_drugs(getattr(item, "reason", "") or ""):
                 if drug not in found:
                     found.append(drug)
     return ", ".join(found)
