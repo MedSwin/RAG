@@ -890,6 +890,8 @@ def test_a_synthesis_abstain_is_the_last_stored_decision():
     assert actions[-1] == PolicyAction.INSUFFICIENT_EVIDENCE
     assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
     assert response.policy_decision.passed is False
+    assert response.degraded_mode.get("synthesis") is True
+    assert stored[-1].degraded_mode.get("synthesis") is True
 
 
 def test_trace_failure_keeps_the_gated_answer():
