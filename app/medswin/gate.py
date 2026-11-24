@@ -21,6 +21,49 @@ from app.scoring.utility import estimate_marginal_utility_per_token
 from app.medswin.ledger import detect_contradictions
 
 
+def _passage_confidence(passage: CandidatePassage) -> Optional[float]:
+    for value in (
+        passage.calibrated_score,
+        passage.rerank_score,
+        passage.fusion_score,
+        passage.dense_score,
+    ):
+        if value is not None:
+            return float(value)
+    return None
+
+
+def _confidence_vote(passages: List[CandidatePassage]) -> tuple[bool, bool, float]:
+    """Return inclusion pass, mean-confidence pass, and the mean score."""
+    scores = [_passage_confidence(passage) for passage in passages]
+    known = [score for score in scores if score is not None]
+    mean_confidence = sum(known) / len(known) if known else 0.0
+    inclusion_ok = bool(passages) and all(
+        score is not None and score >= settings.SUFF_T_INCLUSION for score in scores
+    )
+    mean_ok = bool(passages) and mean_confidence >= settings.SUFF_T_MEAN_CONF
+    return inclusion_ok, mean_ok, mean_confidence
+
+
+def _confidence_gap(
+    passages: List[CandidatePassage],
+    inclusion_ok: bool,
+    mean_ok: bool,
+    mean_confidence: float,
+) -> Optional[str]:
+    """Name the confidence failure. An empty set stays on the provenance path."""
+    if not passages:
+        return None
+    if not inclusion_ok:
+        return f"A passage is below the inclusion threshold {settings.SUFF_T_INCLUSION:.2f}."
+    if not mean_ok:
+        return (
+            f"Mean passage confidence {mean_confidence:.2f} is below "
+            f"{settings.SUFF_T_MEAN_CONF:.2f}."
+        )
+    return None
+
+
 class EvidenceGate:
     """Paper sufficiency contract with bootstrap LCB + entropy + contradiction + ε_U."""
 
@@ -111,31 +154,51 @@ class EvidenceGate:
             and not (p.metadata or {}).get("weak_provenance")
             for p in passages
         )
-
-        if (
+        inclusion_ok, mean_ok, mean_confidence = _confidence_vote(passages)
+        confidence_gap = _confidence_gap(passages, inclusion_ok, mean_ok, mean_confidence)
+        bundle_ok = (
             not missing
             and not unresolved_critical
             and not contradiction_overflow
             and provenance_ok
-        ):
+        )
+
+        if bundle_ok and confidence_gap is None:
             action = PolicyAction.ACCEPT
-            reason = "All required clinical facets passed LCB, entropy, and contradiction gates."
+            reason = (
+                "All required clinical facets passed LCB, entropy, contradiction, "
+                "inclusion, and mean-confidence gates."
+            )
             passed = True
         elif can_retrieve_more and (
             missing
             or unresolved_critical
             or contradiction_overflow
             or marginal > settings.SUFF_MIN_MARGINAL_UTILITY
+            or confidence_gap is not None
         ):
             action = PolicyAction.RETRIEVE_MORE
-            reason = "Required facets, contradiction adjudication, or marginal utility justify targeted retrieval."
+            reason = (
+                confidence_gap
+                if bundle_ok and confidence_gap
+                else "Required facets, contradiction adjudication, or marginal utility justify targeted retrieval."
+            )
             passed = False
         else:
             action = PolicyAction.INSUFFICIENT_EVIDENCE
-            reason = "Evidence remains insufficient for clinician CDS after policy-bounded retrieval."
+            reason = (
+                confidence_gap
+                if bundle_ok and confidence_gap
+                else "Evidence remains insufficient for clinician CDS after policy-bounded retrieval."
+            )
             passed = False
 
         hints = self._retrieval_hints(missing, contradictions)
+        hints["mean_confidence"] = round(mean_confidence, 4)
+        hints["inclusion_threshold"] = settings.SUFF_T_INCLUSION
+        hints["mean_confidence_threshold"] = settings.SUFF_T_MEAN_CONF
+        hints["inclusion_passed"] = inclusion_ok
+        hints["mean_confidence_passed"] = mean_ok
         decision = PolicyDecision(
             passed=passed,
             action=action,

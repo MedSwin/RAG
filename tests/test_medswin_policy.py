@@ -77,3 +77,56 @@ def test_contradictions_are_preserved_in_policy_decision():
     assert check.contradiction_count >= 1
     assert check.policy_decision is not None
     assert check.policy_decision.unresolved_critical_conflicts is True
+
+
+def test_mean_confidence_below_threshold_retrieves_more(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "SUFF_T_MEAN_CONF", 0.99)
+    policy = EvidenceSufficiencyPolicy()
+    facets = [
+        ClinicalFacet(name="guideline_concordance", threshold=0.55, keywords=["guideline", "recommendation"]),
+    ]
+    passages = [
+        _passage("c1", "Guideline recommendation supports treatment when clinically indicated."),
+        _passage("c2", "Current guideline recommendation confirms treatment for the eligible population."),
+    ]
+
+    check = policy.check_sufficiency(
+        passages,
+        iteration=0,
+        constraints={"required_facets": [facet.model_dump() for facet in facets]},
+        selected_passages=passages,
+    )
+
+    assert check.passed is False
+    assert check.action_taken == "retrieve_more"
+    assert "mean passage confidence" in check.policy_decision.reason.lower()
+    assert check.policy_decision.retrieval_hints["mean_confidence_passed"] is False
+    assert check.policy_decision.retrieval_hints["inclusion_passed"] is True
+
+
+def test_passage_below_inclusion_abstains_on_the_last_loop(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "SUFF_T_INCLUSION", 0.99)
+    policy = EvidenceSufficiencyPolicy()
+    facets = [
+        ClinicalFacet(name="guideline_concordance", threshold=0.55, keywords=["guideline", "recommendation"]),
+    ]
+    passages = [
+        _passage("c1", "Guideline recommendation supports treatment when clinically indicated.", score=0.92),
+        _passage("c2", "Current guideline recommendation confirms treatment for the eligible population.", score=0.90),
+    ]
+
+    check = policy.check_sufficiency(
+        passages,
+        iteration=settings.MAX_RETRIEVE_LOOPS - 1,
+        constraints={"required_facets": [facet.model_dump() for facet in facets]},
+        selected_passages=passages,
+    )
+
+    assert check.passed is False
+    assert check.action_taken == "insufficient_evidence"
+    assert "inclusion threshold" in check.policy_decision.reason.lower()
+    assert check.policy_decision.retrieval_hints["inclusion_passed"] is False

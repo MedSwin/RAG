@@ -123,22 +123,12 @@ class AdaptiveModelRateLimiter:
                 settings.MODEL_RATE_LIMIT_BASE_COOLDOWN_S * (2 ** (self._consecutive_rate_limits - 1)),
             )
             jitter = random.uniform(0, settings.MODEL_RATE_LIMIT_JITTER_S)
-            # Root Cause vs Logic: provider retry headers can advertise long
-            # cooldowns that are still shorter than the full rate-limit window.
-            # The logic now respects the configured maximum cooldown instead of
-            # truncating to a few seconds, so large ingest runs can actually
-            # clear the quota boundary before retrying.
-            bounded_header_delay = (
-                min(header_delay, settings.MODEL_RATE_LIMIT_MAX_COOLDOWN_S)
-                if header_delay is not None
-                else None
-            )
-            # Root Cause vs Logic: some cloud embedding deployments emit short
-            # retry hints even when repeated 429s show the real quota window is
-            # longer. We therefore honor the provider hint but never wait less
-            # than the exponential fallback, so repeated failures back off more
-            # aggressively instead of cycling at the same interval.
-            delay = max(bounded_header_delay if bounded_header_delay is not None else 0.0, fallback_delay) + jitter
+            # A provider Retry-After is the wait. Cap it at the configured maximum.
+            # The 600s fallback applies only when the response has no retry hint.
+            if header_delay is not None:
+                delay = min(header_delay, settings.MODEL_RATE_LIMIT_MAX_COOLDOWN_S) + jitter
+            else:
+                delay = fallback_delay + jitter
             self._cooldown_until = max(self._cooldown_until, time.monotonic() + delay)
             self._last_delay = delay
 
