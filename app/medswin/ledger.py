@@ -1061,6 +1061,10 @@ _START_VERB = re.compile(
     re.I,
 )
 _ADMIN_VERB = re.compile(r"\b(?:given|gave|used|administer(?:ed|s|ing)?)\b", re.I)
+_SUPPLY_VERB = re.compile(
+    r"\b(?:suppl(?:y|ies|ied|ying)|dispens(?:e|es|ed|ing))\b",
+    re.I,
+)
 _PUT_ON = re.compile(
     r"\b(?:put|puts|putting|placed?|placing)\b(?:\s+\w+){0,5}\s+on\b",
     re.I,
@@ -1241,6 +1245,23 @@ def _has_recommendation_verb(text: str) -> bool:
         if _LOCAL_NEGATION.search(window):
             continue
         if _verb_orders_named_drug(text, match.start(), match.end()):
+            return True
+    for match in _SUPPLY_VERB.finditer(text or ""):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        tail = text[match.end():]
+        prefix = text[: match.start()]
+        if _direct_drug_object(tail):
+            return True
+        if not re.search(r"\b(?:was|is|were|been|be)\s+$", prefix or "", re.I):
+            continue
+        if (
+            intervention_tokens(prefix)
+            and not intervention_tokens(tail)
+            and _subject_is_drug(prefix)
+            and not _MONITOR_WORD.search(tail or "")
+        ):
             return True
     for match in _PUT_ON.finditer(text or ""):
         window = text[max(0, match.start() - 48): match.start()]
