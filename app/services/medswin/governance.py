@@ -68,11 +68,35 @@ def lead_with_caution(text: str) -> str:
         cautions = [sentence for sentence in sentences if _is_caution(sentence)]
         if cautions and not _is_caution(sentences[0]):
             rest = [sentence for sentence in sentences if not _is_caution(sentence)]
-            return " ".join(cautions + rest)
-        return raw
-    span = LexicalRetriever._caution_span(raw)
-    if span and raw.lower().find(span.lower()) > 80:
-        return f"{span} {raw}"
+            ordered = " ".join(cautions + rest)
+        else:
+            ordered = raw
+    else:
+        span = LexicalRetriever._caution_span(raw)
+        ordered = f"{span} {raw}" if span and raw.lower().find(span.lower()) > 80 else raw
+    return _prepend_dose(ordered)
+
+
+def _prepend_dose(text: str) -> str:
+    """Put a chart dose in the first lines when it is not a caution sentence."""
+    from app.medswin.ledger import dose_span
+
+    raw = text or ""
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", raw) if part.strip()]
+    doses = [sentence for sentence in sentences if dose_span(sentence).lower() == sentence.lower()]
+    if len(sentences) > 1 and doses and sentences[0] not in doses:
+        rest = [sentence for sentence in sentences if sentence not in doses]
+        raw = " ".join(doses + rest)
+        sentences = doses + rest
+    extras = []
+    for sentence in sentences:
+        span = dose_span(sentence)
+        if not span or span.lower() == sentence.lower():
+            continue
+        if raw.lower().find(span.lower()) > 80 and span not in extras:
+            extras.append(span)
+    if extras:
+        return f"{' '.join(extras)} {raw}".strip()
     return raw
 
 

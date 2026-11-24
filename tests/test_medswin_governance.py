@@ -2,6 +2,16 @@ from app.models.medswin import CandidatePassage, SourceType
 from app.services.medswin.governance import build_citation, ensure_cds_language, redact_phi_payload, redact_phi_text
 
 
+def test_a_long_passage_shows_the_chart_dose_first():
+    from app.services.medswin.governance import lead_with_caution
+
+    filler = " ".join(f"history{i}" for i in range(40))
+    shown = lead_with_caution(f"{filler} ASA 100mg daily")
+    assert shown.lower().startswith("asa 100mg daily")
+    assert "history0" in shown
+    assert shown.lower().find("asa 100mg") < shown.lower().find("history0")
+
+
 def test_a_long_passage_shows_the_caution_first():
     from app.schemas.evidence import EvidenceBundle
     from app.schemas.traces import ChatResponse
