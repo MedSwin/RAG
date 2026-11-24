@@ -237,12 +237,14 @@ def test_a_late_caution_reaches_the_specialist_pool():
     spec = QuerySpec(canonical_terms=["apixaban"], facets=[
         ClinicalFacet(name="safety_contraindications", required=True, threshold=0.7, keywords=["apixaban"])
     ])
-    asyncio.run(
+    bundle, _check = asyncio.run(
         orchestrator._retrieve_with_sufficiency("Which dose?", spec, "org", None, {}, trace)
     )
     assert seen
     assert "caution" in seen[0]
     assert seen[0][0] == "caution"
+    assert bundle.passages
+    assert bundle.passages[0].chunk_id == "caution"
 
 
 def test_the_model_question_drops_the_phone():

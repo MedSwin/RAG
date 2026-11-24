@@ -926,6 +926,7 @@ class MedSwinOrchestrator:
         if ranked_out is not None:
             ranked_out[:] = ranked
         if selected:
+            selected = prioritize_passages(list(selected))
             for trace_row in trace.rerank_traces[-1:]:
                 trace_row.selected_chunk_ids = [p.chunk_id for p in selected]
                 trace_row.rejected_chunk_ids = [
