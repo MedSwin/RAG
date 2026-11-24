@@ -424,6 +424,15 @@ _ON_TOPIC = re.compile(
     r"discussion|agenda|review|notes?|chart|lists?)$",
     re.I,
 )
+_MED_LIST = re.compile(
+    r"\b(?:medications?|medicines?|meds)(?:\s+list)?\b(?P<mid>(?:\s+\w+){0,4})\s*(?P<mark>includes?\b|:)",
+    re.I,
+)
+_MED_HISTORY = re.compile(r"\b(?:history|past|previously)\b", re.I)
+_MED_TOPIC = re.compile(
+    r"\b(?:reviews?|discuss(?:ed|ion|ing)?|counsell?(?:ing|ed)?|meetings?|questions?)\b",
+    re.I,
+)
 
 
 def _no_longer_stop(text: str) -> bool:
@@ -512,6 +521,34 @@ def _on_object_is_drug(text: str) -> bool:
     if not content or not _token_names_drug(content[0]):
         return False
     return not (len(content) >= 2 and _ON_TOPIC.match(content[1]))
+
+
+def _med_list_kind(text: str) -> str:
+    """Return keep, stop, or empty for a medication-list line."""
+    raw = text or ""
+    if _MED_HISTORY.search(raw) or _MED_TOPIC.search(raw):
+        return ""
+    for match in _MED_LIST.finditer(raw):
+        window = raw[max(0, match.start() - 48): match.start("mark")]
+        tail = raw[match.end():]
+        negated = bool(_LOCAL_NEGATION.search(window) or re.match(r"\s*(?:no|not)\b", tail, re.I))
+        drug_tail = re.sub(r"^\s*(?:no|not)\b", "", tail, count=1, flags=re.I) if negated else tail
+        if not _on_object_is_drug(drug_tail):
+            continue
+        return "stop" if negated else "keep"
+    return ""
+
+
+def _current_med_list(text: str) -> bool:
+    """True when a medication list names a current drug."""
+    return _med_list_kind(text) == "keep"
+
+
+def _med_list_stop(text: str) -> bool:
+    """True when a medication list says the drug is absent."""
+    if _negated_off_keep(text):
+        return False
+    return _med_list_kind(text) == "stop"
 
 
 def _not_on_stop(text: str) -> bool:
@@ -641,6 +678,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _off_drug_stop(text)
         or _not_for_stop(text)
         or _not_on_stop(text)
+        or _med_list_stop(text)
         or _refused_stop(text)
     )
 

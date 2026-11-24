@@ -142,6 +142,13 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "The patient is on warfarin 5 mg.",
         "The patient is on warfarin for AF.",
         "The patient is currently on warfarin therapy.",
+        "Medications include warfarin.",
+        "Home medications include warfarin.",
+        "Current medications: warfarin.",
+        "Usual medicines include warfarin.",
+        "Meds: warfarin.",
+        "The medication list includes warfarin.",
+        "Discharge medications include warfarin.",
         "Continue warfarin and monitor the INR.",
     ):
         pairs = chart_contradictions(chart, [warning, other])
@@ -181,6 +188,13 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "The note is on warfarin dosing.",
         "Advice on warfarin.",
         "Now on the agenda.",
+        "History of medications includes warfarin.",
+        "Medications included warfarin in the past.",
+        "The medication review includes warfarin.",
+        "Include warfarin in the counselling.",
+        "Discuss medications including warfarin.",
+        "No medications include warfarin.",
+        "Medications do not include warfarin.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
     recommendation = _entry(
@@ -194,6 +208,14 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
     assert len(caution) == 1
     assert caution[0].chunk_id_a == "rec"
     assert caution[0].chunk_id_b == PATIENT_CHART_ID
+    listed = chart_contradictions(
+        "Medications include warfarin and apixaban.",
+        [warning, other],
+    )
+    assert {pair.chunk_id_b for pair in listed} == {"war", "aw"}
+    for pair in listed:
+        tail = pair.reason.rsplit(" for ", 1)[-1].strip(" .")
+        assert tail in {"warfarin", "apixaban"}
 
 
 def test_a_chart_continuation_qualifies_against_the_same_drug():
@@ -477,6 +499,8 @@ def test_a_patient_mention_does_not_conflict_with_the_drug_warning():
         "The patient is currently on the warfarin pathway.",
         "The note is on warfarin dosing.",
         "Advice on warfarin.",
+        "The medication review includes warfarin.",
+        "History of medications includes warfarin.",
     ):
         assert pairs_for(note, "Avoid warfarin.") == [], note
         assert pairs_for(note, "Warfarin is recommended.") == [], note
@@ -487,6 +511,13 @@ def test_a_patient_mention_does_not_conflict_with_the_drug_warning():
     ordered = pairs_for("The patient is for warfarin.", "Avoid warfarin.")
     assert len(ordered) == 1
     assert "warfarin" in ordered[0].reason
+    listed = pairs_for("Medications include warfarin.", "Avoid warfarin.")
+    assert len(listed) == 1
+    assert "warfarin" in listed[0].reason
+    assert pairs_for("Medications include warfarin.", "Warfarin is recommended.") == []
+    review = pairs_for("A review supports warfarin.", "Avoid warfarin.")
+    assert len(review) == 1
+    assert "warfarin" in review[0].reason
 
 
 def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():
@@ -1282,6 +1313,9 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
         "The patient has never been on warfarin.",
         "The patient was never on warfarin.",
         "The patient is not on warfarin therapy.",
+        "No medications include warfarin.",
+        "Medications do not include warfarin.",
+        "Medications include no warfarin.",
         "Wean off warfarin.",
         "Wean the patient off warfarin.",
         "Wean warfarin.",
