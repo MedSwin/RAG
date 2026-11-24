@@ -839,6 +839,10 @@ _COMPLIANT_WITH = re.compile(
     r"\b(?:compliant|adherent)\b(?:\s+\w+){0,3}\s+(?:with|to)\b",
     re.I,
 )
+_ANTICOAGULATED_WITH = re.compile(
+    r"\banticoagulat(?:ed|ing)\b(?:\s+\w+){0,4}\s+with\b",
+    re.I,
+)
 _COMPLIANT_WORD = re.compile(r"\b(?:compliant|adherent)\b", re.I)
 _ARRIVAL_ON = re.compile(
     r"\b(?:came|come|comes|coming|admitted|admission|discharg(?:e|ed|ing)|"
@@ -1025,6 +1029,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
     if _tolerating_drug(sentence):
         return True
     if _compliant_drug(sentence):
+        return True
+    if _anticoagulated_with_drug(sentence):
         return True
     if _arrival_on_drug(sentence):
         return True
@@ -1252,6 +1258,25 @@ def _compliant_drug(sentence: str) -> bool:
         if intervention_tokens(tail) or _MONITOR_WORD.search(tail or ""):
             continue
         if intervention_tokens(prefix) and _subject_is_drug(prefix):
+            return True
+    return False
+
+
+def _anticoagulated_with_drug(sentence: str) -> bool:
+    """True when the patient is anticoagulated with a named drug."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _on_object_is_drug
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text):
+        return False
+    started = bool(re.match(r"\s*anticoagulat(?:ed|ing)\b", text, re.I))
+    if not re.search(r"\bpatients?\b", text, re.I) and not started:
+        return False
+    for match in _ANTICOAGULATED_WITH.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        if _on_object_is_drug(text[match.end():]):
             return True
     return False
 
@@ -1666,6 +1691,7 @@ def _chart_caution_text(chart: str) -> str:
         _not_established_stop,
         _not_tolerating_stop,
         _not_compliant_stop,
+        _not_anticoagulated_stop,
         _med_list_stop,
         _refused_stop,
         _negated_away_split,
@@ -1691,6 +1717,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _not_established_stop(sentence)
                 or _not_tolerating_stop(sentence)
                 or _not_compliant_stop(sentence)
+                or _not_anticoagulated_stop(sentence)
                 or _med_list_stop(sentence)
                 or _refused_stop(sentence)
             ):
