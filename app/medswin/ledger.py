@@ -989,12 +989,27 @@ def _chart_recommendation_text(chart: str) -> str:
     return " ".join(kept).strip()
 
 
+def _kept_continuation(sentence: str) -> str:
+    """Keep a continuation. A stop for a different drug stays out of that text."""
+    recommendation, clause = _caution_clause(sentence)
+    recommendation_drugs = intervention_tokens(recommendation)
+    clause_drugs = intervention_tokens(clause)
+    if recommendation_drugs and clause_drugs and recommendation_drugs.isdisjoint(clause_drugs):
+        text = recommendation
+    else:
+        text = sentence
+    if not _is_continuation_sentence(text):
+        return ""
+    return " ".join(text.split())
+
+
 def _chart_continuation_text(chart: str) -> str:
     """Keep chart sentences that say to continue a drug."""
     kept = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", chart or ""):
-        if _is_continuation_sentence(sentence):
-            kept.append(sentence.strip())
+        text = _kept_continuation(sentence)
+        if text:
+            kept.append(text)
     return " ".join(kept).strip()
 
 

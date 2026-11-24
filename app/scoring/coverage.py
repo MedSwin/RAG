@@ -209,7 +209,9 @@ _LOCAL_NEGATION = re.compile(
     re.I,
 )
 _BENIGN_DO_NOT = re.compile(
-    r"^\s+(?:delay|withhold|wait|hesitate|stop|discontinue|cease|interrupt|hold|suspend|pause|halt)\b",
+    r"^\s+(?:(?:be|being)\s+)?"
+    r"(?:delay|withhold|withheld|wait|hesitate|stop(?:ped)?|discontinue[d]?|cease[d]?|"
+    r"interrupt(?:ed)?|hold|held|suspend(?:ed)?|pause[d]?|halt(?:ed)?)\b",
     re.I,
 )
 _QUALIFY = re.compile(r"\b(?:unless|except|cautions?|precautions?|monitor)\b", re.I)
