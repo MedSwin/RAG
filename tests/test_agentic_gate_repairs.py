@@ -89,6 +89,10 @@ def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning()
         "Do not discontinue warfarin. Apixaban is recommended.",
         "Do not cease warfarin. Apixaban is recommended.",
         "Do not interrupt warfarin. Apixaban is recommended.",
+        "Do not hold warfarin. Apixaban is recommended.",
+        "Do not suspend warfarin. Apixaban is recommended.",
+        "Do not pause warfarin. Apixaban is recommended.",
+        "Do not halt warfarin. Apixaban is recommended.",
     ):
         support = _entry("note", "guideline_concordance", claim, EvidencePolarity.SUPPORTS, grade=0.95)
         pairs = detect_contradictions([support, warning, same])
