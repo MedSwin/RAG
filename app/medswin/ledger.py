@@ -835,6 +835,11 @@ _TOLERATING = re.compile(
     r"(?:^|\b(?:is|was|were|are|am|been|being|patients?|poorly|well)\s+)tolerat(?:e|es|ed|ing)\b",
     re.I,
 )
+_COMPLIANT_WITH = re.compile(
+    r"\b(?:compliant|adherent)\b(?:\s+\w+){0,3}\s+(?:with|to)\b",
+    re.I,
+)
+_COMPLIANT_WORD = re.compile(r"\b(?:compliant|adherent)\b", re.I)
 _ARRIVAL_ON = re.compile(
     r"\b(?:came|come|comes|coming|admitted|admission|discharg(?:e|ed|ing)|"
     r"presents?|presented|presenting|brought|went|goes|going|gone|sent|sends|sending)\b"
@@ -1018,6 +1023,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
     if _using_drug(sentence):
         return True
     if _tolerating_drug(sentence):
+        return True
+    if _compliant_drug(sentence):
         return True
     if _arrival_on_drug(sentence):
         return True
@@ -1207,6 +1214,40 @@ def _tolerating_drug(sentence: str) -> bool:
             and _subject_is_drug(prefix)
             and not _MONITOR_WORD.search(tail or "")
         ):
+            return True
+    return False
+
+
+def _compliant_drug(sentence: str) -> bool:
+    """True when the patient is compliant or adherent with a named drug."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _on_object_is_drug
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text):
+        return False
+    started = bool(re.match(r"\s*(?:compliant|adherent)\b", text, re.I))
+    for match in _COMPLIANT_WITH.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        prefix = text[: match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        if re.search(r"\bnon-?$", prefix, re.I):
+            continue
+        if not re.search(r"\bpatients?\b", text, re.I) and not started:
+            continue
+        if _on_object_is_drug(text[match.end():]):
+            return True
+    for match in _COMPLIANT_WORD.finditer(text):
+        prefix = text[: match.start()]
+        tail = text[match.end():]
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        if re.search(r"\bnon-?$", prefix, re.I):
+            continue
+        if intervention_tokens(tail) or _MONITOR_WORD.search(tail or ""):
+            continue
+        if intervention_tokens(prefix) and _subject_is_drug(prefix):
             return True
     return False
 
@@ -1599,6 +1640,7 @@ def _chart_caution_text(chart: str) -> str:
         _not_using_stop,
         _not_established_stop,
         _not_tolerating_stop,
+        _not_compliant_stop,
         _med_list_stop,
         _refused_stop,
         _negated_away_split,
@@ -1623,6 +1665,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _not_using_stop(sentence)
                 or _not_established_stop(sentence)
                 or _not_tolerating_stop(sentence)
+                or _not_compliant_stop(sentence)
                 or _med_list_stop(sentence)
                 or _refused_stop(sentence)
             ):

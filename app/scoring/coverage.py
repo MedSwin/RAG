@@ -432,6 +432,14 @@ _NOT_TOLERATING = re.compile(
     r"|\bnever\s+(?:been\s+)?tolerat(?:e|es|ed|ing)\b",
     re.I,
 )
+_NOT_COMPLIANT = re.compile(
+    r"\bnot\s+(?:(?:currently|now|still)\s+)?(?:compliant|adherent)\b(?:\s+\w+){0,3}\s+(?:with|to)\b"
+    r"|\bnon-?compliant\b(?:\s+\w+){0,3}\s+with\b"
+    r"|\bnon-?adherent\b(?:\s+\w+){0,3}\s+to\b"
+    r"|\bnever\s+(?:been\s+)?(?:compliant|adherent)\b(?:\s+\w+){0,3}\s+(?:with|to)\b"
+    r"|\bnon-?(?:compliant|adherent)\s*[.!?]*\s*$",
+    re.I,
+)
 _NOT_ON = re.compile(
     r"\bnot\s+on\b"
     r"|\bnot\s+(?:currently|now|still|back)\s+on\b"
@@ -636,6 +644,26 @@ def _not_tolerating_stop(text: str) -> bool:
         if not _token_names_drug(drug) or (nxt and _ON_TOPIC.match(nxt)):
             continue
         return True
+    return False
+
+
+def _not_compliant_stop(text: str) -> bool:
+    """True when the patient is not compliant with a named drug."""
+    raw = text or ""
+    if re.search(r"\b(?:counsel|discuss|advise|update|inform|educat\w*)\b", raw, re.I):
+        return False
+    for match in _NOT_COMPLIANT.finditer(raw):
+        window = raw[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        tail = raw[match.end():]
+        if _on_object_is_drug(tail):
+            return True
+        if tail.strip():
+            continue
+        words = re.findall(r"[A-Za-z0-9'-]+", raw[: match.start()])
+        if any(_token_names_drug(word) for word in words):
+            return True
     return False
 
 
@@ -844,6 +872,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _not_using_stop(text)
         or _not_established_stop(text)
         or _not_tolerating_stop(text)
+        or _not_compliant_stop(text)
         or _med_list_stop(text)
         or _refused_stop(text)
     )
