@@ -169,26 +169,22 @@ class EvidenceGate:
         caution_blocks = contradiction_overflow and not unresolved_critical
         from app.medswin.cds import _caution_drug_name, _caution_summary, _conflict_summary
 
-        medium_blocks = caution_blocks and any(
-            not item.resolved and item.severity == "medium" for item in unresolved
-        )
-        low_blocks = caution_blocks and any(
-            not item.resolved and item.severity == "low" for item in unresolved
-        )
+        medium_open = any(not item.resolved and item.severity == "medium" for item in unresolved)
+        low_open = any(not item.resolved and item.severity == "low" for item in unresolved)
         reason_parts = []
-        if medium_blocks:
+        if medium_open:
             reason_parts.append(
                 _conflict_summary(
                     _caution_drug_name(passages, None, contradictions or [], severity="medium")
                 )
             )
-        if low_blocks:
+        if low_open:
             reason_parts.append(
                 _caution_summary(
                     _caution_drug_name(passages, None, contradictions or [], severity="qualifier")
                 )
             )
-        caution_reason = " ".join(reason_parts)
+        caution_reason = " ".join(reason_parts) if caution_blocks else ""
         if caution_blocks and not caution_reason:
             caution_reason = _caution_summary("")
         if caution_blocks and missing:
@@ -205,6 +201,8 @@ class EvidenceGate:
         )
         if unresolved_critical and missing:
             high_reason = f"{high_reason} Required facets remain open."
+        if unresolved_critical and reason_parts:
+            high_reason = f"{high_reason} {' '.join(reason_parts)}"
         if bundle_ok and confidence_gap is None:
             action = PolicyAction.ACCEPT
             reason = (

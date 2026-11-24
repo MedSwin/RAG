@@ -118,6 +118,7 @@ def cards_from_chat(
         qualifying=_has_unresolved_severity(decision, contradictions, "low"),
         caution_name=_caution_drug_name(passages, decision, contradictions, severity="qualifier"),
         conflict_drug=_caution_drug_name(passages, decision, contradictions, severity="high"),
+        medium_name=_caution_drug_name(passages, decision, contradictions, severity="medium"),
         chart_caution=_chart_caution_line(decision, contradictions),
     )
     card: Dict[str, Any] = {
@@ -307,6 +308,7 @@ def _detail(
     qualifying: bool = False,
     caution_name: str = "",
     conflict_drug: str = "",
+    medium_name: str = "",
     chart_caution: str = "",
 ) -> str:
     missing_text = ", ".join(missing) if missing else "none"
@@ -325,6 +327,10 @@ def _detail(
         lead = f"{lead} {_caution_summary(caution_name)}"
     if conflict_drug and conflict_drug.lower() not in reason.lower():
         lead = f"{lead} Unresolved evidence conflicts for {conflict_drug} need clinician review."
+    if medium_name:
+        medium_sentence = _conflict_summary(medium_name)
+        if medium_sentence.lower() not in lead.lower():
+            lead = f"{lead} {medium_sentence}"
     if chart_caution and chart_caution.lower() not in lead.lower():
         sentence = chart_caution if chart_caution.endswith(".") else f"{chart_caution}."
         lead = f"{lead} {sentence}"

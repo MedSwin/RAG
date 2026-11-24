@@ -335,6 +335,26 @@ def test_a_critical_card_names_the_conflict_drug():
     assert card["indicator"] == "critical"
     assert card["summary"] == "Unresolved evidence conflicts for apixaban need clinician review."
     assert "apixaban" in card["detail"].lower()
+    response.evidence_bundle.passages.append(
+        CandidatePassage(
+            chunk_id="warfarin",
+            doc_id="doc-warfarin",
+            source_type=SourceType.SAFETY,
+            text="Avoid warfarin.",
+        )
+    )
+    response.contradictions.append(
+        ContradictionPair(
+            facet="guideline_concordance",
+            chunk_id_a="chunk-1",
+            chunk_id_b="warfarin",
+            severity="medium",
+            reason="Same-drug safety warning conflicts with this recommendation for warfarin.",
+        )
+    )
+    beside = cards_from_chat(response)[0]
+    assert beside["summary"] == "Unresolved evidence conflicts for apixaban need clinician review."
+    assert "conflicts with warfarin" in beside["detail"].lower()
 
 
 def test_unknown_service_is_not_found():

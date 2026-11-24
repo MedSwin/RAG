@@ -69,6 +69,25 @@ def test_a_low_caution_is_named_in_the_gate_reason():
     )
     assert critical.action == PolicyAction.INSUFFICIENT_EVIDENCE
     assert critical.reason == "Unresolved evidence conflicts for apixaban need clinician review."
+    warfarin = _passage("warfarin", "Avoid warfarin.")
+    beside = ContradictionPair(
+        facet="guideline_concordance",
+        chunk_id_a="c1",
+        chunk_id_b="warfarin",
+        severity="medium",
+        reason="Same-drug safety warning conflicts with this recommendation for warfarin.",
+    )
+    hidden = EvidenceGate().decide(
+        [],
+        [],
+        [passage, caution, warfarin],
+        iteration=2,
+        clinical_scope=ClinicalScope.CLINICIAN_CDS,
+        contradictions=[high, beside],
+        stop_retrieval=True,
+    )
+    assert "conflicts for apixaban" in hidden.reason
+    assert "conflicts with warfarin" in hidden.reason
     medium = ContradictionPair(
         facet="guideline_concordance",
         chunk_id_a="c1",
