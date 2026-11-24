@@ -159,6 +159,36 @@ def _adds_a_new_drug_warning(item: CandidatePassage, selected: List[CandidatePas
     return not unnamed and not warned
 
 
+def _repeated_caution(
+    selected: List[CandidatePassage],
+    protected_sources: Optional[set] = None,
+) -> Optional[CandidatePassage]:
+    """Return a warning whose drug is already named by another selected warning."""
+    from app.medswin.ledger import intervention_tokens
+
+    protected = protected_sources or set()
+    victims = []
+    for item in selected:
+        if not _is_critical_caution(item):
+            continue
+        drugs = set(intervention_tokens(item.text or ""))
+        if not drugs:
+            continue
+        source = item.source_type.value
+        if source in protected and sum(other.source_type.value == source for other in selected) == 1:
+            continue
+        covered: set = set()
+        for other in selected:
+            if other is item or not _is_critical_caution(other):
+                continue
+            covered |= set(intervention_tokens(other.text or ""))
+        if drugs <= covered:
+            victims.append(item)
+    if not victims:
+        return None
+    return min(victims, key=lambda item: (item.fusion_score or 0.0, item.calibrated_score or 0.0))
+
+
 def _filler_candidates(
     selected: List[CandidatePassage],
     protected_sources: Optional[set] = None,
@@ -261,7 +291,17 @@ def _preserve_safety(
             protected_sources=protected_sources,
         )
         if fitted is None:
-            continue
+            victim = _repeated_caution(selected, protected_sources)
+            if victim is None:
+                continue
+            snapshot = list(selected)
+            selected.remove(victim)
+            current = sum(token_count(passage) for passage in selected)
+            if current + tokens <= token_budget and len(selected) < settings.MMR_MAX_EVIDENCE_CHUNKS:
+                fitted = current
+            else:
+                selected[:] = snapshot
+                continue
         item.selected_reason = "protected_critical_safety_or_contradiction"
         selected.append(item)
         current_tokens = fitted + tokens

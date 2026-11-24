@@ -1520,6 +1520,42 @@ def test_a_new_drug_caution_replaces_a_filler_at_the_passage_cap():
     assert "filler-8" not in kept
 
 
+def test_a_later_drug_replaces_a_repeated_caution_at_the_passage_cap():
+    from app.core.config import settings
+    from app.scoring.utility import select_bundle
+
+    passages = [
+        CandidatePassage(
+            chunk_id=f"w-{index}",
+            doc_id=f"w-{index}",
+            source_type=SourceType.SAFETY,
+            text="Avoid warfarin. " + " ".join(f"topic{index}{word}" for word in range(12)),
+            calibrated_score=0.90,
+            fusion_score=0.95,
+            safety_score=0.80,
+            token_count=20,
+        )
+        for index in range(settings.MMR_MAX_EVIDENCE_CHUNKS)
+    ]
+    passages.append(
+        CandidatePassage(
+            chunk_id="apix",
+            doc_id="apix",
+            source_type=SourceType.SAFETY,
+            text="Avoid apixaban.",
+            calibrated_score=0.90,
+            fusion_score=0.10,
+            safety_score=0.80,
+            token_count=20,
+        )
+    )
+    selected = select_bundle(passages, token_budget=1000, max_chunks=settings.MMR_MAX_EVIDENCE_CHUNKS)
+    kept = {item.chunk_id for item in selected}
+    assert len(selected) <= settings.MMR_MAX_EVIDENCE_CHUNKS
+    assert "apix" in kept
+    assert any(chunk_id.startswith("w-") for chunk_id in kept)
+
+
 def test_a_passage_below_inclusion_is_not_packed():
     from app.scoring.utility import select_bundle
 
