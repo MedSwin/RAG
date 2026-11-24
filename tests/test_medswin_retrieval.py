@@ -277,6 +277,13 @@ def test_an_aspirin_abbreviation_also_searches_aspirin():
     assert "asa" in dose
     assert "aspirin" in dose
     assert "aspirin" in focus.lower()
+    glued = LexicalRetriever._lexical_terms("ASA 100mg")
+    glued_focus = LexicalRetriever.focus_query("ASA 100mg")
+    assert "asa" in glued
+    assert "aspirin" in glued
+    assert "aspirin" in glued_focus.lower()
+    meeting_dose = LexicalRetriever._lexical_terms("The ASA meeting used a 100mg slide")
+    assert "aspirin" not in meeting_dose
 
 
 def test_a_brand_caution_also_searches_the_generic_drug():

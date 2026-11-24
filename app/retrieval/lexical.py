@@ -94,7 +94,15 @@ _QUERY_STOP = {
     "with",
 }
 _DOSE_WORDS = {"dose", "dosing", "mg", "tablet", "tab", "capsule", "daily"}
+_GLUED_DOSE_RE = re.compile(r"\d+(?:\.\d+)?(?:mg|mcg|g|ml|units?)")
 _ASA_CONTEXT_STOP = {"meeting", "conference", "society"}
+
+
+def _mentions_dose(tokens: set[str]) -> bool:
+    """True when the question states a dose, including a glued unit such as 100mg."""
+    if tokens & _DOSE_WORDS:
+        return True
+    return any(_GLUED_DOSE_RE.fullmatch(token) for token in tokens)
 _SAFE_ORG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _MEMORY_CACHE_MAX = 32
 
@@ -269,7 +277,7 @@ class LexicalRetriever:
             if generic not in lowered and generic not in extras:
                 extras.append(generic)
         tokens = set(LexicalRetriever._bm25_tokens(text))
-        if tokens & _DOSE_WORDS and not tokens & _ASA_CONTEXT_STOP:
+        if _mentions_dose(tokens) and not tokens & _ASA_CONTEXT_STOP:
             from app.medswin.ledger import _SHORT_ALIASES
 
             for term in tokens:
@@ -325,7 +333,7 @@ class LexicalRetriever:
             if generic is None and _SHORT_ALIASES.get(term):
                 question_tokens = set(LexicalRetriever._bm25_tokens(question))
                 if term in caution_term_set or (
-                    question_tokens & _DOSE_WORDS and not question_tokens & _ASA_CONTEXT_STOP
+                    _mentions_dose(question_tokens) and not question_tokens & _ASA_CONTEXT_STOP
                 ):
                     generic = _SHORT_ALIASES.get(term)
             if generic and generic not in seen and generic not in _QUERY_STOP and len(chosen) < 64:
