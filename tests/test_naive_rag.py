@@ -315,6 +315,34 @@ def test_a_late_caution_stays_in_the_naive_context():
     assert "Avoid apixaban." in packed[0].text
 
 
+def test_the_naive_prompt_keeps_a_late_caution():
+    class RecordingEmbed:
+        async def embed(self, texts):
+            return [np.array([1.0, 0.0], dtype=np.float32)]
+
+    filler = "History note. " * 300
+    passage = CandidatePassage(
+        chunk_id="emr-late",
+        doc_id="emr-late",
+        source_type=SourceType.EMR,
+        text=f"{filler} Avoid apixaban.",
+        dense_score=0.9,
+    )
+    llm = FakeLLM()
+    llm.backend = "medswin_local"
+    orch = NaiveRAGOrchestrator(
+        embedding_client=RecordingEmbed(),
+        llm_client=llm,
+        dense_retriever=FakeDense([passage]),
+    )
+    orch.session_repo = EmptyRepo()
+    orch.trace_repo = RecordingTraceRepo()
+    asyncio.run(orch.chat(query="Which dose?", user_id="u1", org_id="org1"))
+    prompt = llm.calls[0]["messages"][1]["content"]
+    assert "Avoid apixaban." in prompt
+    assert prompt.index("Avoid apixaban.") < prompt.index("History note.")
+
+
 def test_naive_passage_text_drops_the_phone():
     class RecordingEmbed:
         async def embed(self, texts):

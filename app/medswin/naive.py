@@ -23,7 +23,7 @@ from app.agents.base import prioritize_passages
 from app.core.config import settings
 from app.core.database import get_database
 from app.medswin.ledger import build_retrieval_ledger
-from app.services.medswin.governance import ensure_cds_language, redact_phi_text, redact_public_chat
+from app.services.medswin.governance import ensure_cds_language, lead_with_caution, redact_phi_text, redact_public_chat
 from app.repositories.sessions import SessionRepository
 from app.repositories.traces import TraceRepository
 from app.retrieval.dense import DenseRetriever
@@ -498,11 +498,13 @@ class NaiveRAGOrchestrator:
             raise RuntimeError("Naive RAG cannot generate without retrieved passages")
         local_2k = getattr(self.llm, "backend", "") in {"medswin_local", "local_http"}
         per_passage_cap = 2600 if local_2k else None
-        context = "\n\n".join(
-            f"[{idx}] chunk_id={passage.chunk_id} doc_id={passage.doc_id}\n"
-            f"{redact_phi_text(passage.text or '')[:per_passage_cap] if per_passage_cap else redact_phi_text(passage.text or '')}"
-            for idx, passage in enumerate(passages, start=1)
-        )
+        blocks = []
+        for idx, passage in enumerate(passages, start=1):
+            body = lead_with_caution(redact_phi_text(passage.text or ""))
+            if per_passage_cap:
+                body = body[:per_passage_cap]
+            blocks.append(f"[{idx}] chunk_id={passage.chunk_id} doc_id={passage.doc_id}\n{body}")
+        context = "\n\n".join(blocks)
         instruction = (
             "Answer the question using the retrieved passages. "
             "If the passages are weak or incomplete, still give your best answer."
