@@ -215,6 +215,48 @@ def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
     assert different == []
 
 
+def test_a_specialist_claim_does_not_inherit_the_other_drug_in_the_note():
+    passage = _passage("note", "Apixaban is recommended. Avoid warfarin.")
+    passage.calibrated_score = 0.90
+    facet = ClinicalFacet(name="guideline_concordance", keywords=["apixaban", "recommended"])
+    score_passage_facets(passage, [facet])
+    ledger = build_retrieval_ledger([passage], [facet])
+    batch = AgentClaimBatch(
+        agent_id="guideline",
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Apixaban is recommended.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="note",
+                confidence=0.80,
+                agent_id="guideline",
+            )
+        ],
+    )
+    merged = merge_agent_claims(ledger, [batch], [passage])
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    assert detect_contradictions([*merged, warning]) == []
+
+    same_drug = _entry(
+        "safety-apixaban",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    pairs = detect_contradictions([*merged, same_drug])
+    assert pairs
+    assert all("apixaban" in pair.reason for pair in pairs)
+    assert all("warfarin" not in pair.reason for pair in pairs)
+
+
 def test_a_mixed_note_keeps_the_recommendation_and_the_warning():
     from app.schemas.enums import SourceType
 

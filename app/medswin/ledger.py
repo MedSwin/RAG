@@ -491,14 +491,19 @@ def _reason_with_drug(reason: str, left: str, right: str) -> str:
 
 
 def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = None) -> str:
-    """Use the full passage when the claim preview was cut."""
+    """Use the claim when it names a drug. A cut preview still uses the passage."""
     if claim is not None and (claim.provenance or {}).get("sentence_scope") and (claim.claim or "").strip():
         return claim.claim.strip()
+    claim_text = (claim.claim or "").strip() if claim is not None else ""
     stored = (entry.text or "").strip()
+    if claim_text and intervention_tokens(claim_text):
+        cut = len(claim_text) >= 280 and stored.startswith(claim_text) and len(stored) > len(claim_text)
+        if not cut:
+            return claim_text
     if stored:
         return stored
-    if claim is not None and claim.claim:
-        return claim.claim
+    if claim_text:
+        return claim_text
     return " ".join(item.claim for item in entry.claims)
 
 
