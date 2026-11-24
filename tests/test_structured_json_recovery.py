@@ -130,6 +130,32 @@ def test_a_local_synthesis_failure_does_not_become_the_answer():
     assert raised is True
 
 
+def test_a_local_specialist_asks_for_more_than_96_tokens():
+    import asyncio
+
+    from app.agents.base import call_claim_agent
+    from app.schemas.enums import SourceType
+    from app.schemas.evidence import CandidatePassage
+
+    seen = {}
+
+    class _Client:
+        backend = "medswin_local"
+
+        async def call_llm(self, messages, json_schema=None, max_tokens=None, **kwargs):
+            seen["max_tokens"] = max_tokens
+            return {"content": '{"claims":[],"notes":[]}'}
+
+    passage = CandidatePassage(
+        chunk_id="c1",
+        doc_id="d1",
+        source_type=SourceType.CPG,
+        text="Guideline recommendation.",
+    )
+    asyncio.run(call_claim_agent(_Client(), "critic", "Review the conflict.", "Check both passages.", [passage]))
+    assert seen["max_tokens"] == 384
+
+
 def test_schema_instruction_adds_a_concrete_claim_example():
     instruction = schema_instruction({"type": "object", "properties": {"claims": {}, "notes": {}}})
     assert '"chunk_id":"id#0"' in instruction

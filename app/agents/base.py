@@ -288,7 +288,7 @@ async def call_claim_agent(
         )
     shared = passages if shared_passages is None else shared_passages
     try:
-        local_cap = 96 if getattr(client, "backend", "") in {"medswin_local", "local_http"} else None
+        local_cap = 384 if getattr(client, "backend", "") in {"medswin_local", "local_http"} else None
         response = await client.call_llm(
             [
                 {"role": "system", "content": shared_claim_system_message()},
