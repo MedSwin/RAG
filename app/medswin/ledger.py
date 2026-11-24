@@ -985,9 +985,15 @@ _START_VERB = re.compile(
     r"\b(?:commence|commenced|commencing|begin|begins|began|begun|beginning|offer|offered|offering)\b",
     re.I,
 )
-_ADMIN_VERB = re.compile(r"\b(?:given|gave|used)\b", re.I)
+_ADMIN_VERB = re.compile(r"\b(?:given|gave|used|administer(?:ed|s|ing)?)\b", re.I)
 _PUT_ON = re.compile(
     r"\b(?:put|puts|putting|placed?|placing)\b(?:\s+\w+){0,5}\s+on\b",
+    re.I,
+)
+_WITH_DRUG = re.compile(
+    r"\b(?:loads?|loaded|loading)\b(?:\s+\w+){0,5}\s+with\b"
+    r"|\b(?:cover(?:s|ed|ing)?|bridg(?:e|es|ed|ing))\s+the\s+patient\s+with\b"
+    r"|\b(?:was|is|were|been)\s+(?:covered|bridged)\s+with\b",
     re.I,
 )
 _SWITCH_TO = re.compile(
@@ -1057,6 +1063,14 @@ def _has_recommendation_verb(text: str) -> bool:
     for match in _PUT_ON.finditer(text or ""):
         window = text[max(0, match.start() - 48): match.start()]
         if _LOCAL_NEGATION.search(window):
+            continue
+        if _object_is_drug(text[match.end():]):
+            return True
+    for match in _WITH_DRUG.finditer(text or ""):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        if _MONITOR_WORD.search(text or ""):
             continue
         if _object_is_drug(text[match.end():]):
             return True

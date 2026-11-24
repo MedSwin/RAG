@@ -343,6 +343,15 @@ def test_a_chart_order_to_resume_or_switch_conflicts_with_that_drug():
         "The patient was put on warfarin.",
         "Place the patient on warfarin.",
         "The patient was placed on warfarin.",
+        "Load the patient with warfarin.",
+        "Load with warfarin.",
+        "The patient was loaded with warfarin.",
+        "Administer warfarin.",
+        "Warfarin was administered.",
+        "The patient was administered warfarin.",
+        "Cover the patient with warfarin.",
+        "The patient was covered with warfarin.",
+        "Bridge the patient with warfarin.",
     ):
         pairs = chart_contradictions(chart, [warning, other])
         assert len(pairs) == 1, chart
@@ -372,6 +381,10 @@ def test_a_chart_order_to_resume_or_switch_conflicts_with_that_drug():
         "Put the patient on hold.",
         "Put warfarin on hold.",
         "Do not put the patient on warfarin.",
+        "Do not administer warfarin.",
+        "Do not load the patient with warfarin.",
+        "Load the INR with warfarin.",
+        "Cover the wound with warfarin.",
         "Warfarin was not restarted.",
         "The patient was not recommenced on warfarin.",
         "Warfarin was kept on hold.",
@@ -384,10 +397,15 @@ def test_a_chart_order_to_resume_or_switch_conflicts_with_that_drug():
         EvidencePolarity.SUPPORTS,
         grade=0.95,
     )
-    blocked = chart_contradictions("Do not put the patient on warfarin.", [refused])
-    assert len(blocked) == 1
-    assert "warfarin" in blocked[0].reason
-    assert blocked[0].reason.startswith("Chart caution:")
+    for chart in (
+        "Do not put the patient on warfarin.",
+        "Do not administer warfarin.",
+        "Do not load the patient with warfarin.",
+    ):
+        blocked = chart_contradictions(chart, [refused])
+        assert len(blocked) == 1, chart
+        assert "warfarin" in blocked[0].reason
+        assert blocked[0].reason.startswith("Chart caution:")
 
 
 def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():
