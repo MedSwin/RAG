@@ -87,6 +87,18 @@ def get_storage_service() -> StorageService:
     return _storage_service
 
 
+def _is_operator(http_request: Request) -> bool:
+    try:
+        require_operator(http_request)
+    except HTTPException:
+        return False
+    return True
+
+
+def _is_chart(chunk: Dict[str, Any]) -> bool:
+    return str(chunk.get("source_type") or "").upper() == "EMR"
+
+
 def _schedule_shared_index_rebuild(
     background_tasks: BackgroundTasks,
     http_request: Request,
@@ -359,6 +371,7 @@ async def reset_benchmark_org(
     storage_service: StorageService = Depends(get_storage_service),
 ):
     request = bind_body_org(http_request, request)
+    require_operator(http_request)
     try:
         result = await storage_service.clear_benchmark_org(
             org_id=request.org_id,
@@ -392,6 +405,7 @@ async def clear_chunks(
     storage_service: StorageService = Depends(get_storage_service),
 ):
     org_id = bind_org(http_request, org_id)
+    require_operator(http_request)
     try:
         result = await storage_service.clear_chunks(collection_name, org_id=org_id)
         return {
@@ -415,7 +429,7 @@ async def get_chunk(
     org_id = bind_org(http_request, org_id)
     try:
         chunk = await storage_service.get_chunk(chunk_id, org_id=org_id)
-        if not chunk:
+        if not chunk or (_is_chart(chunk) and not _is_operator(http_request)):
             raise HTTPException(status_code=404, detail="Chunk not found")
         return chunk
     except HTTPException:
@@ -438,6 +452,8 @@ async def list_chunks(
     org_id = bind_org(http_request, org_id)
     try:
         filters: Dict[str, Any] = {"org_id": org_id}
+        if not _is_operator(http_request):
+            filters["source_type"] = {"$ne": "EMR"}
         if source:
             filters["metadata.source"] = source
         if task:

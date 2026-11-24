@@ -342,3 +342,38 @@ def test_operator_refresh_schedules_the_shared_index(monkeypatch):
     assert allowed.json()["index_rebuild"] == "scheduled"
     assert built[0]["org_id"] is None
     assert built[0]["force_rebuild"] is True
+
+
+def test_clinician_cannot_list_or_delete_charts(monkeypatch):
+    token = _auth(monkeypatch)
+    seen = []
+
+    class Storage:
+        async def list_chunks(self, skip, limit, filters):
+            seen.append(filters)
+            return [{"chunk_id": "guide", "source_type": "CPG"}]
+
+        async def get_chunk(self, chunk_id, org_id):
+            if chunk_id == "chart":
+                return {"chunk_id": chunk_id, "source_type": "EMR", "text": "Patient chart."}
+            return {"chunk_id": chunk_id, "source_type": "CPG", "text": "Guideline."}
+
+        async def clear_chunks(self, collection_name, org_id):
+            raise AssertionError("clear should not run")
+
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(storage.router, prefix="/api/v1/storage")
+    app.dependency_overrides[storage.get_storage_service] = lambda: Storage()
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {token}"}
+    listed = client.get("/api/v1/storage/chunks", headers=headers, params={"org_id": "org-a"})
+    assert listed.status_code == 200
+    assert seen[0]["source_type"] == {"$ne": "EMR"}
+    hidden = client.get("/api/v1/storage/chunks/chart", headers=headers, params={"org_id": "org-a"})
+    assert hidden.status_code == 404
+    visible = client.get("/api/v1/storage/chunks/guide", headers=headers, params={"org_id": "org-a"})
+    assert visible.status_code == 200
+    assert visible.json()["source_type"] == "CPG"
+    denied = client.delete("/api/v1/storage/chunks", headers=headers, params={"org_id": "org-a"})
+    assert denied.status_code == 403
