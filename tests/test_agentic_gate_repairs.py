@@ -215,6 +215,40 @@ def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
     assert different == []
 
 
+def test_a_long_specialist_quote_does_not_inherit_a_later_warning():
+    body = "Apixaban is recommended for stroke prevention in atrial fibrillation. " * 8
+    passage = _passage("note", body + "Avoid warfarin.")
+    passage.calibrated_score = 0.90
+    facet = ClinicalFacet(name="guideline_concordance", keywords=["apixaban", "recommended"])
+    score_passage_facets(passage, [facet])
+    ledger = build_retrieval_ledger([passage], [facet])
+    quote = passage.text[:320]
+    assert "warfarin" not in quote.lower()
+    assert len(quote) >= 280
+    batch = AgentClaimBatch(
+        agent_id="guideline",
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim=quote,
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="note",
+                confidence=0.80,
+                agent_id="guideline",
+            )
+        ],
+    )
+    merged = merge_agent_claims(ledger, [batch], [passage])
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    assert detect_contradictions([*merged, warning]) == []
+
+
 def test_a_specialist_claim_does_not_inherit_the_other_drug_in_the_note():
     passage = _passage("note", "Apixaban is recommended. Avoid warfarin.")
     passage.calibrated_score = 0.90

@@ -497,9 +497,7 @@ def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
     claim_text = (claim.claim or "").strip() if claim is not None else ""
     stored = (entry.text or "").strip()
     if claim_text and intervention_tokens(claim_text):
-        cut = len(claim_text) >= 280 and stored.startswith(claim_text) and len(stored) > len(claim_text)
-        if not cut:
-            return claim_text
+        return claim_text
     if stored:
         return stored
     if claim_text:
