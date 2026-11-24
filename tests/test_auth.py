@@ -74,6 +74,8 @@ def test_auth_on_accepts_a_signed_token(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_AUTH", True)
     monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
     monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    monkeypatch.setattr(settings, "AUTH_JWT_AUDIENCE", None)
+    monkeypatch.setattr(settings, "AUTH_JWT_ISSUER", None)
     token = _token(secret, {"sub": "clinician-1", "org_id": "demo-org", "exp": int(time.time()) + 60})
     response = _client().get("/api/v1/ping", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
@@ -114,6 +116,71 @@ def test_auth_on_rejects_a_token_expiry_that_is_not_a_number(monkeypatch):
     monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
     monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
     token = _token(secret, {"sub": "clinician-1", "exp": ["later"]})
+    response = _client().get("/api/v1/ping", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
+def test_auth_on_turns_a_claim_type_error_into_401(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", "clinical-secret-value")
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+
+    def _bad_claims(token: str, secret: str, now: float | None = None):
+        raise TypeError("exp")
+
+    monkeypatch.setattr("app.api.auth.verify_hs256", _bad_claims)
+    response = _client().get("/api/v1/ping", headers={"Authorization": "Bearer a.b.c"})
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid Bearer token"
+
+
+def test_auth_on_rejects_the_wrong_audience(monkeypatch):
+    secret = "clinical-secret-value"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    monkeypatch.setattr(settings, "AUTH_JWT_AUDIENCE", "medswin-cds")
+    monkeypatch.setattr(settings, "AUTH_JWT_ISSUER", None)
+    token = _token(
+        secret,
+        {"sub": "clinician-1", "aud": "other-app", "exp": int(time.time()) + 60},
+    )
+    response = _client().get("/api/v1/ping", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
+def test_auth_on_accepts_a_matching_audience_and_issuer(monkeypatch):
+    secret = "clinical-secret-value"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    monkeypatch.setattr(settings, "AUTH_JWT_AUDIENCE", "medswin-cds")
+    monkeypatch.setattr(settings, "AUTH_JWT_ISSUER", "medswin")
+    token = _token(
+        secret,
+        {
+            "sub": "clinician-1",
+            "aud": ["medswin-cds", "other"],
+            "iss": "medswin",
+            "exp": int(time.time()) + 60,
+        },
+    )
+    response = _client().get("/api/v1/ping", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json()["user_id"] == "clinician-1"
+
+
+def test_auth_on_rejects_the_wrong_issuer(monkeypatch):
+    secret = "clinical-secret-value"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    monkeypatch.setattr(settings, "AUTH_JWT_AUDIENCE", None)
+    monkeypatch.setattr(settings, "AUTH_JWT_ISSUER", "medswin")
+    token = _token(
+        secret,
+        {"sub": "clinician-1", "iss": "other", "exp": int(time.time()) + 60},
+    )
     response = _client().get("/api/v1/ping", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
 

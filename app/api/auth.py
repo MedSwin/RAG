@@ -54,6 +54,20 @@ def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + padding)
 
 
+def _audience_matches(claims: Dict[str, Any], expected: str) -> bool:
+    audience = claims.get("aud")
+    if isinstance(audience, str):
+        return audience.strip() == expected
+    if isinstance(audience, list):
+        return any(isinstance(item, str) and item.strip() == expected for item in audience)
+    return False
+
+
+def _issuer_matches(claims: Dict[str, Any], expected: str) -> bool:
+    issuer = claims.get("iss")
+    return isinstance(issuer, str) and issuer.strip() == expected
+
+
 def verify_hs256(token: str, secret: str, *, now: float | None = None) -> Dict[str, Any]:
     """Verify one HS256 JWT. Reject every other algorithm, including none."""
     parts = token.split(".")
@@ -94,6 +108,12 @@ def verify_hs256(token: str, secret: str, *, now: float | None = None) -> Dict[s
             raise ValueError("not_before")
         if current < float(not_before):
             raise ValueError("not_before")
+    expected_audience = (settings.AUTH_JWT_AUDIENCE or "").strip()
+    if expected_audience and not _audience_matches(claims, expected_audience):
+        raise ValueError("audience")
+    expected_issuer = (settings.AUTH_JWT_ISSUER or "").strip()
+    if expected_issuer and not _issuer_matches(claims, expected_issuer):
+        raise ValueError("issuer")
     return claims
 
 
@@ -124,7 +144,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content={"detail": "Unsupported JWT algorithm"})
         try:
             claims = verify_hs256(token, secret)
-        except (ValueError, OverflowError):
+        except (ValueError, OverflowError, TypeError):
             return JSONResponse(status_code=401, content={"detail": "Invalid Bearer token"})
         subject = str(claims.get("sub") or "").strip()
         if not subject:

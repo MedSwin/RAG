@@ -142,6 +142,8 @@ class Settings(BaseSettings):
     AGENT_RELIABILITY_PATH: str = "./data/calibration/agents.json"
     AUTH_JWT_SECRET: Optional[str] = None
     AUTH_JWT_ALGORITHM: str = "HS256"
+    AUTH_JWT_AUDIENCE: Optional[str] = None
+    AUTH_JWT_ISSUER: Optional[str] = None
 
     # Fusion score weights
     W_RERANK: float = 0.45
