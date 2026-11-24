@@ -3196,6 +3196,17 @@ def test_a_second_expansion_does_not_change_the_query():
     assert twice == once
 
 
+def test_a_safety_hint_overrides_a_guideline_only_pin():
+    from app.medswin.orchestrator import _source_filter_for_hints
+
+    pinned = SourceType.CPG
+    assert _source_filter_for_hints(pinned, {"focus_source": "SAFETY"}) == SourceType.SAFETY
+    assert _source_filter_for_hints(pinned, {"focus_source": "EMR"}) == SourceType.EMR
+    assert _source_filter_for_hints(pinned, None) == pinned
+    assert _source_filter_for_hints(pinned, {"focus_source": "not-a-source"}) == pinned
+    assert _source_filter_for_hints(None, {"focus_source": "SAFETY"}) == SourceType.SAFETY
+
+
 def test_a_duplicate_page_abstains_at_the_real_iteration():
     from app.medswin.orchestrator import retrieve_stall_action
 
