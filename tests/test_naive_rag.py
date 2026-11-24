@@ -289,6 +289,32 @@ def test_naive_search_and_answer_drop_the_phone():
     assert "[REDACTED_PHONE]" in blob
 
 
+def test_a_late_caution_stays_in_the_naive_context():
+    from app.medswin.naive import _truncate_context
+
+    fillers = [
+        CandidatePassage(
+            chunk_id=f"fill-{index}",
+            doc_id=f"fill-{index}",
+            source_type=SourceType.CPG,
+            text="diet " * 400,
+            calibrated_score=0.99,
+        )
+        for index in range(3)
+    ]
+    caution = CandidatePassage(
+        chunk_id="caution",
+        doc_id="caution",
+        source_type=SourceType.SAFETY,
+        text="Avoid apixaban.",
+        calibrated_score=0.60,
+        safety_score=0.40,
+    )
+    packed = _truncate_context(fillers + [caution], max_chars=500, token_budget=80)
+    assert packed[0].chunk_id == "caution"
+    assert "Avoid apixaban." in packed[0].text
+
+
 def test_naive_passage_text_drops_the_phone():
     class RecordingEmbed:
         async def embed(self, texts):

@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from app.agents.base import prioritize_passages
 from app.core.config import settings
 from app.core.database import get_database
 from app.medswin.ledger import build_retrieval_ledger
@@ -105,6 +106,7 @@ def _truncate_context(
     """
     if not passages:
         return []
+    passages = prioritize_passages(list(passages))
     token_budget = max(1, int(token_budget))
     char_ceiling = max(1, int(max_chars))
     kept: List[CandidatePassage] = []
