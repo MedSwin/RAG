@@ -23,7 +23,15 @@ def bind_tenant(request: Request, user_id: str, org_id: str) -> tuple[str, str]:
 
 
 def bind_org(request: Request, org_id: str) -> str:
-    """Return the organisation for a read. A token org replaces a different query value."""
+    """Return the organisation for a read or write. A mismatch returns 403."""
     token_user = str(getattr(request.state, "user_id", "") or "").strip()
     _, bound_org = bind_tenant(request, token_user or "anonymous", org_id)
     return bound_org
+
+
+def bind_body_org(request: Request, body):
+    """Return the body with the token organisation. A mismatch returns 403."""
+    org_id = bind_org(request, str(body.org_id))
+    if org_id == body.org_id:
+        return body
+    return body.model_copy(update={"org_id": org_id})

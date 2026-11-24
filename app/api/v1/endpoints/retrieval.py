@@ -7,9 +7,10 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from app.api.tenant import bind_body_org, bind_org
 from app.core.config import settings
 from app.core.indexing.hnsw import HNSWIndexBuilder
 from app.retrieval.dense import DenseRetriever
@@ -159,8 +160,9 @@ async def _search(request: QueryRequest) -> RetrievalResponse:
 
 
 @router.post("/search", response_model=RetrievalResponse)
-async def search_documents(request: QueryRequest):
+async def search_documents(request: QueryRequest, http_request: Request):
     """Search one organization's active ANN corpus and optionally rerank it."""
+    request = bind_body_org(http_request, request)
     try:
         return await _search(request)
     except HTTPException:
@@ -172,6 +174,7 @@ async def search_documents(request: QueryRequest):
 
 @router.get("/search", response_model=RetrievalResponse)
 async def search_documents_get(
+    http_request: Request,
     query: str = Query(..., min_length=1),
     org_id: str = Query(..., min_length=1),
     patient_id: Optional[str] = Query(None),
@@ -181,6 +184,7 @@ async def search_documents_get(
     final_top_k: int = Query(settings.FINAL_TOP_K, ge=1, le=settings.MAX_TOP_K),
     source_type: Optional[SourceType] = Query(None),
 ):
+    org_id = bind_org(http_request, org_id)
     return await search_documents(
         QueryRequest(
             query=query,
@@ -191,7 +195,8 @@ async def search_documents_get(
             initial_top_k=initial_top_k,
             final_top_k=final_top_k,
             source_type=source_type,
-        )
+        ),
+        http_request,
     )
 
 

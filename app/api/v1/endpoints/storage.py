@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import logging
 from datetime import datetime, timezone
 import asyncio
 
+from app.api.tenant import bind_body_org, bind_org
 from app.core.config import settings
 from app.core.database import get_database
 from app.schemas.enums import SourceType
@@ -244,9 +245,11 @@ async def _refresh_tenant_embeddings(org_id: str, batch_size: int) -> Dict[str, 
 async def store_chunks(
     request: StoreChunksRequest,
     background_tasks: BackgroundTasks,
+    http_request: Request,
     storage_service: StorageService = Depends(get_storage_service),
 ):
     """Normalize, document-embed, persist, then rebuild the shared ANN."""
+    request = bind_body_org(http_request, request)
     try:
         normalized = [_normalize_chunk(raw, request.org_id, request.source_type) for raw in request.chunks]
         await _attach_missing_embeddings(normalized, request.batch_size)
@@ -308,9 +311,11 @@ async def build_index(
 async def refresh_cloud_embeddings(
     request: RefreshEmbeddingsRequest,
     background_tasks: BackgroundTasks,
+    http_request: Request,
     storage_service: StorageService = Depends(get_storage_service),
 ):
     """Refresh one tenant's vectors, then rebuild the global online ANN."""
+    request = bind_body_org(http_request, request)
     try:
         batch_size = request.batch_size or settings.CLOUD_EMBED_BATCH_SIZE
         result = await _refresh_tenant_embeddings(request.org_id, max(1, int(batch_size)))
@@ -328,8 +333,10 @@ async def refresh_cloud_embeddings(
 @router.post("/benchmark/reset")
 async def reset_benchmark_org(
     request: BenchmarkResetRequest,
+    http_request: Request,
     storage_service: StorageService = Depends(get_storage_service),
 ):
+    request = bind_body_org(http_request, request)
     try:
         result = await storage_service.clear_benchmark_org(
             org_id=request.org_id,
@@ -344,8 +351,10 @@ async def reset_benchmark_org(
 @router.get("/stats", response_model=StorageStats)
 async def get_storage_stats(
     org_id: str,
+    http_request: Request,
     storage_service: StorageService = Depends(get_storage_service),
 ):
+    org_id = bind_org(http_request, org_id)
     try:
         return StorageStats(**(await storage_service.get_storage_stats(org_id=org_id)))
     except Exception as exc:
@@ -356,9 +365,11 @@ async def get_storage_stats(
 @router.delete("/chunks")
 async def clear_chunks(
     org_id: str,
+    http_request: Request,
     collection_name: str = "chunks",
     storage_service: StorageService = Depends(get_storage_service),
 ):
+    org_id = bind_org(http_request, org_id)
     try:
         result = await storage_service.clear_chunks(collection_name, org_id=org_id)
         return {
@@ -376,8 +387,10 @@ async def clear_chunks(
 async def get_chunk(
     chunk_id: str,
     org_id: str,
+    http_request: Request,
     storage_service: StorageService = Depends(get_storage_service),
 ):
+    org_id = bind_org(http_request, org_id)
     try:
         chunk = await storage_service.get_chunk(chunk_id, org_id=org_id)
         if not chunk:
@@ -393,12 +406,14 @@ async def get_chunk(
 @router.get("/chunks")
 async def list_chunks(
     org_id: str,
+    http_request: Request,
     skip: int = 0,
     limit: int = 100,
     source: Optional[str] = None,
     task: Optional[str] = None,
     storage_service: StorageService = Depends(get_storage_service),
 ):
+    org_id = bind_org(http_request, org_id)
     try:
         filters: Dict[str, Any] = {"org_id": org_id}
         if source:
@@ -415,8 +430,10 @@ async def list_chunks(
 @router.post("/validate")
 async def validate_storage(
     org_id: str,
+    http_request: Request,
     storage_service: StorageService = Depends(get_storage_service),
 ):
+    org_id = bind_org(http_request, org_id)
     try:
         validation = await storage_service.validate_storage(org_id=org_id)
         return {

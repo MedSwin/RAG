@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.api.auth import AuthMiddleware
 from app.api.cds import get_cds_chat, router as cds_router
 from app.api.tenant import bind_org, bind_tenant
-from app.api.v1.endpoints import pipelines
+from app.api.v1.endpoints import pipelines, retrieval, storage
 from app.core.config import settings
 from app.schemas.enums import PipelineId
 from app.schemas.evidence import EvidenceBundle
@@ -128,3 +128,62 @@ def test_pipeline_token_uses_the_token_organisation(monkeypatch):
     )
     assert denied.status_code == 403
     assert seen == [(PipelineId.TWO_STAGE, "clinician-1", "org-a")]
+
+
+def _auth(monkeypatch):
+    secret = "clinical-secret-value"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "ENABLE_RBAC", False)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    return _token(secret, {"sub": "clinician-1", "org_id": "org-a", "exp": int(time.time()) + 60})
+
+
+def test_storage_token_blocks_another_organisation(monkeypatch):
+    token = _auth(monkeypatch)
+    listed = []
+
+    class Storage:
+        async def list_chunks(self, skip, limit, filters):
+            listed.append(filters["org_id"])
+            return []
+
+        async def clear_benchmark_org(self, org_id, remove_indexes):
+            raise AssertionError("reset should not run")
+
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(storage.router, prefix="/api/v1/storage")
+    app.dependency_overrides[storage.get_storage_service] = lambda: Storage()
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {token}"}
+    denied = client.get("/api/v1/storage/chunks", headers=headers, params={"org_id": "org-b"})
+    assert denied.status_code == 403
+    assert listed == []
+    allowed = client.get("/api/v1/storage/chunks", headers=headers, params={"org_id": "org-a"})
+    assert allowed.status_code == 200
+    assert listed == ["org-a"]
+    reset = client.post(
+        "/api/v1/storage/benchmark/reset",
+        headers=headers,
+        json={"org_id": "org-b"},
+    )
+    assert reset.status_code == 403
+
+
+def test_retrieval_token_blocks_another_organisation_before_embed(monkeypatch):
+    token = _auth(monkeypatch)
+
+    async def _search(request):
+        raise AssertionError("search should not run")
+
+    monkeypatch.setattr(retrieval, "_search", _search)
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(retrieval.router, prefix="/api/v1/retrieval")
+    response = TestClient(app).post(
+        "/api/v1/retrieval/search",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"query": "first-line antibiotic", "org_id": "org-b", "use_reranking": False},
+    )
+    assert response.status_code == 403
