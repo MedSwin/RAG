@@ -498,8 +498,9 @@ class MedSwinOrchestrator:
         trace: AuditTrace,
     ) -> str:
         def remember(value: str) -> str:
-            trace.retrieval_query = redact_phi_text(value)
-            return value
+            redacted = redact_phi_text(value)
+            trace.retrieval_query = redacted
+            return redacted
 
         if not patient_id or constraints.get("disable_patient_retrieval_context"):
             return remember(query)

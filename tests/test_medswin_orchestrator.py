@@ -78,11 +78,17 @@ def test_the_retrieval_query_stores_the_redacted_patient_synopsis():
     )
     orchestrator.chunk_repo = Charts()
     trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
-    asyncio.run(orchestrator._patient_query("Which dose?", "org", "pt-1", {}, trace))
-    assert "555-234-5678" not in (trace.retrieval_query or "")
-    assert "Creatinine is 1.4." in trace.retrieval_query
-    assert "[REDACTED_PHONE]" in trace.retrieval_query
+    returned = asyncio.run(orchestrator._patient_query("Which dose?", "org", "pt-1", {}, trace))
+    assert returned == trace.retrieval_query
+    assert "555-234-5678" not in returned
+    assert "Creatinine is 1.4." in returned
+    assert "[REDACTED_PHONE]" in returned
     assert trace.messages[-1].content.startswith("Built retrieval-only patient synopsis")
+    asked = asyncio.run(
+        orchestrator._patient_query("Call 555-234-5678 about the dose", "org", None, {}, trace)
+    )
+    assert "555-234-5678" not in asked
+    assert "[REDACTED_PHONE]" in asked
 
 
 def test_query_spec_coercion_recovers_malformed_llm_fields():
