@@ -519,13 +519,16 @@ def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
 def named_caution_text(text: str) -> str:
     """Return the caution sentences when they name a drug."""
     from app.retrieval.lexical import LexicalRetriever
-    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+    from app.scoring.coverage import _QUALIFY, _not_regular_med_stop, _ungoverned_caution
 
     spans = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
         if not sentence.strip():
             continue
         if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
+            if _not_regular_med_stop(sentence):
+                spans.append(sentence.strip())
+                continue
             recommendation, clause = _caution_clause(sentence)
             recommendation_drugs = intervention_tokens(recommendation)
             clause_drugs = intervention_tokens(clause)
@@ -869,6 +872,13 @@ _DURATION_DRUG = re.compile(
     r"(?:long-?term|regular|chronic|maintenance)\s+",
     re.I,
 )
+_IS_REGULAR_MED = re.compile(
+    r"\b(?:is|was|were|are|am|been)\s+"
+    r"(?:(?:a|an|the|his|her|their)\s+)?"
+    r"(?:long-?term|regular|current|usual|chronic|maintenance|ongoing)\s+"
+        r"(?:medications?|medicines?|meds?)\b",
+    re.I,
+)
 _AS_DIRECTED = re.compile(r"\bas\s+(?:directed|prescribed|charted)\b", re.I)
 _DOSE_WORD = re.compile(
     r"^(?:\d+(?:\.\d+)?|mg|mcg|g|ml|units?|daily|oral|nocte|mane|bd|tds|qds|po|the|a|an|to|of|for|please)$",
@@ -1049,6 +1059,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
     if _established_on_drug(sentence):
         return True
     if _duration_drug(sentence):
+        return True
+    if _regular_medication(sentence):
         return True
     if _directed_drug(sentence):
         return True
@@ -1392,6 +1404,39 @@ def _duration_drug(sentence: str) -> bool:
         if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
             continue
         if _on_object_is_drug(text[match.end():]):
+            return True
+    return False
+
+
+def _subject_word_is_drug(prefix: str) -> bool:
+    """True when the subject just before the verb is a drug."""
+    words = re.findall(r"[A-Za-z0-9'-]+", prefix or "")
+    if not words or not intervention_tokens(words[-1]):
+        return False
+    if intervention_tokens(words[0]):
+        return True
+    leaders = {"the", "a", "an", "his", "her", "their"}
+    return len(words) >= 2 and words[0].lower() in leaders and bool(intervention_tokens(words[1]))
+
+
+def _regular_medication(sentence: str) -> bool:
+    """True when the drug itself is named as a regular medication."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _MED_HISTORY, _MED_TOPIC
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text) or _MED_TOPIC.search(text):
+        return False
+    for match in _IS_REGULAR_MED.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        prefix = text[: match.start()]
+        tail = text[match.end():]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        if _MED_HISTORY.search(prefix):
+            continue
+        if intervention_tokens(tail) and intervention_tokens(prefix).isdisjoint(intervention_tokens(tail)):
+            continue
+        if _subject_word_is_drug(prefix):
             return True
     return False
 
@@ -1798,6 +1843,7 @@ def _chart_caution_text(chart: str) -> str:
         _not_compliant_stop,
         _not_anticoagulated_stop,
         _not_have_stop,
+        _not_regular_med_stop,
         _med_list_stop,
         _refused_stop,
         _negated_away_split,
@@ -1825,6 +1871,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _not_compliant_stop(sentence)
                 or _not_anticoagulated_stop(sentence)
                 or _not_have_stop(sentence)
+                or _not_regular_med_stop(sentence)
                 or _med_list_stop(sentence)
                 or _refused_stop(sentence)
             ):

@@ -451,6 +451,16 @@ _NOT_HAVE = re.compile(
     r"|\bnever\s+had\b",
     re.I,
 )
+_NOT_REGULAR_MED = re.compile(
+    r"\b(?:is|was|were|are|am|been)\s+not\s+"
+    r"(?:(?:a|an|the|his|her|their)\s+)?"
+    r"(?:long-?term|regular|current|usual|chronic|maintenance|ongoing)\s+"
+    r"(?:medications?|medicines?|meds?)\b"
+    r"|\b(?:is|was|were|are|am|been)\s+no longer\b(?:\s+\w+){0,3}\s+"
+    r"(?:long-?term|regular|current|usual|chronic|maintenance|ongoing)\s+"
+    r"(?:medications?|medicines?|meds?)\b",
+    re.I,
+)
 _NOT_ON = re.compile(
     r"\bnot\s+on\b"
     r"|\bnot\s+(?:currently|now|still|back)\s+on\b"
@@ -732,6 +742,28 @@ def _not_have_stop(text: str) -> bool:
     return False
 
 
+def _not_regular_med_stop(text: str) -> bool:
+    """True when the drug is not a regular medication."""
+    raw = text or ""
+    if re.search(r"\b(?:counsel|discuss|advise|update|inform|educat\w*)\b", raw, re.I):
+        return False
+    if _MED_TOPIC.search(raw):
+        return False
+    for match in _NOT_REGULAR_MED.finditer(raw):
+        words = re.findall(r"[A-Za-z0-9'-]+", raw[: match.start()])
+        if not words or not _token_names_drug(words[-1]):
+            continue
+        if _token_names_drug(words[0]):
+            return True
+        if (
+            len(words) >= 2
+            and words[0].lower() in {"the", "a", "an", "his", "her", "their"}
+            and _token_names_drug(words[1])
+        ):
+            return True
+    return False
+
+
 def _not_for_stop(text: str) -> bool:
     """True when the line says the patient is not for a named drug."""
     if _negated_off_keep(text):
@@ -943,6 +975,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _not_compliant_stop(text)
         or _not_anticoagulated_stop(text)
         or _not_have_stop(text)
+        or _not_regular_med_stop(text)
         or _med_list_stop(text)
         or _refused_stop(text)
     )
