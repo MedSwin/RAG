@@ -721,6 +721,36 @@ async def test_local_llm_defaults_and_clamps_completion_inside_2048(monkeypatch)
     assert "max_tokens" not in seen["json"]
 
 
+def test_the_local_window_keeps_the_specialist_citation_list():
+    history = "history " * 1500
+    long_ids = ", ".join(f"lit-{index}-{'x' * 40}" for index in range(8))
+    content = (
+        "Shared Evidence Passages:\n"
+        f"[caution-apixaban|EMR|doc=d1]\nAvoid apixaban. {history}\n\n"
+        "Specialist Instructions:\n"
+        "You are the safety specialist.\n\n"
+        f"Query: Which dose? {history}\n\n"
+        f"Valid chunk_ids: {long_ids}, caution-apixaban\n"
+        "Cite only a chunk_id from Valid chunk_ids."
+    )
+    fitted = fit_local_messages(
+        [
+            {"role": "system", "content": "Return one JSON object. " * 40},
+            {"role": "user", "content": content},
+        ],
+        384,
+    )
+    text = fitted[-1]["content"]
+    allowed = text.split("Valid chunk_ids:", 1)[1]
+    assert "Avoid apixaban" in text
+    assert "You are the safety specialist." in text
+    assert "caution-apixaban" in allowed
+    assert "lit-0-" not in allowed
+    assert "Cite only a chunk_id from Valid chunk_ids." in text
+    assert "history " * 40 not in text
+    assert _estimate_message_tokens(fitted) + 384 <= 1980
+
+
 def test_the_local_window_keeps_the_chart_and_the_caution():
     history = "history " * 1500
     cautions = [

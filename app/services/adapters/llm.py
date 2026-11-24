@@ -230,6 +230,33 @@ def _query_line(content: str) -> str:
     return line[:240]
 
 
+def _specialist_tail(content: str, kept: str) -> str:
+    """Keep the specialist role and the citation list. Drop a pasted history note."""
+    mark = "\n\nSpecialist Instructions:\n"
+    if mark not in content:
+        return ""
+    tail = content.split(mark, 1)[1].strip()
+    if "Valid chunk_ids:" not in tail:
+        role = tail.split("Query:", 1)[0].strip()
+        return f"Specialist Instructions:\n{role[:400]}" if role else ""
+    before, after = tail.split("Valid chunk_ids:", 1)
+    role = before.split("Query:", 1)[0].strip()
+    line, rest = (after.split("\n", 1) + [""])[:2]
+    ids = []
+    for chunk_id in line.split(","):
+        chunk_id = chunk_id.strip()
+        if chunk_id and (f"[{chunk_id}|" in kept or f"[{chunk_id}]" in kept):
+            ids.append(chunk_id)
+    cite = rest.strip().split("\n", 1)[0].strip()
+    parts = ["Specialist Instructions:"]
+    if role:
+        parts.append(role[:400])
+    parts.append("Valid chunk_ids: " + ", ".join(ids))
+    if cite:
+        parts.append(cite[:240])
+    return "\n".join(parts)
+
+
 def _compact_user_message(content: str, width: int) -> str:
     """Keep the chart and each passage head. Drop the history tail."""
     chart = _chart_block(content, width)
@@ -246,7 +273,11 @@ def _compact_user_message(content: str, width: int) -> str:
     else:
         question = content[:240]
     parts = [part for part in (passages, question, chart, evidence) if part]
-    return "\n\n".join(parts)
+    kept = "\n\n".join(parts)
+    tail = _specialist_tail(content, kept)
+    if tail:
+        return f"{kept}\n\n{tail}" if kept else tail
+    return kept
 
 
 def _shrink_user_message(messages: List[Dict[str, Any]], prompt_budget: int) -> bool:
