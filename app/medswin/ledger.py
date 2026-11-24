@@ -587,6 +587,10 @@ _SWITCH_FROM = re.compile(
     r"\bswitch\s+from\s+([A-Za-z][A-Za-z0-9-]{3,})",
     re.I,
 )
+_CHANGE_FROM = re.compile(
+    r"\bchange\s+from\s+([A-Za-z][A-Za-z0-9-]{3,})",
+    re.I,
+)
 _REPLACE_WITH = re.compile(
     r"\breplace\s+([A-Za-z][A-Za-z0-9-]{3,})\s+with\b",
     re.I,
@@ -600,7 +604,7 @@ _STOP_DRUG = re.compile(
 def _drop_alternative_drug(text: str) -> str:
     """Drop a drug the recommendation says not to use when another drug remains."""
     words = [match.group(1) for match in _CANNOT_USE.finditer(text or "")]
-    for pattern in (_PREFER_OVER, _INSTEAD_OF, _SWITCH_FROM, _REPLACE_WITH, _STOP_DRUG):
+    for pattern in (_PREFER_OVER, _INSTEAD_OF, _SWITCH_FROM, _CHANGE_FROM, _REPLACE_WITH, _STOP_DRUG):
         words.extend(match.group(1) for match in pattern.finditer(text or ""))
     kept = text or ""
     for word in words:
@@ -647,7 +651,9 @@ PATIENT_CHART_ID = "patient-chart"
 
 _CONTINUE_VERB = re.compile(r"\b(?:continue|continuing|continued)\b", re.I)
 _BE_CONTINUED = re.compile(r"\b(?:be|was|is|were|been)\s+continued\b", re.I)
+_TO_CONTINUE = re.compile(r"\bto\s+(?:be\s+)?continued?\b", re.I)
 _REMAIN_ON = re.compile(r"\b(?:remain|remains|stay|stays)\s+on\b", re.I)
+_KEEP_VERB = re.compile(r"\b(?:resume|restart|recommence|keep|maintain)\b", re.I)
 _MONITOR_NEXT = re.compile(
     r"^(?:to\s+)?(?:monitor(?:ing|ed)?|checks?|checking|observ(?:e|ing|ation)|follow-?up|surveillance|inr|labs?)\b",
     re.I,
@@ -717,6 +723,12 @@ def _is_continuation_sentence(sentence: str) -> bool:
             continue
         if _object_is_drug(sentence[match.end():]):
             return True
+    for match in _KEEP_VERB.finditer(sentence or ""):
+        if _object_is_drug(sentence[match.end():]):
+            return True
+    to_continue = _TO_CONTINUE.search(sentence or "")
+    if to_continue and _subject_is_drug(sentence[: to_continue.start()]):
+        return True
     return False
 
 
@@ -728,11 +740,17 @@ _ORDER_VERB = re.compile(
     r"(?:^|[.!?]\s+)(?:please\s+)?(?:use|give)\s+(?:the\s+|a\s+)?[A-Za-z]",
     re.I,
 )
+_START_VERB = re.compile(
+    r"\b(?:commence|commenced|commencing|begin|begins|began|beginning|offer|offered|offering)\b",
+    re.I,
+)
+_SWITCH_TO = re.compile(r"\b(?:switch|change)\b(?:\s+\w+){0,6}\s+to\b", re.I)
+_DRUG_OF_CHOICE = re.compile(r"\b(?:drug of choice|first choice)\b", re.I)
 
 
 def _rejected_drugs(text: str) -> set[str]:
     words = [match.group(1) for match in _CANNOT_USE.finditer(text or "")]
-    for pattern in (_PREFER_OVER, _INSTEAD_OF, _SWITCH_FROM, _REPLACE_WITH, _STOP_DRUG):
+    for pattern in (_PREFER_OVER, _INSTEAD_OF, _SWITCH_FROM, _CHANGE_FROM, _REPLACE_WITH, _STOP_DRUG):
         words.extend(match.group(1) for match in pattern.finditer(text or ""))
     found: set[str] = set()
     for word in words:
@@ -747,6 +765,17 @@ def _has_recommendation_verb(text: str) -> bool:
         window = text[max(0, match.start() - 48): match.start()]
         if _LOCAL_NEGATION.search(window):
             continue
+        return True
+    for match in _START_VERB.finditer(text or ""):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        if _object_is_drug(text[match.end():]):
+            return True
+    for match in _SWITCH_TO.finditer(text or ""):
+        if _object_is_drug(text[match.end():]):
+            return True
+    if _DRUG_OF_CHOICE.search(text or "") and intervention_tokens(text) and not _MONITOR_WORD.search(text or ""):
         return True
     if _QUALIFY.search(text or ""):
         return False
@@ -770,10 +799,12 @@ def _recommendation_sentence(sentence: str) -> str:
         text = sentence
     if intervention_tokens(text) <= _rejected_drugs(text):
         return ""
-    text = _drop_alternative_drug(text)
-    if not intervention_tokens(text) or not _has_recommendation_verb(text):
+    kept = _drop_alternative_drug(text)
+    if not intervention_tokens(kept):
         return ""
-    return " ".join(text.split())
+    if not (_has_recommendation_verb(text) or _has_recommendation_verb(kept)):
+        return ""
+    return " ".join(kept.split())
 
 
 def _chart_recommendation_text(chart: str) -> str:

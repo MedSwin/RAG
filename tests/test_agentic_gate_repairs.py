@@ -291,6 +291,68 @@ def test_a_chart_recommendation_conflicts_with_the_same_drug_warning():
     assert held[0].chunk_id_b == PATIENT_CHART_ID
 
 
+def test_a_chart_order_to_resume_or_switch_conflicts_with_that_drug():
+    from app.medswin.cds import _chart_caution_line
+
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    other = _entry(
+        "aw",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    for chart in (
+        "Resume warfarin.",
+        "Restart warfarin.",
+        "Recommence warfarin.",
+        "Keep warfarin.",
+        "Keep the patient on warfarin.",
+        "Maintain warfarin.",
+        "Warfarin to continue.",
+    ):
+        pairs = chart_contradictions(chart, [warning, other])
+        assert len(pairs) == 1, chart
+        assert pairs[0].chunk_id_b == "war", chart
+        assert "apixaban" not in pairs[0].reason
+        assert _chart_caution_line(None, pairs).startswith("Chart continuation:")
+    for chart in (
+        "Commence warfarin.",
+        "Begin warfarin.",
+        "Offer warfarin.",
+        "Warfarin is the drug of choice.",
+    ):
+        pairs = chart_contradictions(chart, [warning, other])
+        assert len(pairs) == 1, chart
+        assert pairs[0].chunk_id_b == "war", chart
+        assert "apixaban" not in pairs[0].reason
+        assert _chart_caution_line(None, pairs).startswith("Chart recommendation:")
+    for chart in (
+        "Switch to apixaban.",
+        "Switch from warfarin to apixaban.",
+        "Change from warfarin to apixaban.",
+    ):
+        pairs = chart_contradictions(chart, [warning, other])
+        assert len(pairs) == 1, chart
+        assert pairs[0].chunk_id_b == "aw", chart
+        assert "warfarin" not in pairs[0].reason
+        assert pairs[0].reason.startswith("Chart recommendation:")
+    for chart in (
+        "Keep monitoring warfarin.",
+        "Resume monitoring of warfarin.",
+        "Maintain the INR on warfarin.",
+        "Begin monitoring warfarin.",
+        "Consider warfarin.",
+    ):
+        assert chart_contradictions(chart, [warning, other]) == [], chart
+
+
 def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning():
     warning = _entry(
         "war",
@@ -532,6 +594,7 @@ def test_a_comparison_keeps_the_other_drug_out_of_the_conflict():
         "Apixaban is recommended instead of warfarin.",
         "Use apixaban rather than warfarin.",
         "Switch from warfarin to apixaban.",
+        "Change from warfarin to apixaban.",
         "Replace warfarin with apixaban.",
         "Apixaban is preferred to warfarin.",
         "Start apixaban and stop warfarin.",
