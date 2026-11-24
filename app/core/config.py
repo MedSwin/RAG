@@ -230,6 +230,15 @@ class Settings(BaseSettings):
         total = self.fusion_positive_weight_sum()
         return 0.10 <= total <= 2.0
 
+    def enforce_fusion_weights(self) -> None:
+        """Stop startup when a fusion weight can distort the evidence gate."""
+        if self.validate_fusion_weights():
+            return
+        raise ValueError(
+            "Fusion weights are outside the stable range "
+            f"(positive sum={self.fusion_positive_weight_sum()}, noise={self.W_NOISE})."
+        )
+
     def validate_enterprise_policy(self) -> bool:
         """Validate policy thresholds that gate clinician-facing answers."""
         thresholds = [
@@ -413,13 +422,7 @@ def _normalize_runtime_paths(settings: Settings) -> None:
 settings = Settings()
 _normalize_runtime_paths(settings)
 
-if not settings.validate_fusion_weights():
-    import warnings
-
-    warnings.warn(
-        f"Fusion weights are outside the stable range (positive sum={settings.fusion_positive_weight_sum()}, noise={settings.W_NOISE}). "
-        "This may cause unexpected scoring behavior."
-    )
+settings.enforce_fusion_weights()
 
 if not settings.validate_enterprise_policy():
     raise ValueError("Invalid MedSwin enterprise policy configuration")
