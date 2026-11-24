@@ -240,6 +240,53 @@ async def test_embedding_connect_error_sticks_and_batches_thirty_two(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_the_local_embedding_drops_a_phone_number(monkeypatch):
+    class _Tokenizer:
+        def __init__(self):
+            self.batches = []
+
+        def __call__(self, texts, truncation, padding, max_length, return_tensors):
+            self.batches.append(list(texts))
+            ids = torch.ones((len(texts), 2), dtype=torch.long)
+            return {"input_ids": ids, "attention_mask": ids}
+
+    class _Model:
+        def __call__(self, **inputs):
+            rows = inputs["input_ids"].shape[0]
+            hidden = torch.ones((rows, 2, 4))
+
+            class _Out:
+                last_hidden_state = hidden
+
+            return _Out()
+
+    tokenizer = _Tokenizer()
+
+    class _Manager:
+        def get_embedding_model(self):
+            return tokenizer, _Model(), torch.device("cpu"), 4
+
+    monkeypatch.setattr("app.core.state.get_model_manager", lambda: _Manager())
+    monkeypatch.setattr("app.api.v1.endpoints.embedding.get_model_manager", lambda: _Manager())
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    client = EmbeddingClient("local://medembed")
+    text = "Call 555-234-5678. Creatinine is 1.4. Continue metformin."
+    await client.embed([text])
+    sent = tokenizer.batches[0][0]
+    assert "555-234-5678" not in sent
+    assert "[REDACTED_PHONE]" in sent
+    assert "Creatinine is 1.4." in sent
+    assert "metformin" in sent
+
+    from app.api.v1.endpoints.embedding import _local_embed
+
+    _local_embed([text], True)
+    direct = tokenizer.batches[1][0]
+    assert "555-234-5678" not in direct
+    assert "Creatinine is 1.4." in direct
+
+
+@pytest.mark.asyncio
 async def test_ready_reports_local_reranker_model(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_MODE", False)
     body = await pipelines_ready()

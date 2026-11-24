@@ -67,6 +67,9 @@ async def _cloud_embed(texts: List[str], input_type: EmbeddingIntent) -> List[Li
 
 
 def _local_embed(texts: List[str], normalize: bool) -> tuple[List[List[float]], int]:
+    from app.services.medswin.governance import redact_phi_text
+
+    texts = [redact_phi_text(text or "") for text in texts]
     tokenizer, embed_model, device, embedding_dim = _get_local_embedding_model()
     inputs = tokenizer(
         texts,

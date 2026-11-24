@@ -162,6 +162,9 @@ class EmbeddingClient:
         """
         if not texts:
             return []
+        from app.services.medswin.governance import redact_phi_text
+
+        texts = [redact_phi_text(text or "") for text in texts]
         if self.protocol == "bedrock":
             return await self._embed_bedrock(texts, input_type)
         if settings.CLOUD_MODE and input_type is None:
