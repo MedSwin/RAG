@@ -48,3 +48,18 @@ def test_the_named_eval_portfolio_is_outside_the_unit_gate():
     assert "pytest -q" in workflow
     assert "verify_live_fullstack" not in workflow
     assert "smoke_realworld" not in workflow
+
+
+def test_startup_does_not_reembed_the_corpus():
+    from pathlib import Path
+
+    text = Path("app/main.py").read_text(encoding="utf-8")
+    start = text.index("async def lifespan")
+    end = text.index("\napp = FastAPI", start)
+    lifespan = text[start:end]
+    assert "_refresh_tenant_embeddings" not in lifespan
+    assert "build_hnsw" not in lifespan
+    assert "bedrock" not in lifespan.lower()
+    workflow = Path(".github/workflows/system-eval-contract.yml").read_text(encoding="utf-8")
+    assert "embeddings/refresh" not in workflow
+    assert "build_hnsw" not in workflow
