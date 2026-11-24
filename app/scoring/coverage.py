@@ -409,7 +409,8 @@ _REFUSED = re.compile(
 _NOT_FOR = re.compile(
     r"\bnot\s+for\b|\bnot\s+to\s+have\b|\bnot\s+to\s+be\s+given\b"
     r"|\bnot\s+(?:charted|due)\s+for\b|\bnot\s+written\s+up\s+for\b"
-    r"|\bnot\s+(?:need|needs|require|requires|required|take|taking)\b",
+    r"|\bnot\s+(?:need|needs|require|requires|required|take|taking)\b"
+    r"|\bnot\s+(?:currently|now|still)\s+taking\b",
     re.I,
 )
 _NOT_ON = re.compile(
@@ -503,7 +504,7 @@ def _not_for_stop(text: str) -> bool:
     """True when the line says the patient is not for a named drug."""
     if _negated_off_keep(text):
         return False
-    if re.search(r"\bnot\s+taking\b", text or "", re.I) and re.search(
+    if re.search(r"\bnot\s+(?:(?:currently|now|still)\s+)?taking\b", text or "", re.I) and re.search(
         r"\b(?:counsel|discuss|advise|update|inform|educat\w*)\b",
         text or "",
         re.I,

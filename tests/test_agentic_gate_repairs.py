@@ -162,6 +162,12 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "The patient is on long-term warfarin.",
         "The patient is on oral warfarin.",
         "The patient is currently on regular warfarin.",
+        "The patient was discharged on warfarin.",
+        "Discharged on warfarin.",
+        "The patient came in on warfarin.",
+        "Admitted on warfarin.",
+        "The patient was admitted on warfarin.",
+        "The patient presents on warfarin.",
         "Continue warfarin and monitor the INR.",
     ):
         pairs = chart_contradictions(chart, [warning, other])
@@ -220,6 +226,11 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "The patient has never taken warfarin.",
         "The note is on long-term warfarin dosing.",
         "The patient is on the warfarin pathway.",
+        "The patient was discharged home.",
+        "The patient was discharged on the warfarin pathway.",
+        "Discharged on Friday.",
+        "The patient is not currently taking warfarin.",
+        "Not currently taking warfarin.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
     recommendation = _entry(
@@ -1350,6 +1361,10 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
         "The patient is not taking warfarin.",
         "Not taking warfarin.",
         "Patient is not taking warfarin.",
+        "The patient is not currently taking warfarin.",
+        "Not currently taking warfarin.",
+        "The patient is not now taking warfarin.",
+        "The patient is not still taking warfarin.",
         "Wean off warfarin.",
         "Wean the patient off warfarin.",
         "Wean warfarin.",
