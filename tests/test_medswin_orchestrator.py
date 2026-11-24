@@ -274,6 +274,91 @@ def test_supplied_session_id_is_created_when_it_is_missing():
     assert created == [("sess-live-cdss-001", "dr-chen", "st-vincent-cdss")]
 
 
+def test_a_second_patient_opens_a_new_session():
+    import asyncio
+
+    class Sessions:
+        def __init__(self):
+            self.rows = {}
+
+        async def update_last_active(self, session_id, org_id, user_id=None):
+            row = self.rows.get((session_id, org_id))
+            return bool(row and row.get("user_id") == user_id)
+
+        async def get_by_id(self, session_id, org_id):
+            return self.rows.get((session_id, org_id))
+
+        async def create(self, session, org_id):
+            self.rows[(session.session_id, org_id)] = session.model_dump()
+            return {}
+
+        async def claim_patient(self, session_id, org_id, user_id, patient_id):
+            row = self.rows.get((session_id, org_id))
+            if row and row.get("user_id") == user_id and not row.get("patient_id"):
+                row["patient_id"] = patient_id
+                return True
+            return False
+
+    orchestrator = MedSwinOrchestrator(embedding_client=FakeEmbeddingClient(), reranker_client=None)
+    repo = Sessions()
+    orchestrator.session_repo = repo
+    first = asyncio.run(orchestrator._open_session("sess-1", "dr-chen", "org-a", {}, patient_id="patient-1"))
+    second = asyncio.run(orchestrator._open_session("sess-1", "dr-chen", "org-a", {}, patient_id="patient-2"))
+    assert first == "sess-1"
+    assert second != "sess-1"
+    assert repo.rows[("sess-1", "org-a")]["patient_id"] == "patient-1"
+    assert repo.rows[(second, "org-a")]["patient_id"] == "patient-2"
+
+
+def test_an_empty_accept_is_stored_as_insufficient():
+    import asyncio
+
+    from app.schemas.enums import PolicyAction
+    from app.schemas.evidence import EvidenceBundle, PolicyDecision
+
+    stored = []
+
+    class Traces:
+        async def create(self, trace, org_id):
+            stored.append(trace)
+            return {}
+
+    class Sessions:
+        async def create(self, session, org_id):
+            return {}
+
+    class Normalizer:
+        async def normalize(self, query, trace):
+            return QuerySpec(canonical_terms=["treatment"])
+
+        def build_facets(self, query, query_spec, constraints, patient_id):
+            return [ClinicalFacet(name="treatment", required=True, threshold=0.7)]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.session_repo = Sessions()
+    orchestrator.trace_repo = Traces()
+    orchestrator.normalizer = Normalizer()
+    bundle = EvidenceBundle(
+        passages=[],
+        total_tokens=0,
+        cpg_count=0,
+        emr_count=0,
+        lit_count=0,
+        policy_decision=PolicyDecision(passed=True, action=PolicyAction.ACCEPT, reason="empty pass"),
+    )
+
+    async def _retrieve(**kwargs):
+        return bundle, type("Check", (), {"iteration": 0})()
+
+    orchestrator._retrieve_with_sufficiency = _retrieve
+    response = asyncio.run(orchestrator.chat(query="q", user_id="u1", org_id="org1"))
+    assert response.policy_decision.passed is False
+    assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert stored[-1].policy_decisions[-1].action == PolicyAction.INSUFFICIENT_EVIDENCE
+
+
 def test_trace_failure_keeps_the_gated_answer():
     import asyncio
 

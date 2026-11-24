@@ -53,6 +53,22 @@ class SessionRepository(BaseRepository):
             {"$set": {"last_active": datetime.utcnow()}},
         )
         return result.matched_count > 0
+
+    async def claim_patient(self, session_id: str, org_id: str, user_id: str, patient_id: str) -> bool:
+        """Bind the first patient. A second patient does not overwrite the row."""
+        result = await self.collection.update_one(
+            {
+                "session_id": session_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "$or": [
+                    {"patient_id": {"$in": [None, ""]}},
+                    {"patient_id": {"$exists": False}},
+                ],
+            },
+            {"$set": {"patient_id": patient_id}},
+        )
+        return result.matched_count > 0
     
     async def update_metadata(self, session_id: str, org_id: str, 
                              metadata: Dict[str, Any]) -> bool:

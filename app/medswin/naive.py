@@ -190,20 +190,22 @@ class NaiveRAGOrchestrator:
         user_id: str,
         org_id: str,
         degraded: Dict[str, bool],
+        patient_id: Optional[str] = None,
     ) -> str:
         """Open a session. A database failure does not block the answer."""
+        requested = (patient_id or "").strip() or None
         try:
             if not session_id:
                 session_id = str(uuid.uuid4())
                 await self.session_repo.create(
-                    Session(session_id=session_id, user_id=user_id, org_id=org_id),
+                    Session(session_id=session_id, user_id=user_id, org_id=org_id, patient_id=requested),
                     org_id,
                 )
             else:
                 from app.medswin.orchestrator import _resume_or_create_session
 
                 session_id = await _resume_or_create_session(
-                    self.session_repo, session_id, user_id, org_id
+                    self.session_repo, session_id, user_id, org_id, requested
                 )
         except Exception as exc:  # noqa: BLE001
             logger.error("Session persistence failed: %s", exc)
@@ -231,7 +233,7 @@ class NaiveRAGOrchestrator:
 
         trace_id = str(uuid.uuid4())
         session_state: Dict[str, bool] = {}
-        session_id = await self._open_session(session_id, user_id, org_id, session_state)
+        session_id = await self._open_session(session_id, user_id, org_id, session_state, patient_id)
 
         trace = AuditTrace(
             trace_id=trace_id,

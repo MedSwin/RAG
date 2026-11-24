@@ -90,19 +90,40 @@ PIPELINE_POLICIES = {
 }
 
 
-async def _resume_or_create_session(repo, session_id: str, user_id: str, org_id: str) -> str:
-    """Keep a session only when this user already owns it. Otherwise mint a new id."""
+async def _resume_or_create_session(
+    repo,
+    session_id: str,
+    user_id: str,
+    org_id: str,
+    patient_id: Optional[str] = None,
+) -> str:
+    """Keep a session only when this user and this patient already own it."""
+    requested = (patient_id or "").strip() or None
     updated = await repo.update_last_active(session_id, org_id, user_id=user_id)
-    if updated:
-        return session_id
     getter = getattr(repo, "get_by_id", None)
     existing = await getter(session_id, org_id) if getter else None
-    owner = existing.get("user_id") if isinstance(existing, dict) else None
-    if existing is not None and owner == user_id:
+    if not isinstance(existing, dict):
+        existing = None
+    owner = existing.get("user_id") if existing else None
+    stored = (existing.get("patient_id") or "").strip() or None if existing else None
+    owns = bool(updated) or (existing is not None and owner == user_id)
+    if owns and existing is None:
         return session_id
+    if owns and stored == requested:
+        return session_id
+    if owns and stored is None and requested:
+        claim = getattr(repo, "claim_patient", None)
+        if claim is None:
+            existing["patient_id"] = requested
+            return session_id
+        if await claim(session_id, org_id, user_id, requested):
+            return session_id
     if existing is not None:
         session_id = str(uuid.uuid4())
-    await repo.create(Session(session_id=session_id, user_id=user_id, org_id=org_id), org_id)
+    await repo.create(
+        Session(session_id=session_id, user_id=user_id, org_id=org_id, patient_id=requested),
+        org_id,
+    )
     return session_id
 
 
@@ -194,18 +215,20 @@ class MedSwinOrchestrator:
         user_id: str,
         org_id: str,
         degraded: Dict[str, bool],
+        patient_id: Optional[str] = None,
     ) -> str:
         """Open a session. A database failure does not block the answer."""
+        requested = (patient_id or "").strip() or None
         try:
             if not session_id:
                 session_id = str(uuid.uuid4())
                 await self.session_repo.create(
-                    Session(session_id=session_id, user_id=user_id, org_id=org_id),
+                    Session(session_id=session_id, user_id=user_id, org_id=org_id, patient_id=requested),
                     org_id,
                 )
             else:
                 session_id = await _resume_or_create_session(
-                    self.session_repo, session_id, user_id, org_id
+                    self.session_repo, session_id, user_id, org_id, requested
                 )
         except Exception as exc:  # noqa: BLE001
             logger.error("Session persistence failed: %s", exc)
@@ -236,7 +259,7 @@ class MedSwinOrchestrator:
         degraded: Dict[str, bool] = {}
         if not self.calibration.loaded:
             degraded["calibration"] = True
-        session_id = await self._open_session(session_id, user_id, org_id, degraded)
+        session_id = await self._open_session(session_id, user_id, org_id, degraded, patient_id)
 
         trace = AuditTrace(
             trace_id=trace_id,
@@ -293,6 +316,7 @@ class MedSwinOrchestrator:
                     missing_facets=[facet.name for facet in query_spec.facets if facet.required],
                 )
                 evidence_bundle.policy_decision = decision
+                trace.policy_decisions.append(decision)
             sufficiency_decision = self.gate.to_sufficiency_decision(decision)
             trace.facet_matrix = facet_matrix
             trace.contradiction_ledger = contradiction_ledger
