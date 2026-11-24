@@ -42,8 +42,17 @@ def _token_is_caution(token: str) -> bool:
 
 
 def _safety_score(passage: CandidatePassage) -> float:
-    tokens = re.findall(r"[a-z0-9]+", passage.text.lower())
-    hits = sum(1 for token in tokens if _token_is_caution(token))
+    text = passage.text.lower()
+    hits = 0
+    for match in re.finditer(r"[a-z0-9]+", text):
+        if not _token_is_caution(match.group(0)):
+            continue
+        window = text[max(0, match.start() - 48):match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        hits += 1
+    if _ungoverned_caution(passage.text):
+        hits += 1
     return clamp(hits * 0.18)
 
 

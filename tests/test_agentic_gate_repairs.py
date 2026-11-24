@@ -751,6 +751,16 @@ def test_live_report_status_does_not_pass_when_the_answerable_query_abstains():
     ) is False
 
 
+def test_a_negated_caution_does_not_open_the_safety_facet():
+    negated = _passage("cpg-neg", "The guideline reports no contraindications for selected adults.")
+    delay = _passage("cpg-delay", "Do not delay antibiotics when infection is confirmed.")
+    direct = _passage("cpg-do", "Do not use metformin when the eGFR is low.")
+    facets = [ClinicalFacet(name="safety_contraindications", keywords=["contraindicated"], threshold=0.70)]
+    assert score_passage_facets(negated, facets)["safety_contraindications"] == 0.0
+    assert score_passage_facets(delay, facets)["safety_contraindications"] == 0.0
+    assert score_passage_facets(direct, facets)["safety_contraindications"] > 0.0
+
+
 def test_a_dose_sentence_does_not_open_the_safety_facet():
     dose = _passage("cpg-dose", "The metformin dose is 500 mg each morning.")
     caution = _passage("cpg-caution", "Avoid metformin when the eGFR is low.")
