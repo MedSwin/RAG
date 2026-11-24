@@ -47,6 +47,7 @@ class EvidenceLedgerEntry(BaseModel):
     evidence_grade: EvidenceGrade = Field(default_factory=EvidenceGrade)
     safety_relevance: float = 0.0
     contradiction_risk: float = 0.0
+    text: str = ""
     provenance: Dict[str, Any] = Field(default_factory=dict)
 
 

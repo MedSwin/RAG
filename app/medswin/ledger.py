@@ -79,6 +79,7 @@ def build_retrieval_ledger(
                 evidence_grade=grade,
                 safety_relevance=clamp(passage.safety_score or 0.0),
                 contradiction_risk=clamp(passage.contradiction_score or 0.0),
+                text=" ".join(passage.text.split()),
                 provenance=_provenance(passage),
             )
         )
@@ -108,6 +109,7 @@ def merge_agent_claims(
                     calibrated_relevance=clamp(passage.calibrated_score or 0.0),
                     fusion_score=clamp(passage.fusion_score or 0.0),
                     evidence_grade=evidence_grade_from_metadata(passage),
+                    text=" ".join(passage.text.split()),
                 )
                 by_chunk[claim.chunk_id] = entry
                 ledger.append(entry)
@@ -271,6 +273,16 @@ def _pair_severity(left: EvidenceLedgerEntry, right: EvidenceLedgerEntry) -> str
     )
 
 
+def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = None) -> str:
+    """Use the full passage when the claim preview was cut."""
+    stored = (entry.text or "").strip()
+    if stored:
+        return stored
+    if claim is not None and claim.claim:
+        return claim.claim
+    return " ".join(item.claim for item in entry.claims)
+
+
 def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[ContradictionPair]:
     by_facet: Dict[str, Dict[str, List[EvidenceLedgerEntry]]] = {}
     for entry in ledger:
@@ -309,8 +321,8 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
     for facet, bucket in by_facet.items():
         for support in bucket["support"]:
             for conflict in bucket["contradict"]:
-                support_text = " ".join(claim.claim for claim in support.claims)
-                conflict_text = " ".join(claim.claim for claim in conflict.claims)
+                support_text = _pairing_text(support)
+                conflict_text = _pairing_text(conflict)
                 if not same_intervention(support_text, conflict_text):
                     continue
                 _add(facet, support, conflict, "Incompatible support and caution for the same intervention.")
@@ -333,9 +345,14 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
         for warning_entry, warning_claim in safety_warnings:
             # A safety warning crosses facets only when both sides name the same drug.
             # An unnamed caution still covers the safety facet. It does not veto every guideline.
-            if not intervention_tokens(support_claim.claim) or not intervention_tokens(warning_claim.claim):
+            if not intervention_tokens(_pairing_text(support_entry, support_claim)) or not intervention_tokens(
+                _pairing_text(warning_entry, warning_claim)
+            ):
                 continue
-            if not same_intervention(support_claim.claim, warning_claim.claim):
+            if not same_intervention(
+                _pairing_text(support_entry, support_claim),
+                _pairing_text(warning_entry, warning_claim),
+            ):
                 continue
             _add(
                 support_claim.facet,
@@ -353,9 +370,14 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 plain_supports.append((entry, claim))
     for support_entry, support_claim in plain_supports:
         for qualify_entry, qualify_claim in qualifies:
-            if not intervention_tokens(support_claim.claim) or not intervention_tokens(qualify_claim.claim):
+            if not intervention_tokens(_pairing_text(support_entry, support_claim)) or not intervention_tokens(
+                _pairing_text(qualify_entry, qualify_claim)
+            ):
                 continue
-            if not same_intervention(support_claim.claim, qualify_claim.claim):
+            if not same_intervention(
+                _pairing_text(support_entry, support_claim),
+                _pairing_text(qualify_entry, qualify_claim),
+            ):
                 continue
             _add(
                 support_claim.facet,

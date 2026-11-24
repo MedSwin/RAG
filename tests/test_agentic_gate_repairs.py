@@ -76,6 +76,28 @@ def test_negated_caution_does_not_become_a_conflict():
     assert infer_polarity(warning, facet) == EvidencePolarity.CONTRADICTS
 
 
+def test_a_drug_named_after_the_claim_preview_still_conflicts():
+    from app.medswin.ledger import build_retrieval_ledger
+
+    filler = "General background on anticoagulation monitoring. " * 20
+    support = _passage("cpg-late", filler + " Apixaban is recommended as treatment.")
+    warning = _passage(
+        "safety-late",
+        filler + " Avoid apixaban. Apixaban is contraindicated.",
+        SourceType.SAFETY,
+    )
+    support.calibrated_score = 0.9
+    warning.calibrated_score = 0.9
+    facets = [
+        ClinicalFacet(name="guideline_concordance", keywords=["apixaban", "recommended"]),
+        ClinicalFacet(name="safety_contraindications", keywords=["apixaban", "contraindicated"]),
+    ]
+    ledger = build_retrieval_ledger([support, warning], facets)
+    assert "apixaban" not in ledger[0].claims[0].claim.lower()
+    pairs = detect_contradictions(ledger)
+    assert any(pair.chunk_id_a == "cpg-late" and pair.chunk_id_b == "safety-late" for pair in pairs)
+
+
 def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
     support = _entry(
         "cpg-aha",
