@@ -215,6 +215,68 @@ def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
     assert different == []
 
 
+def test_a_comparison_keeps_the_other_drug_out_of_the_conflict():
+    from app.medswin.ledger import chart_contradictions
+
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    same = _entry(
+        "aw",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    claims = [
+        "Apixaban is recommended instead of warfarin.",
+        "Use apixaban rather than warfarin.",
+        "Switch from warfarin to apixaban.",
+        "Replace warfarin with apixaban.",
+        "Apixaban is preferred to warfarin.",
+        "Start apixaban and stop warfarin.",
+    ]
+    for claim in claims:
+        support = _entry("note", "guideline_concordance", claim, EvidencePolarity.SUPPORTS, grade=0.95)
+        pairs = detect_contradictions([support, warning, same])
+        assert all(pair.chunk_id_b != "war" for pair in pairs), claim
+        assert any(pair.chunk_id_b == "aw" and "apixaban" in pair.reason for pair in pairs), claim
+        assert all("warfarin" not in pair.reason for pair in pairs), claim
+    kept = _entry(
+        "kept",
+        "guideline_concordance",
+        "Warfarin is recommended. Apixaban is also listed.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    held = detect_contradictions([kept, warning, same])
+    assert any(pair.chunk_id_b == "war" and "warfarin" in pair.reason for pair in held)
+    assert any(pair.chunk_id_b == "aw" and "apixaban" in pair.reason for pair in held)
+    stopped = _entry(
+        "stopped",
+        "guideline_concordance",
+        "Do not stop warfarin.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    assert any(pair.chunk_id_b == "war" for pair in detect_contradictions([stopped, warning]))
+    chart_support = _entry(
+        "note",
+        "guideline_concordance",
+        "Apixaban is recommended instead of warfarin.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    assert chart_contradictions("Avoid warfarin.", [chart_support]) == []
+    chart_pairs = chart_contradictions("Avoid apixaban.", [chart_support])
+    assert chart_pairs
+    assert all("apixaban" in pair.reason for pair in chart_pairs)
+
+
 def test_a_recommendation_that_cannot_use_warfarin_does_not_conflict_with_that_warning():
     cannot = _entry(
         "cannot",

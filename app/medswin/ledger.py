@@ -579,12 +579,29 @@ _PREFER_OVER = re.compile(
     r"\bprefer\s+[A-Za-z][A-Za-z0-9-]{3,}\s+over\s+([A-Za-z][A-Za-z0-9-]{3,})",
     re.I,
 )
+_INSTEAD_OF = re.compile(
+    r"\b(?:instead of|rather than|preferred to)\s+([A-Za-z][A-Za-z0-9-]{3,})",
+    re.I,
+)
+_SWITCH_FROM = re.compile(
+    r"\bswitch\s+from\s+([A-Za-z][A-Za-z0-9-]{3,})",
+    re.I,
+)
+_REPLACE_WITH = re.compile(
+    r"\breplace\s+([A-Za-z][A-Za-z0-9-]{3,})\s+with\b",
+    re.I,
+)
+_STOP_DRUG = re.compile(
+    r"(?<!not )\bstop\s+([A-Za-z][A-Za-z0-9-]{3,})",
+    re.I,
+)
 
 
 def _drop_alternative_drug(text: str) -> str:
     """Drop a drug the recommendation says not to use when another drug remains."""
     words = [match.group(1) for match in _CANNOT_USE.finditer(text or "")]
-    words.extend(match.group(1) for match in _PREFER_OVER.finditer(text or ""))
+    for pattern in (_PREFER_OVER, _INSTEAD_OF, _SWITCH_FROM, _REPLACE_WITH, _STOP_DRUG):
+        words.extend(match.group(1) for match in pattern.finditer(text or ""))
     kept = text or ""
     for word in words:
         if not intervention_tokens(word):
