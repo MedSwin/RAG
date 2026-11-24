@@ -332,6 +332,39 @@ def test_a_lost_session_insert_keeps_the_id_when_this_user_owns_it():
     assert kept == "sess-race"
 
 
+def test_a_trace_update_keeps_the_owner_and_the_identity_fields():
+    import asyncio
+
+    from app.repositories.traces import TraceRepository
+
+    class _Result:
+        matched_count = 1
+
+    class _Store:
+        def __init__(self):
+            self.calls = []
+
+        async def update_one(self, query, update):
+            self.calls.append((query, update))
+            return _Result()
+
+    store = _Store()
+    repo = TraceRepository()
+    repo._db = {"traces": store}
+    saved = asyncio.run(repo.update("trace-1", "org-a", {"final_answer": "held"}, "dr-chen"))
+    stolen = asyncio.run(repo.update("trace-1", "org-a", {"user_id": "dr-patel"}, "dr-chen"))
+    nested = asyncio.run(repo.update("trace-1", "org-a", {"a.b": "c"}, "dr-chen"))
+    assert saved is True
+    assert stolen is False
+    assert nested is False
+    assert store.calls == [
+        (
+            {"trace_id": "trace-1", "org_id": "org-a", "user_id": "dr-chen"},
+            {"$set": {"final_answer": "held"}},
+        )
+    ]
+
+
 def test_session_metadata_merges_for_the_owner_only():
     import asyncio
 

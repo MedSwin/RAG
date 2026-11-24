@@ -56,13 +56,19 @@ class TraceRepository(BaseRepository):
             cursor = cursor.limit(limit)
         return await cursor.to_list(length=None)
     
-    async def update(self, trace_id: str, org_id: str, updates: Dict[str, Any]) -> bool:
-        """Update a trace."""
+    async def update(self, trace_id: str, org_id: str, updates: Dict[str, Any], user_id: str) -> bool:
+        """Update a trace when this clinician owns it."""
+        if not user_id or not updates:
+            return False
+        if any(not isinstance(key, str) or "." in key or key.startswith("$") for key in updates):
+            return False
+        if {"trace_id", "org_id", "user_id", "session_id", "patient_id"} & set(updates):
+            return False
         result = await self.collection.update_one(
-            {"trace_id": trace_id, "org_id": org_id},
-            {"$set": updates}
+            {"trace_id": trace_id, "org_id": org_id, "user_id": user_id},
+            {"$set": updates},
         )
-        return result.modified_count > 0
+        return result.matched_count > 0
     
     async def count_by_org(self, org_id: str) -> int:
         """Count traces for an organization."""
