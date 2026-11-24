@@ -863,12 +863,19 @@ def _subject_is_drug(text: str) -> bool:
 
 def _is_continuation_sentence(sentence: str) -> bool:
     """True when the sentence says to keep a drug."""
-    from app.scoring.coverage import _BENIGN_DO_NOT, _CAUTION, _ungoverned_caution
+    from app.scoring.coverage import (
+        _BENIGN_DO_NOT,
+        _CAUTION,
+        _negated_source_keep,
+        _ungoverned_caution,
+    )
 
     if not intervention_tokens(sentence):
         return False
     if _ungoverned_caution(sentence):
         return False
+    if _negated_source_keep(sentence):
+        return True
     for match in _CAUTION.finditer(sentence or ""):
         phrase = match.group(0).lower()
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(sentence[match.end():]):

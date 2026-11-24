@@ -361,6 +361,26 @@ def _negated_away_split(text: str) -> Optional[tuple[str, str]]:
     return continuation, caution
 
 
+def _negated_source_keep(text: str) -> bool:
+    """True when a negated switch names only the current drug."""
+    if _negated_away_split(text):
+        return False
+    raw = text or ""
+    match = re.search(
+        r"\b(?:switch|change)\b(?:\s+\w+){0,4}\s+from\s+([A-Za-z][A-Za-z0-9-]{3,})\b"
+        r"|\breplace\s+([A-Za-z][A-Za-z0-9-]{3,})\b",
+        raw,
+        re.I,
+    )
+    if match is None:
+        return False
+    window = raw[max(0, match.start() - 48):match.start()]
+    if not _LOCAL_NEGATION.search(window):
+        return False
+    word = match.group(1) or match.group(2)
+    return _token_names_drug(word)
+
+
 def _source_stop(text: str) -> bool:
     """True when the line stops one named drug. The new drug stays out of this check."""
     raw = text or ""
@@ -387,6 +407,8 @@ def _ungoverned_caution(text: str) -> bool:
             continue
         phrase = match.group(0).lower()
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(text[match.end():]):
+            continue
+        if phrase in {"do not", "should not"} and _negated_source_keep(text):
             continue
         return True
     return _named_safety_caution(text) or _source_stop(text)
