@@ -322,10 +322,12 @@ class LexicalRetriever:
             context = raw[index + len(marker):]
         else:
             question, context = raw, ""
-        from app.medswin.ledger import _DRUG_ALIASES, _SHORT_ALIASES
+        from app.medswin.ledger import _DRUG_ALIASES, _SHORT_ALIASES, intervention_tokens
 
-        caution_terms = LexicalRetriever._caution_terms(context)[:32]
-        ordered = caution_terms + LexicalRetriever._fts_terms(question)
+        caution_terms = LexicalRetriever._caution_terms(context)
+        drug_terms = [term for term in caution_terms if intervention_tokens(term)]
+        other_terms = [term for term in caution_terms if term not in set(drug_terms)]
+        ordered = drug_terms + other_terms[:32] + LexicalRetriever._fts_terms(question)
         caution_term_set = set(caution_terms)
         chosen = []
         seen = set()

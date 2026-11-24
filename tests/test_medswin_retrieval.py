@@ -256,6 +256,29 @@ def test_a_sentence_period_does_not_hide_a_chart_drug():
     assert _matching_indexes(index, query, 2) == [0]
 
 
+def test_a_later_chart_drug_stays_in_the_search_terms():
+    from app.retrieval.lexical import LexicalRetriever
+
+    drugs = [
+        "apixaban",
+        "warfarin",
+        "heparin",
+        "enoxaparin",
+        "metformin",
+        "aspirin",
+        "dabigatran",
+        "rivaroxaban",
+    ]
+    sentences = [
+        f"Avoid alpha{index}a alpha{index}b alpha{index}c {drug}."
+        for index, drug in enumerate(drugs)
+    ]
+    query = "Which dose?\n\nPatient retrieval context:\n" + " ".join(sentences)
+    terms = LexicalRetriever._lexical_terms(query)
+    for drug in drugs:
+        assert drug in terms
+
+
 def test_a_chart_dose_at_the_end_of_a_long_note_stays_in_the_search():
     from app.medswin.orchestrator import _chart_synopsis
     from app.retrieval.lexical import LexicalRetriever
