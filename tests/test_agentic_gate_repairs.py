@@ -460,6 +460,14 @@ def test_a_chart_recommendation_conflicts_with_the_same_drug_warning():
         "Charted warfarin.",
         "Warfarin charted.",
         "Warfarin was charted.",
+        "Issue warfarin.",
+        "Issued warfarin.",
+        "Warfarin issued.",
+        "Warfarin was issued.",
+        "Provide warfarin.",
+        "Provided warfarin.",
+        "Warfarin provided.",
+        "Warfarin was provided.",
         "Start warfarin 5 mg daily.",
         "Start warfarin and monitor the INR.",
         "Warfarin is recommended for patients who should not take apixaban.",
@@ -503,6 +511,14 @@ def test_a_chart_recommendation_conflicts_with_the_same_drug_warning():
         "Chart the warfarin pathway.",
         "Do not order warfarin.",
         "Do not chart warfarin.",
+        "Issue information about warfarin.",
+        "Provide information about warfarin.",
+        "The patient has an issue with warfarin.",
+        "Warfarin issue.",
+        "Issue warfarin levels.",
+        "Provide the warfarin pathway.",
+        "Do not issue warfarin.",
+        "Do not provide warfarin.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
     recommendation = _entry(
@@ -521,6 +537,9 @@ def test_a_chart_recommendation_conflicts_with_the_same_drug_warning():
     unordered = chart_contradictions("Do not order warfarin.", [recommendation])
     assert len(unordered) == 1
     assert "warfarin" in unordered[0].reason
+    unissued = chart_contradictions("Do not issue warfarin.", [recommendation])
+    assert len(unissued) == 1
+    assert "warfarin" in unissued[0].reason
 
 
 def test_a_chart_order_to_resume_or_switch_conflicts_with_that_drug():

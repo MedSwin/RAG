@@ -1098,7 +1098,7 @@ _SUPPLY_VERB = re.compile(
     re.I,
 )
 _CHART_ORDER_VERB = re.compile(
-    r"\b(?:order(?:s|ed|ing)?|chart(?:s|ed|ing)?)\b",
+    r"\b(?:order(?:s|ed|ing)?|chart(?:s|ed|ing)?|issu(?:e|es|ed|ing)|provid(?:e|es|ed|ing))\b",
     re.I,
 )
 _PUT_ON = re.compile(
@@ -1447,7 +1447,7 @@ def _has_recommendation_verb(text: str) -> bool:
             nxt = content[1] if len(content) >= 2 else ""
             if not (nxt and _ON_TOPIC.match(nxt)):
                 return True
-        if word not in {"ordered", "charted"}:
+        if word not in {"ordered", "charted", "issued", "provided"}:
             continue
         if (
             intervention_tokens(prefix)
