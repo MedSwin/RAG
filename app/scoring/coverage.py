@@ -426,6 +426,12 @@ _NOT_ESTABLISHED = re.compile(
     r"|\bnever\s+(?:been\s+)?(?:established|stabilised|stabilized|stable)\s+on\b",
     re.I,
 )
+_NOT_TOLERATING = re.compile(
+    r"\bnot\s+(?:(?:currently|now|still)\s+)?tolerat(?:e|es|ed|ing)\b"
+    r"|\bunable\s+to\s+tolerate\b"
+    r"|\bnever\s+(?:been\s+)?tolerat(?:e|es|ed|ing)\b",
+    re.I,
+)
 _NOT_ON = re.compile(
     r"\bnot\s+on\b"
     r"|\bnot\s+(?:currently|now|still|back)\s+on\b"
@@ -595,6 +601,41 @@ def _not_established_stop(text: str) -> bool:
             continue
         if _on_object_is_drug(raw[match.end():]):
             return True
+    return False
+
+
+def _not_tolerating_stop(text: str) -> bool:
+    """True when the patient is not tolerating a named drug."""
+    raw = text or ""
+    if re.search(r"\b(?:counsel|discuss|advise|update|inform|educat\w*)\b", raw, re.I):
+        return False
+    for match in _NOT_TOLERATING.finditer(raw):
+        window = raw[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        words = re.findall(r"[A-Za-z0-9'-]+", raw[match.end():])
+        content: list[str] = []
+        skipping = True
+        for word in words:
+            if skipping and word.lower() in {"to", "the", "a", "an", "his", "her", "their", "this", "that"}:
+                continue
+            skipping = False
+            content.append(word)
+            if len(content) >= 3:
+                break
+        if not content:
+            continue
+        if content[0].lower() == "dose" and len(content) >= 3 and content[1].lower() == "of":
+            drug = content[2]
+            nxt = ""
+        elif _token_names_drug(content[0]):
+            drug = content[0]
+            nxt = content[1] if len(content) > 1 else ""
+        else:
+            continue
+        if not _token_names_drug(drug) or (nxt and _ON_TOPIC.match(nxt)):
+            continue
+        return True
     return False
 
 
@@ -802,6 +843,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _not_receiving_stop(text)
         or _not_using_stop(text)
         or _not_established_stop(text)
+        or _not_tolerating_stop(text)
         or _med_list_stop(text)
         or _refused_stop(text)
     )

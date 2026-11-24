@@ -831,6 +831,10 @@ _USING = re.compile(
     r"|(?:^|\bpatients?\s+)uses\b",
     re.I,
 )
+_TOLERATING = re.compile(
+    r"(?:^|\b(?:is|was|were|are|am|been|being|patients?|poorly|well)\s+)tolerat(?:e|es|ed|ing)\b",
+    re.I,
+)
 _ARRIVAL_ON = re.compile(
     r"\b(?:came|come|comes|coming|admitted|admission|discharg(?:e|ed|ing)|"
     r"presents?|presented|presenting|brought|went|goes|going|gone|sent|sends|sending)\b"
@@ -1013,6 +1017,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
         return True
     if _using_drug(sentence):
         return True
+    if _tolerating_drug(sentence):
+        return True
     if _arrival_on_drug(sentence):
         return True
     if _dependent_on_drug(sentence):
@@ -1170,6 +1176,38 @@ def _using_drug(sentence: str) -> bool:
         if nxt and _ON_TOPIC.match(nxt):
             continue
         return True
+    return False
+
+
+def _tolerating_drug(sentence: str) -> bool:
+    """True when the patient is tolerating a named drug."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _ON_TOPIC
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text):
+        return False
+    started = bool(re.match(r"\s*(?:poorly\s+|well\s+)?tolerat", text, re.I))
+    for match in _TOLERATING.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        tail = text[match.end():]
+        prefix = text[: match.start()]
+        if _direct_drug_object(tail):
+            if not re.search(r"\bpatients?\b", text, re.I) and not started:
+                continue
+            content = _content_words(tail)
+            nxt = content[1] if len(content) >= 2 else ""
+            if nxt and _ON_TOPIC.match(nxt):
+                continue
+            return True
+        if (
+            intervention_tokens(prefix)
+            and not intervention_tokens(tail)
+            and _subject_is_drug(prefix)
+            and not _MONITOR_WORD.search(tail or "")
+        ):
+            return True
     return False
 
 
@@ -1560,6 +1598,7 @@ def _chart_caution_text(chart: str) -> str:
         _not_receiving_stop,
         _not_using_stop,
         _not_established_stop,
+        _not_tolerating_stop,
         _med_list_stop,
         _refused_stop,
         _negated_away_split,
@@ -1583,6 +1622,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _not_receiving_stop(sentence)
                 or _not_using_stop(sentence)
                 or _not_established_stop(sentence)
+                or _not_tolerating_stop(sentence)
                 or _med_list_stop(sentence)
                 or _refused_stop(sentence)
             ):
