@@ -203,3 +203,14 @@ def test_document_reranker_scores_text_and_content_chunks():
     )
     assert [row["chunk_id"] for row in ranked] == ["a", "b"]
     assert ranked[0]["rerank_score"] == 0.9
+
+
+def test_a_long_question_keeps_the_chart_caution_in_the_lexical_query():
+    from app.retrieval.lexical import LexicalRetriever
+
+    question = " ".join(["doseword"] * 80)
+    query = f"{question}\n\nPatient retrieval context:\nAvoid apixaban."
+    match = LexicalRetriever._fts_query(query)
+    assert '"avoid"' in match.split(" OR ")[:8]
+    assert '"apixaban"' in match.split(" OR ")[:8]
+    assert len(match.split(" OR ")) <= 64

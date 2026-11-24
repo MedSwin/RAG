@@ -108,17 +108,41 @@ class LexicalRetriever:
         return candidate
 
     @staticmethod
-    def _fts_query(query: str) -> str:
+    def _fts_terms(text: str) -> List[str]:
         terms = []
         seen = set()
-        for match in _FTS_TOKEN_RE.finditer(query.lower()):
+        for match in _FTS_TOKEN_RE.finditer((text or "").lower()):
             term = match.group(0).replace('"', '""')
+            if not re.fullmatch(r"\d+(?:\.\d+)?", term):
+                term = term.strip("._/+-")
             if term and term not in seen:
                 seen.add(term)
-                terms.append(f'"{term}"')
+                terms.append(term)
+        return terms
+
+    @staticmethod
+    def _fts_query(query: str) -> str:
+        """Keep chart-caution terms when the question already fills the term cap."""
+        raw = query or ""
+        marker = "patient retrieval context:"
+        index = raw.lower().find(marker)
+        if index >= 0:
+            question = raw[:index]
+            context = raw[index + len(marker):]
+        else:
+            question, context = raw, ""
         # Legacy BM25 is an any-term scorer, so use OR rather than requiring all
         # clinical terms to occur in one passage.
-        return " OR ".join(terms[:64])
+        chosen = []
+        seen = set()
+        for term in LexicalRetriever._fts_terms(context) + LexicalRetriever._fts_terms(question):
+            if term in seen:
+                continue
+            seen.add(term)
+            chosen.append(f'"{term}"')
+            if len(chosen) >= 64:
+                break
+        return " OR ".join(chosen)
 
     async def _fts_candidates(
         self,
