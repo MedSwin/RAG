@@ -52,7 +52,7 @@ def retrieval_filter(
 
     if settings.CLOUD_MODE:
         filter_dict["embedding_space"] = settings.active_embedding_space()
-        filter_dict["embedding_model"] = settings.CLOUD_EMBEDDING
+        filter_dict["embedding_model"] = settings.active_embedding_model()
         filter_dict["embedding_dim"] = settings.active_embedding_dimension()
 
     min_grade = constraints.get("min_evidence_grade")

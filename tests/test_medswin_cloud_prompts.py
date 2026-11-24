@@ -240,6 +240,23 @@ def test_storage_filters_stale_cloud_embedding_space(monkeypatch):
     assert stale["org_id"] == "bench-org"
 
 
+def test_bedrock_index_filter_uses_the_active_embedder_not_the_azure_alias(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", True)
+    monkeypatch.setattr(settings, "CLOUD_PROVIDER", "bedrock")
+    monkeypatch.setattr(settings, "CLOUD_EMBEDDING", "embed-v-4-0")
+    monkeypatch.setattr(settings, "BEDROCK_EMBED_MODEL", "global.cohere.embed-v4:0")
+    monkeypatch.setattr(settings, "BEDROCK_EMBED_DIMENSION", 1536)
+
+    active = StorageService()._index_embedding_filter()
+    from app.retrieval.filters import retrieval_filter
+
+    query_filter = retrieval_filter("org-1", None, None, {})
+    assert active["embedding_model"] == "global.cohere.embed-v4:0"
+    assert active["embedding_space"] == "cloud:global.cohere.embed-v4:0"
+    assert query_filter["embedding_model"] == "global.cohere.embed-v4:0"
+    assert query_filter["embedding_space"] == "cloud:global.cohere.embed-v4:0"
+
+
 def test_final_answer_renderer_rejects_fabricated_citations():
     orchestrator = MedSwinOrchestrator(embedding_client=None, reranker_client=None)
     bundle = EvidenceBundle(
