@@ -182,14 +182,19 @@ def test_naive_error_does_not_return_accept():
     orch, _, llm = _orchestrator(passages=[])
 
     async def _boom(*args, **kwargs):
-        raise RuntimeError("embedder timeout")
+        raise RuntimeError("embedder timeout 555-234-5678")
 
     orch.embedding_client.embed = _boom
     response = asyncio.run(orch.chat(query="q", user_id="u1", org_id="org1"))
     assert response.degraded_mode.get("error") is True
     assert response.policy_decision.passed is False
     assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert response.policy_decision.reason == "Naive RAG failed: RuntimeError."
+    assert response.safety_notes == "RuntimeError"
     assert response.answer_artifact.abstained is True
+    assert "555-234-5678" not in response.answer
+    assert "555-234-5678" not in (response.safety_notes or "")
+    assert "555-234-5678" not in response.policy_decision.reason
     assert llm.calls == []
 
 

@@ -376,10 +376,11 @@ class NaiveRAGOrchestrator:
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("Naive RAG failed: %s", exc, exc_info=True)
+            trace.error_type = type(exc).__name__
             decision = PolicyDecision(
                 passed=False,
                 action=PolicyAction.INSUFFICIENT_EVIDENCE,
-                reason=str(exc),
+                reason=f"Naive RAG failed: {type(exc).__name__}.",
                 missing_facets=["retrieved_evidence"],
             )
             return await self._respond(
@@ -388,7 +389,7 @@ class NaiveRAGOrchestrator:
                 passages=[], ranked_passages=[],
                 backend="error",
                 answer="Naive RAG encountered an error processing your query.",
-                notes=str(exc),
+                notes=type(exc).__name__,
                 started=started,
                 embed_ms=0.0,
                 retrieve_ms=0.0,
