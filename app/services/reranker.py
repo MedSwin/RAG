@@ -49,13 +49,13 @@ class DocumentReranker:
         if self.model_type == "bge-m3":
             model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_path,
-                torch_dtype=torch.float32,
+                dtype=torch.float32,
                 trust_remote_code=True
             )
         elif self.model_type == "gemma":
             model = AutoModelForCausalLM.from_pretrained(
                 self.model_path,
-                torch_dtype=torch.float32,
+                dtype=torch.float32,
                 trust_remote_code=True
             )
         else:
@@ -140,7 +140,7 @@ class DocumentReranker:
         scored_documents = []
         
         for doc in documents:
-            content = doc.get('content', '')
+            content = doc.get('text') or doc.get('content', '')
             if not content:
                 logger.warning(f"Empty content for document {doc.get('chunk_id', 'unknown')}")
                 continue

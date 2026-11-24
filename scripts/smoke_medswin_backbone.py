@@ -53,7 +53,7 @@ def main() -> int:
     tokenizer = AutoTokenizer.from_pretrained(str(LOCAL))
     model = AutoModelForCausalLM.from_pretrained(
         str(LOCAL),
-        torch_dtype=dtype,
+        dtype=dtype,
         low_cpu_mem_usage=True,
     )
     model.to(device)

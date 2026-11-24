@@ -91,3 +91,20 @@ def test_budgeted_selection_preserves_required_literature_source():
 
     assert SourceType.LIT in selected_sources
     assert SourceType.EMR in selected_sources
+
+
+def test_document_reranker_scores_text_and_content_chunks():
+    from app.services.reranker import DocumentReranker
+
+    reranker = DocumentReranker.__new__(DocumentReranker)
+    reranker.compute_relevance_score = lambda query, doc: 0.9 if "aspirin" in doc.lower() else 0.1
+    ranked = reranker.rerank_documents(
+        "aspirin",
+        [
+            {"chunk_id": "b", "content": "Unrelated astronomy sentence."},
+            {"chunk_id": "a", "text": "Aspirin inhibits platelet aggregation."},
+        ],
+        top_k=2,
+    )
+    assert [row["chunk_id"] for row in ranked] == ["a", "b"]
+    assert ranked[0]["rerank_score"] == 0.9
