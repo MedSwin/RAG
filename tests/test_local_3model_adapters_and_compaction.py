@@ -277,14 +277,20 @@ async def test_specialists_share_one_prefix_and_keep_allowed_chunk_scope(monkeyp
         "critic": await agents["critic"].explore("metformin", passages, facets),
     }
     prefixes = [_shared_prefix(agent.client.calls[0]["messages"]) for agent in agents.values()]
-    assert len({prefix for prefix in prefixes}) == 1
-    system, head = prefixes[0]
+    system, emr_head = prefixes[0]
     assert system == shared_claim_system_message()
     assert system.startswith("You are a MedSwin specialist")
     assert "Return valid JSON matching this schema" in system
-    assert head.startswith("Shared Evidence Passages:\n")
-    for chunk_id in ("emr-1", "cpg-1", "lit-1", "safety-1"):
-        assert chunk_id in head
+    assert emr_head.startswith("Shared Evidence Passages:\n")
+    assert "emr-1" in emr_head
+    assert "cpg-1" not in emr_head
+    assert "safety-1" not in emr_head
+    guideline_head = prefixes[1][1]
+    assert "cpg-1" in guideline_head and "lit-1" in guideline_head
+    assert "emr-1" not in guideline_head
+    safety_head = prefixes[2][1]
+    assert "safety-1" in safety_head and "lit-1" in safety_head
+    assert "emr-1" not in safety_head
     assert {claim.chunk_id for claim in batches["emr"].claims} == {"emr-1"}
     assert {claim.chunk_id for claim in batches["guideline"].claims} == {"cpg-1", "lit-1"}
     assert {claim.chunk_id for claim in batches["safety"].claims} == {"safety-1", "lit-1"}
@@ -295,6 +301,16 @@ async def test_specialists_share_one_prefix_and_keep_allowed_chunk_scope(monkeyp
     assert "Valid chunk_ids: emr-1" in emr_suffix
     assert "cpg-1" not in emr_suffix.split("Valid chunk_ids:", 1)[1]
     assert "source_type EMR" in emr_suffix
+
+
+@pytest.mark.asyncio
+async def test_emr_specialist_with_no_chart_does_not_read_the_other_passages():
+    agent = EMRAgent(_RecordingLLM())
+    passages = [_passage("cpg-1", SourceType.CPG, "Guideline recommends metformin.")]
+    batch = await agent.explore("metformin", passages, [ClinicalFacet(name="patient_applicability")])
+    assert batch.claims == []
+    assert agent.client.calls == []
+    assert "no passages" in " ".join(batch.notes).lower()
 
 
 def test_local_passage_context_keeps_safety_inside_2048_envelope(monkeypatch):
@@ -325,9 +341,9 @@ def test_local_passage_context_keeps_safety_inside_2048_envelope(monkeypatch):
 
     monkeypatch.setenv("AGENT_PASSAGE_LIMIT", "2")
     explicit = passage_context(passages)
-    assert "[lit-0|LIT|doc=doc-lit-0]" in explicit
-    assert "[lit-1|LIT|doc=doc-lit-1]" in explicit
-    assert "safety-keep" not in explicit
+    assert "[safety-keep|SAFETY|doc=doc-safety-keep]" in explicit
+    assert explicit.index("safety-keep") < explicit.index("lit-0")
+    assert "[lit-1|LIT|doc=doc-lit-1]" not in explicit
 
 
 @pytest.mark.asyncio
@@ -364,9 +380,18 @@ async def test_local_synthesis_bounds_evidence_and_reads_inline_chunk_ids():
         {"answer": "Use [safety-1] before cpg-1. Never cite missing-9.", "evidence_used": []},
         bundle,
     )
-    assert provenance.cited_chunk_ids == ["safety-1", "cpg-1"]
+    assert provenance.cited_chunk_ids == ["safety-1"]
     assert provenance.statements[0]["use"] == "inline cited supporting evidence"
     assert "missing-9" not in provenance.cited_chunk_ids
+    assert "cpg-1" not in provenance.cited_chunk_ids
+
+    hidden, hidden_provenance = SynthesisAgent(None)._render(
+        {"answer": "Use [extra-0].", "evidence_used": ["extra-0"]},
+        bundle,
+        shown_ids={"safety-1", "cpg-1"},
+    )
+    assert hidden_provenance.cited_chunk_ids == []
+    assert "extra-0" in hidden_provenance.rejected_chunk_ids
     assert "safety-1" in rendered
 
     explicit, explicit_provenance = SynthesisAgent(None)._render(

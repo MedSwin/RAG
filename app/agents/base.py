@@ -150,7 +150,7 @@ def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
         configured_chars = _COMPACT_PASSAGE_CHARS if compact else 1200
     configured_limit = max(1, configured_limit)
     configured_chars = max(128, configured_chars)
-    selected = prioritize_passages(passages) if compact else list(passages)
+    selected = prioritize_passages(passages)
     total_cap = _COMPACT_PASSAGE_BLOCK_CHARS if compact else None
     blocks: List[str] = []
     for passage in selected:
@@ -252,7 +252,8 @@ def _claim_user_message(
     shared: List[CandidatePassage],
     allowed: List[CandidatePassage],
 ) -> str:
-    """Put the shared passage block first and the specialist task at the suffix."""
+    """Show only the passages this specialist may cite."""
+    del shared
     allowed_ids = ", ".join(passage.chunk_id for passage in allowed)
     suffix = (
         f"{role.strip()}\n\n"
@@ -261,7 +262,7 @@ def _claim_user_message(
         "Cite only a chunk_id from Valid chunk_ids. "
         "Keep the safety focus and the citation rule in this suffix."
     )
-    return f"Shared Evidence Passages:\n{passage_context(shared)}{SPECIALIST_SUFFIX_MARK}{suffix}"
+    return f"Shared Evidence Passages:\n{passage_context(allowed)}{SPECIALIST_SUFFIX_MARK}{suffix}"
 
 
 async def call_claim_agent(
@@ -279,6 +280,12 @@ async def call_claim_agent(
     ``shared_passages`` is the identical evidence prefix for every specialist.
     The role text, query, facets, and valid chunk ids stay after that prefix.
     """
+    if not passages:
+        return AgentClaimBatch(
+            agent_id=agent_id,
+            claims=[],
+            notes=["This specialist had no passages to read."],
+        )
     shared = passages if shared_passages is None else shared_passages
     try:
         local_cap = 96 if getattr(client, "backend", "") in {"medswin_local", "local_http"} else None

@@ -201,6 +201,37 @@ def test_another_users_session_id_is_not_reused():
     assert created == [new_id]
 
 
+def test_live_report_status_does_not_pass_when_the_answerable_query_abstains():
+    import importlib.util
+
+    path = "/Users/liamle/Downloads/medswin/scripts/verify_live_fullstack.py"
+    spec = importlib.util.spec_from_file_location("verify_live_fullstack", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.live_report_status(
+        two_stage_passed=False,
+        full_passed=False,
+        abstained=True,
+        abstain_action="insufficient_evidence",
+        card_indicator="warning",
+    ) == "ABSTAINED"
+    assert module.live_report_status(
+        two_stage_passed=True,
+        full_passed=True,
+        abstained=True,
+        abstain_action="insufficient_evidence",
+        card_indicator="info",
+    ) == "PASSED"
+    assert module.live_report_status(
+        two_stage_passed=True,
+        full_passed=True,
+        abstained=False,
+        abstain_action="accept",
+        card_indicator="info",
+    ) == "FAILED"
+
+
 def test_drug_tokens_fold_plurals_and_ignore_april():
     assert intervention_tokens("Avoid NSAIDs") == {"nsaid"}
     assert same_intervention("Avoid NSAIDs", "NSAID is recommended") is True

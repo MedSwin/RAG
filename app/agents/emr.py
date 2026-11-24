@@ -23,7 +23,7 @@ class EMRAgent:
         facets: Optional[List[ClinicalFacet]] = None,
         patient_id: Optional[str] = None,
     ) -> AgentClaimBatch:
-        emr = [p for p in passages if p.source_type.value == "EMR"] or passages
+        emr = [p for p in passages if p.source_type.value == "EMR"]
         facet_names = ", ".join(f.name for f in (facets or []))
         user = (
             f"Query: {query}\nPatient ID: {patient_id or 'unknown'}\n"
@@ -31,5 +31,5 @@ class EMRAgent:
             "Prioritise source_type EMR for patient applicability, medications, labs, and allergies."
         )
         return await call_claim_agent(
-            self.client, "emr", claim_prompts.EMR, user, emr, facets=facets, shared_passages=passages
+            self.client, "emr", claim_prompts.EMR, user, emr, facets=facets, shared_passages=emr
         )

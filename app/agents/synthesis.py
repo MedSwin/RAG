@@ -28,9 +28,10 @@ def _text_items(value: Any) -> List[str]:
     return []
 
 
-def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> str:
+def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> tuple[str, List[str]]:
     """Keep a 2,048-token synthesis prompt inside about 2,800 evidence characters."""
     blocks: List[str] = []
+    shown: List[str] = []
     for passage in prioritize_passages(list(passages)):
         if len(blocks) >= 6:
             break
@@ -48,7 +49,8 @@ def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> str:
             if len(trial) > 2800:
                 break
         blocks.append(block)
-    return "\n\n".join(blocks)
+        shown.append(passage.chunk_id)
+    return "\n\n".join(blocks), shown
 
 
 def _valid_chunk_id_line(passages: Sequence[CandidatePassage], limit: int = 500) -> str:
@@ -69,7 +71,7 @@ def _valid_chunk_id_line(passages: Sequence[CandidatePassage], limit: int = 500)
 
 
 def _inline_chunk_ids(answer: str, allowed: set[str]) -> List[str]:
-    """Read bracketed or bare chunk ids in appearance order. Ignore unknown ids."""
+    """Read bracketed chunk ids in appearance order. Ignore bare tokens."""
     if not answer or not allowed:
         return []
     hits: List[tuple[int, str]] = []
@@ -81,12 +83,6 @@ def _inline_chunk_ids(answer: str, allowed: set[str]) -> List[str]:
         for token in _CHUNK_TOKEN.findall(inner):
             if token in allowed:
                 hits.append((match.start(), token))
-    for chunk_id in allowed:
-        pattern = re.compile(
-            rf"(?<![A-Za-z0-9_\-]){re.escape(chunk_id)}(?![A-Za-z0-9_\-])"
-        )
-        for match in pattern.finditer(answer):
-            hits.append((match.start(), chunk_id))
     hits.sort(key=lambda item: (item[0], item[1]))
     ordered: List[str] = []
     seen = set()
@@ -101,8 +97,14 @@ class SynthesisAgent:
     def __init__(self, client: LLMClient):
         self.client = client
 
-    def _render(self, answer_data: Dict[str, Any], evidence_bundle: EvidenceBundle) -> tuple[str, AnswerProvenance]:
-        allowed = {p.chunk_id for p in evidence_bundle.passages}
+    def _render(
+        self,
+        answer_data: Dict[str, Any],
+        evidence_bundle: EvidenceBundle,
+        shown_ids: Optional[set[str]] = None,
+    ) -> tuple[str, AnswerProvenance]:
+        bundle_ids = {p.chunk_id for p in evidence_bundle.passages}
+        allowed = bundle_ids if shown_ids is None else bundle_ids & set(shown_ids)
         cited = []
         rejected = []
         statements = []
@@ -173,13 +175,16 @@ class SynthesisAgent:
             for row in (facet_coverage or evidence_bundle.facet_coverage)
         )
         backend = getattr(self.client, "backend", "")
+        shown_ids: Optional[set[str]] = None
         if backend in _LOCAL_BACKENDS:
-            evidence_text = _bounded_local_evidence(evidence_bundle.passages)
+            evidence_text, shown = _bounded_local_evidence(evidence_bundle.passages)
+            shown_ids = set(shown)
+            shown_passages = [passage for passage in evidence_bundle.passages if passage.chunk_id in shown_ids]
             notes = "; ".join(str(note) for note in (safety_notes or []) if str(note or "").strip()) or "none"
             user_content = (
                 f"Query: {query}\n\nFacet coverage:\n{coverage_text}\n\n"
                 f"Evidence:\n{evidence_text}\n\n"
-                f"Valid chunk_ids: {_valid_chunk_id_line(evidence_bundle.passages)}\n"
+                f"Valid chunk_ids: {_valid_chunk_id_line(shown_passages)}\n"
                 f"Safety notes: {notes}\n\n"
                 "Provide a clinician decision-support answer with answer, evidence_used "
                 "(chunk_ids only from Valid chunk_ids), uncertainty, contraindications_risks, next_steps. "
@@ -216,7 +221,7 @@ class SynthesisAgent:
         if backend in _LOCAL_BACKENDS and not str(answer_data.get("answer") or "").strip() and raw_content:
             if not (isinstance(answer_data, dict) and "answer" in answer_data):
                 answer_data = {**(answer_data if isinstance(answer_data, dict) else {}), "answer": raw_content}
-        rendered, provenance = self._render(answer_data, evidence_bundle)
+        rendered, provenance = self._render(answer_data, evidence_bundle, shown_ids=shown_ids)
         ideal = " ".join(str(answer_data.get("ideal_answer") or answer_data.get("answer") or "").split()[:200]) if benchmark else None
         artifact = AnswerArtifact(
             content=str(answer_data.get("answer") or ""),

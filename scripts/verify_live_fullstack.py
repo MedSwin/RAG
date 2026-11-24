@@ -38,6 +38,24 @@ from typing import Any
 
 import httpx
 
+
+def live_report_status(
+    *,
+    two_stage_passed: bool,
+    full_passed: bool,
+    abstained: bool,
+    abstain_action: str,
+    card_indicator: str,
+) -> str:
+    """Name the live run. PASSED requires an accepted answerable decision and a real abstention."""
+    if not abstained or abstain_action != "insufficient_evidence":
+        return "FAILED"
+    if card_indicator not in {"info", "warning", "critical"}:
+        return "FAILED"
+    if two_stage_passed and full_passed:
+        return "PASSED"
+    return "ABSTAINED"
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON = str(REPO_ROOT / ".venv" / "bin" / "python")
 LLM_PORT = 18000
@@ -414,6 +432,9 @@ def main() -> None:
             )
             assert abstain_resp.status_code == 200, abstain_resp.text
             abstain_data = abstain_resp.json()
+            assert abstain_data["answer_artifact"]["abstained"] is True, abstain_data["answer"][:200]
+            assert abstain_data["policy_decision"]["passed"] is False
+            assert abstain_data["policy_decision"]["action"] == "insufficient_evidence"
 
             # Side-by-side compare across naive + two-stage
             compare_resp = client.post(
@@ -494,11 +515,19 @@ def main() -> None:
                 },
             )
             assert cds_fb.status_code == 200, cds_fb.text
+            assert "555-234-5678" not in cds_fb.text
 
         llm_health_after = httpx.get(f"http://127.0.0.1:{LLM_PORT}/health", timeout=10.0).json()
+        status = live_report_status(
+            two_stage_passed=bool(two_stage_data["policy_decision"]["passed"]),
+            full_passed=bool(full_data["policy_decision"]["passed"]),
+            abstained=bool(abstain_data["answer_artifact"]["abstained"]),
+            abstain_action=str(abstain_data["policy_decision"]["action"]),
+            card_indicator=str(cds_cards[0]["indicator"]),
+        )
 
         report = {
-            "status": "PASSED",
+            "status": status,
             "llm_server_before": llm_health_before,
             "llm_server_after": llm_health_after,
             "api_health_indexed": api_health_indexed,
@@ -542,8 +571,10 @@ def main() -> None:
         }
         out_path = REPO_ROOT / "data" / "benchmarks" / "live_fullstack_e2e_report.json"
         out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        print(f"\nLIVE FULL-STACK E2E PASSED -> {out_path}", flush=True)
+        print(f"\nLIVE FULL-STACK E2E {status} -> {out_path}", flush=True)
         print(json.dumps(report, indent=2))
+        if status != "PASSED":
+            raise SystemExit(f"Live run status is {status}. The answerable decision did not pass.")
     finally:
         for proc in (api_proc, llm_proc):
             if proc is not None and proc.poll() is None:

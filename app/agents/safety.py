@@ -25,12 +25,12 @@ class SafetyAgent:
         safety = [
             p for p in passages
             if p.source_type.value == "SAFETY" or (p.safety_score or 0) >= 0.3
-        ] or passages
+        ]
         facet_names = ", ".join(f.name for f in (facets or []))
         user = (
             f"Query: {query}\nTarget facets: {facet_names}\n"
             "Prioritise source_type SAFETY. Focus on contraindications, interactions, and warnings."
         )
         return await call_claim_agent(
-            self.client, "safety", claim_prompts.SAFETY, user, safety, facets=facets, shared_passages=passages
+            self.client, "safety", claim_prompts.SAFETY, user, safety, facets=facets, shared_passages=safety
         )
