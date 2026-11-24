@@ -518,6 +518,7 @@ class LexicalRetriever:
             bm25 = bundle["bm25"]
             chunk_ids = bundle["chunk_ids"]
             query_tokens = self._lexical_terms(query)
+            score_values = bm25.get_scores(query_tokens)
             top_indices = _matching_indexes(bm25, query_tokens, k)
             selected_ids = [chunk_ids[idx] for idx in top_indices if idx < len(chunk_ids)]
             if not selected_ids:
@@ -552,7 +553,7 @@ class LexicalRetriever:
                         evidence_grade_score=(chunk.get("evidence_grade") or {}).get("score")
                         if isinstance(chunk.get("evidence_grade"), dict)
                         else None,
-                        lexical_score=float(scores[int(idx)]),
+                        lexical_score=float(score_values[int(idx)]),
                         retrieved_by=["lexical"],
                     )
                 )
