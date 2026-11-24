@@ -764,6 +764,41 @@ def test_a_lexical_caution_stays_ahead_of_weaker_dense_cautions():
     assert "weak-11" not in kept
 
 
+def test_a_later_drug_stays_when_repeated_lexical_cautions_fill_the_reserve():
+    from app.retrieval.hybrid import _with_lexical_cautions
+
+    fillers = [
+        _candidate(f"dense-{index}", "A general note.", dense=0.90)
+        for index in range(80)
+    ]
+    for item in fillers:
+        item.lexical_score = None
+    repeated = []
+    for index in range(12):
+        item = _candidate(
+            f"warfarin-{index}",
+            "Avoid warfarin.",
+            source_type=SourceType.SAFETY,
+            dense=None,
+        )
+        item.lexical_score = 2.0
+        item.dense_score = None
+        repeated.append(item)
+    later = _candidate("apix", "Avoid apixaban.", source_type=SourceType.SAFETY, dense=None)
+    later.lexical_score = 1.0
+    later.dense_score = None
+    ordered = sorted(
+        [*fillers, *repeated, later],
+        key=lambda item: (item.dense_score or 0.0, item.lexical_score or 0.0),
+        reverse=True,
+    )
+    pool = _with_lexical_cautions(ordered, 80)
+    kept = {item.chunk_id for item in pool}
+    assert "apix" in kept
+    assert any(chunk_id.startswith("warfarin-") for chunk_id in kept)
+    assert len(pool) <= 92
+
+
 def test_the_retrieval_trace_lists_a_caution_past_the_first_rows():
     from app.retrieval.hybrid import _trace_candidates
 

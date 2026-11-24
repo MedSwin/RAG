@@ -40,7 +40,7 @@ def _with_lexical_cautions(
     limit: int,
 ) -> List[CandidatePassage]:
     """Keep a lexical caution when dense hits fill the rerank pool."""
-    from app.agents.base import _is_prompt_caution
+    from app.agents.base import _is_prompt_caution, _make_room_for_new_drug
 
     pool = list(ordered[:limit])
     kept = {item.chunk_id for item in pool}
@@ -56,7 +56,17 @@ def _with_lexical_cautions(
     extra: List[CandidatePassage] = []
     for candidate in lexical + dense:
         if len(extra) >= _LEXICAL_CAUTION_RESERVE:
-            break
+            extra = [
+                item[0]
+                for item in _make_room_for_new_drug(
+                    [(item,) for item in extra],
+                    lambda item: item[0].text or "",
+                    candidate.text or "",
+                    True,
+                )
+            ]
+        if len(extra) >= _LEXICAL_CAUTION_RESERVE:
+            continue
         extra.append(candidate)
         kept.add(candidate.chunk_id)
     return pool + extra
