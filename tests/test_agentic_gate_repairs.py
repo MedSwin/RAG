@@ -1308,6 +1308,49 @@ def test_a_required_chart_replaces_a_filler_at_the_passage_cap():
     assert "filler-8" not in kept
 
 
+def test_a_failed_caution_fit_keeps_the_filler():
+    from app.scoring.utility import select_bundle
+
+    strong = CandidatePassage(
+        chunk_id="strong",
+        doc_id="strong",
+        source_type=SourceType.CPG,
+        text="Recommend apixaban for stroke prevention.",
+        calibrated_score=0.90,
+        fusion_score=0.99,
+        token_count=60,
+    )
+    filler = CandidatePassage(
+        chunk_id="filler",
+        doc_id="filler",
+        source_type=SourceType.LIT,
+        text="A short literature note.",
+        calibrated_score=0.80,
+        fusion_score=0.50,
+        token_count=40,
+    )
+    caution = CandidatePassage(
+        chunk_id="warfarin",
+        doc_id="warfarin",
+        source_type=SourceType.LIT,
+        text="Avoid warfarin in this patient.",
+        calibrated_score=0.80,
+        fusion_score=0.20,
+        safety_score=0.80,
+        token_count=50,
+    )
+    selected = select_bundle(
+        [strong, filler, caution],
+        facets=[],
+        token_budget=100,
+        max_chunks=3,
+    )
+    kept = {item.chunk_id for item in selected}
+    assert "strong" in kept
+    assert "filler" in kept
+    assert "warfarin" not in kept
+
+
 def test_a_new_drug_caution_replaces_a_filler_passage():
     from app.scoring.utility import select_bundle
 

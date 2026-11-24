@@ -116,35 +116,17 @@ def _preserve_required_sources(
             continue
         item = max(candidates, key=lambda c: (max((c.facet_scores or {}).values(), default=0.0), c.fusion_score or 0.0))
         tokens = token_count(item)
-        current_tokens = _make_room(
+        fitted = _try_fit(
             selected,
             token_budget,
             tokens,
             protected_sources=required_sources,
         )
-        if len(selected) >= settings.MMR_MAX_EVIDENCE_CHUNKS:
-            fillers = _filler_candidates(selected, required_sources)
-            if len(selected) <= 1 or not fillers:
-                continue
-            victim = min(
-                fillers,
-                key=lambda passage: (passage.fusion_score or 0.0, passage.calibrated_score or 0.0),
-            )
-            best = max(
-                selected,
-                key=lambda passage: (passage.fusion_score or 0.0, passage.calibrated_score or 0.0),
-            )
-            if victim is best:
-                continue
-            freed = current_tokens - token_count(victim)
-            if freed + tokens > token_budget:
-                continue
-            selected.remove(victim)
-            current_tokens = freed
-        if current_tokens + tokens <= token_budget and len(selected) < settings.MMR_MAX_EVIDENCE_CHUNKS:
-            item.selected_reason = f"protected_required_source={source}"
-            selected.append(item)
-            current_tokens += tokens
+        if fitted is None:
+            continue
+        item.selected_reason = f"protected_required_source={source}"
+        selected.append(item)
+        current_tokens = fitted + tokens
 
 
 def _is_critical_caution(item: CandidatePassage) -> bool:
@@ -209,6 +191,43 @@ def _make_room(
     return current
 
 
+def _try_fit(
+    selected: List[CandidatePassage],
+    token_budget: int,
+    needed: int,
+    protected_sources: Optional[set] = None,
+) -> Optional[int]:
+    """Free a slot for one passage. Restore the bundle when it still does not fit."""
+    snapshot = list(selected)
+    current = _make_room(selected, token_budget, needed, protected_sources)
+    if len(selected) >= settings.MMR_MAX_EVIDENCE_CHUNKS:
+        fillers = _filler_candidates(selected, protected_sources)
+        if len(selected) <= 1 or not fillers:
+            selected[:] = snapshot
+            return None
+        victim = min(
+            fillers,
+            key=lambda passage: (passage.fusion_score or 0.0, passage.calibrated_score or 0.0),
+        )
+        best = max(
+            selected,
+            key=lambda passage: (passage.fusion_score or 0.0, passage.calibrated_score or 0.0),
+        )
+        if victim is best:
+            selected[:] = snapshot
+            return None
+        freed = current - token_count(victim)
+        if freed + needed > token_budget:
+            selected[:] = snapshot
+            return None
+        selected.remove(victim)
+        current = freed
+    if current + needed <= token_budget and len(selected) < settings.MMR_MAX_EVIDENCE_CHUNKS:
+        return current
+    selected[:] = snapshot
+    return None
+
+
 def _preserve_safety(
     selected: List[CandidatePassage],
     remaining: List[CandidatePassage],
@@ -228,30 +247,12 @@ def _preserve_safety(
         if not _adds_a_new_drug_warning(item, selected):
             continue
         tokens = token_count(item)
-        current_tokens = _make_room(selected, token_budget, tokens)
-        if len(selected) >= settings.MMR_MAX_EVIDENCE_CHUNKS:
-            fillers = [passage for passage in selected if not _is_critical_caution(passage)]
-            if len(selected) <= 1 or not fillers:
-                continue
-            victim = min(
-                fillers,
-                key=lambda passage: (passage.fusion_score or 0.0, passage.calibrated_score or 0.0),
-            )
-            best = max(
-                selected,
-                key=lambda passage: (passage.fusion_score or 0.0, passage.calibrated_score or 0.0),
-            )
-            if victim is best:
-                continue
-            freed = current_tokens - token_count(victim)
-            if freed + tokens > token_budget:
-                continue
-            selected.remove(victim)
-            current_tokens = freed
-        if current_tokens + tokens <= token_budget and len(selected) < settings.MMR_MAX_EVIDENCE_CHUNKS:
-            item.selected_reason = "protected_critical_safety_or_contradiction"
-            selected.append(item)
-            current_tokens += tokens
+        fitted = _try_fit(selected, token_budget, tokens)
+        if fitted is None:
+            continue
+        item.selected_reason = "protected_critical_safety_or_contradiction"
+        selected.append(item)
+        current_tokens = fitted + tokens
 
 
 def select_bundle(
