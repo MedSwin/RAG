@@ -555,7 +555,7 @@ class NaiveRAGOrchestrator:
                 "chunk_count": None,
                 "embedded_count": None,
                 "index_exists": Path(settings.HNSW_INDEX_PATH).exists(),
-                "error": str(exc),
+                "error": type(exc).__name__,
             }
 
     @staticmethod

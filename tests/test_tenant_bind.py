@@ -674,6 +674,22 @@ def test_service_refresh_skips_charts_and_does_not_rebuild(monkeypatch):
     assert status["error"] is None
 
 
+def test_embedding_refresh_status_hides_the_exception_text(monkeypatch):
+    previous = dict(storage_service.EMBEDDING_REFRESH_STATUS)
+
+    def _boom():
+        raise RuntimeError("secret connection 555-234-5678")
+
+    monkeypatch.setattr(storage_service, "get_database", _boom)
+    try:
+        status = asyncio.run(storage_service.StorageService().refresh_cloud_embeddings(org_id="org-a"))
+    finally:
+        storage_service.EMBEDDING_REFRESH_STATUS.clear()
+        storage_service.EMBEDDING_REFRESH_STATUS.update(previous)
+    assert status["error"] == "RuntimeError"
+    assert "555-234-5678" not in str(status)
+
+
 def test_cloud_dataset_ingest_does_not_embed_or_rebuild(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_MODE", True)
     service = IngestionPipelineService()

@@ -333,7 +333,7 @@ class StorageService:
             EMBEDDING_REFRESH_STATUS.update({
                 "running": False,
                 "ready": False,
-                "error": str(exc),
+                "error": type(exc).__name__,
                 "completed_at": datetime.now(timezone.utc),
             })
         return EMBEDDING_REFRESH_STATUS.copy()
