@@ -15,6 +15,29 @@ from app.services.storage import StorageService
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+_CHUNK_ID_KEYS = {"chunk_id", "doc_id", "org_id", "patient_id", "user_id", "source_type", "_id"}
+
+
+def _public_chunk(chunk: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a chunk copy. Drop a phone, an email, an MRN, or a labelled date of birth."""
+    from app.services.medswin.governance import redact_phi_text
+
+    public = dict(chunk)
+    for key in ("text", "content"):
+        value = public.get(key)
+        if isinstance(value, str):
+            public[key] = redact_phi_text(value)
+    metadata = public.get("metadata")
+    if isinstance(metadata, dict):
+        cleaned: Dict[str, Any] = {}
+        for key, value in metadata.items():
+            if isinstance(value, str) and key not in _CHUNK_ID_KEYS:
+                cleaned[key] = redact_phi_text(value)
+            else:
+                cleaned[key] = value
+        public["metadata"] = cleaned
+    return public
+
 
 class StoreChunksRequest(BaseModel):
     """Request model for normalizing, embedding, and storing tenant chunks."""
@@ -466,7 +489,7 @@ async def get_chunk(
         chunk = await storage_service.get_chunk(chunk_id, org_id=org_id)
         if not chunk or (_is_chart(chunk) and not _is_operator(http_request)):
             raise HTTPException(status_code=404, detail="Chunk not found")
-        return chunk
+        return _public_chunk(chunk)
     except HTTPException:
         raise
     except Exception as exc:
@@ -494,7 +517,8 @@ async def list_chunks(
         if task:
             filters["metadata.task"] = task
         chunks = await storage_service.list_chunks(skip=skip, limit=limit, filters=filters)
-        return {"chunks": chunks, "total": len(chunks), "skip": skip, "limit": limit, "org_id": org_id}
+        public = [_public_chunk(chunk) for chunk in chunks]
+        return {"chunks": public, "total": len(public), "skip": skip, "limit": limit, "org_id": org_id}
     except Exception as exc:
         logger.error("Error listing chunks: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list chunks: {type(exc).__name__}")

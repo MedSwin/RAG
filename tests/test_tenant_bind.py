@@ -624,6 +624,23 @@ def test_operator_refresh_schedules_the_shared_index(monkeypatch):
     assert built[0]["force_rebuild"] is True
 
 
+def test_the_chunk_read_drops_a_phone_number():
+    public = storage._public_chunk(
+        {
+            "chunk_id": "emr-1",
+            "patient_id": "pt-1",
+            "text": "Call 555-234-5678. Creatinine is 1.4. Continue metformin.",
+            "metadata": {"patient_id": "pt-1", "note": "Call 555-234-5678."},
+        }
+    )
+    assert "555-234-5678" not in public["text"]
+    assert "Creatinine is 1.4." in public["text"]
+    assert "metformin" in public["text"]
+    assert public["patient_id"] == "pt-1"
+    assert public["metadata"]["patient_id"] == "pt-1"
+    assert "555-234-5678" not in public["metadata"]["note"]
+
+
 def test_clinician_cannot_list_or_delete_charts(monkeypatch):
     token = _auth(monkeypatch)
     seen = []
