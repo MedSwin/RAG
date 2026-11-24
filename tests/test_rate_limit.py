@@ -78,6 +78,28 @@ def test_a_read_timeout_does_not_send_a_second_generation(monkeypatch):
     assert client.calls == 1
 
 
+def test_a_write_timeout_does_not_send_a_second_generation(monkeypatch):
+    monkeypatch.setattr(settings, "MODEL_RATE_LIMIT_MAX_ATTEMPTS", 6)
+    limiter = AdaptiveModelRateLimiter()
+    client = _Client([httpx.WriteTimeout("bytes already sent")])
+    try:
+        asyncio.run(
+            limiter.post(
+                client,
+                "https://bedrock.example/model",
+                key="gen",
+                logger=logging.getLogger("test-rate-limit"),
+                json={"messages": []},
+                headers={},
+            )
+        )
+    except httpx.WriteTimeout:
+        pass
+    else:
+        raise AssertionError("the write timeout must stop the request")
+    assert client.calls == 1
+
+
 def test_a_refused_connection_retries_once(monkeypatch):
     monkeypatch.setattr(settings, "MODEL_RATE_LIMIT_MAX_ATTEMPTS", 6)
     limiter = AdaptiveModelRateLimiter()
