@@ -102,6 +102,27 @@ def test_a_drug_named_after_the_claim_preview_still_conflicts():
     assert any(pair.chunk_id_a == "cpg-late" and pair.chunk_id_b == "safety-late" for pair in pairs)
 
 
+def test_a_brand_name_pairs_with_the_generic_drug():
+    support = _entry(
+        "cpg-apixaban",
+        "guideline_concordance",
+        "Apixaban is recommended for nonvalvular atrial fibrillation.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    caution = _entry(
+        "safety-eliquis",
+        "safety_contraindications",
+        "Avoid Eliquis when active bleeding is present.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    pairs = detect_contradictions([support, caution])
+    assert len(pairs) == 1
+    assert pairs[0].chunk_id_b == "safety-eliquis"
+    assert "apixaban" in pairs[0].reason
+
+
 def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
     support = _entry(
         "cpg-aha",

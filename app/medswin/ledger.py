@@ -222,6 +222,17 @@ _DRUG_WORDS = {
     "ketorolac",
     "metformin",
 }
+_DRUG_ALIASES = {
+    "eliquis": "apixaban",
+    "pradaxa": "dabigatran",
+    "xarelto": "rivaroxaban",
+    "savaysa": "edoxaban",
+    "lixiana": "edoxaban",
+    "coumadin": "warfarin",
+    "clexane": "enoxaparin",
+    "lovenox": "enoxaparin",
+    "glucophage": "metformin",
+}
 _DRUG_SUFFIXES = (
     "xaban",
     "gatran",
@@ -251,6 +262,10 @@ def intervention_tokens(text: str) -> set[str]:
                 continue
             if word.endswith("s") and word[:-1] in _DRUG_WORDS:
                 word = word[:-1]
+            alias = _DRUG_ALIASES.get(word)
+            if alias:
+                found.add(alias)
+                continue
             listed = next((drug for drug in _DRUG_WORDS if len(drug) >= 6 and word.startswith(drug)), None)
             if listed:
                 found.add(listed)
