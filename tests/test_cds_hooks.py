@@ -74,6 +74,21 @@ def test_missing_question_returns_no_cards_and_does_not_call_chat():
     assert calls == []
 
 
+def test_card_summary_skips_the_decision_support_boundary():
+    response = _response(accepted=True).model_copy(
+        update={
+            "answer": (
+                "Clinician decision support only: this response supports clinical review and "
+                "does not establish a final diagnosis. Amoxicillin is listed in the cited guideline passage."
+            )
+        }
+    )
+    card = cards_from_chat(response)[0]
+    assert card["summary"].startswith("Amoxicillin is listed")
+    assert "Clinician decision support only" not in card["summary"]
+    assert "does not establish a diagnosis" in card["detail"]
+
+
 def test_accepted_decision_returns_an_info_card():
     async def chat(**kwargs):
         assert kwargs["question"] == "What is the first-line antibiotic?"

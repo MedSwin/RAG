@@ -51,7 +51,7 @@ def cards_from_chat(response: ChatResponse) -> List[Dict[str, Any]]:
     )
     if accepted:
         indicator = "info"
-        summary = _clip(response.answer or "Evidence passed the MedSwin gate.")
+        summary = _clinical_summary(response.answer)
     elif unresolved:
         indicator = "critical"
         summary = "Unresolved evidence conflicts need clinician review."
@@ -103,6 +103,19 @@ def feedback_documents(
             }
         )
     return documents
+
+
+def _clinical_summary(answer: str) -> str:
+    """Show the clinical answer. The card detail already carries the boundary."""
+    compact = " ".join((answer or "").split())
+    marker = "Clinician decision support only:"
+    if compact.startswith(marker):
+        rest = compact[len(marker):].lstrip()
+        period = rest.find(".")
+        if period >= 0:
+            rest = rest[period + 1 :].lstrip()
+        compact = rest
+    return _clip(compact or "Evidence passed the MedSwin gate.")
 
 
 def _clip(text: str) -> str:
