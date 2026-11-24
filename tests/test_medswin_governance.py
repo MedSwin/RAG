@@ -58,6 +58,16 @@ def test_a_long_sentence_shows_the_later_drug_first():
     assert lead_with_caution("Avoid apixaban.").lower().count("avoid apixaban") == 1
 
 
+def test_a_long_recommendation_shows_the_drug_in_the_first_lines():
+    from app.services.medswin.governance import lead_with_caution
+
+    filler = " ".join(f"history{i}" for i in range(40))
+    assert len(filler) > 320
+    shown = lead_with_caution(f"{filler} The guideline recommends apixaban.")
+    assert "apixaban" in shown[:80].lower()
+    assert lead_with_caution("Apixaban is recommended.").lower().count("apixaban") == 1
+
+
 def test_a_later_sentence_shows_the_caution_drug_first():
     from app.services.medswin.governance import lead_with_caution
 

@@ -83,7 +83,26 @@ def lead_with_caution(text: str) -> str:
         ordered = raw
     else:
         ordered = _lead_sentence(raw)
-    return _prepend_dose(ordered)
+    return _prepend_distant_drug(_prepend_dose(ordered))
+
+
+def _prepend_distant_drug(text: str) -> str:
+    """Put a named drug in the first lines when a long note would hide it."""
+    from app.medswin.ledger import _DRUG_ALIASES, _SHORT_ALIASES, intervention_tokens
+
+    raw = text or ""
+    head = raw[:80].lower()
+    aliases = {**_DRUG_ALIASES, **_SHORT_ALIASES}
+    missing = []
+    for drug in sorted(intervention_tokens(raw)):
+        if drug in head:
+            continue
+        if any(re.search(rf"\b{re.escape(alias)}\b", head) for alias, generic in aliases.items() if generic == drug):
+            continue
+        missing.append(drug)
+    if not missing:
+        return raw
+    return f"{' '.join(missing)} {raw}".strip()
 
 
 def _prepend_dose(text: str) -> str:
