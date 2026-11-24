@@ -433,14 +433,13 @@ def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
     return " ".join(item.claim for item in entry.claims)
 
 
-def _conflict_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = None) -> str:
-    """Use the caution sentence when it names the drug. A support sentence stays out."""
+def named_caution_text(text: str) -> str:
+    """Return the caution sentences when they name a drug."""
     from app.retrieval.lexical import LexicalRetriever
     from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 
-    full = _pairing_text(entry, claim)
     spans = []
-    for sentence in re.split(r"(?<=[.!?])\s+|\n+", full):
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
         if not sentence.strip():
             continue
         if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
@@ -450,7 +449,12 @@ def _conflict_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = 
     caution = " ".join(spans)
     if caution and intervention_tokens(caution):
         return caution
-    return full
+    return text or ""
+
+
+def _conflict_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = None) -> str:
+    """Use the caution sentence when it names the drug. A support sentence stays out."""
+    return named_caution_text(_pairing_text(entry, claim))
 
 
 PATIENT_CHART_ID = "patient-chart"

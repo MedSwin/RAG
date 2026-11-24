@@ -315,7 +315,7 @@ def _caution_drug_name(
     severity: str = "low",
 ) -> str:
     """Return the drugs named by an unresolved caution passage."""
-    from app.medswin.ledger import intervention_tokens
+    from app.medswin.ledger import intervention_tokens, named_caution_text
     from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 
     ids = set()
@@ -331,10 +331,10 @@ def _caution_drug_name(
     for passage in passages or []:
         if getattr(passage, "chunk_id", None) not in ids:
             continue
-        text = getattr(passage, "text", "") or ""
-        if not (_ungoverned_caution(text) or _QUALIFY.search(text)):
+        raw = getattr(passage, "text", "") or ""
+        if not (_ungoverned_caution(raw) or _QUALIFY.search(raw)):
             continue
-        for drug in sorted(intervention_tokens(text)):
+        for drug in sorted(intervention_tokens(named_caution_text(raw))):
             if drug not in found:
                 found.append(drug)
     if not found:
