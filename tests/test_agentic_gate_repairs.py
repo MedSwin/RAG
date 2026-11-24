@@ -960,6 +960,74 @@ def test_a_recommendation_that_cannot_use_warfarin_does_not_conflict_with_that_w
     assert all(pair.chunk_id_b != "war" for pair in blocked)
 
 
+def test_a_named_allergy_conflicts_with_the_same_drug_order():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("Which dose?", QuerySpec(canonical_terms=["dose"]))
+
+    def passage(chunk_id: str, text: str, source: SourceType = SourceType.SAFETY) -> CandidatePassage:
+        return CandidatePassage(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=source,
+            text=text,
+            section="Safety",
+            calibrated_score=0.90,
+            evidence_grade_score=0.95,
+        )
+
+    def pairs_for(note: str, other: str):
+        return detect_contradictions(
+            build_retrieval_ledger(
+                [passage("note", note), passage("other", other, SourceType.CPG)],
+                facets,
+            )
+        )
+
+    for note in (
+        "Allergic to warfarin.",
+        "The patient is allergic to warfarin.",
+        "Warfarin allergy.",
+        "History of warfarin allergy.",
+        "Anaphylaxis to warfarin.",
+        "Hypersensitivity to warfarin.",
+        "Adverse reaction to warfarin.",
+        "Warfarin toxicity.",
+        "Interaction with warfarin.",
+    ):
+        for other in ("Start warfarin.", "Warfarin is recommended."):
+            pairs = pairs_for(note, other)
+            assert len(pairs) == 1, (note, other)
+            assert pairs[0].severity == "high"
+            assert "warfarin" in pairs[0].reason
+            assert "apixaban" not in pairs[0].reason
+        chart = chart_contradictions(
+            note,
+            build_retrieval_ledger([passage("other", "Warfarin is recommended.", SourceType.CPG)], facets),
+        )
+        assert len(chart) == 1, note
+        assert "warfarin" in chart[0].reason
+        assert chart[0].chunk_id_b == "patient-chart"
+    for note in (
+        "No allergy to warfarin.",
+        "Not allergic to warfarin.",
+        "Denies warfarin allergy.",
+        "The patient has a peanut allergy.",
+        "Add warfarin to the allergy list.",
+    ):
+        assert pairs_for(note, "Warfarin is recommended.") == [], note
+        assert pairs_for(note, "Start warfarin.") == [], note
+    rhinitis = build_retrieval_ledger(
+        [passage("note", "Allergic rhinitis. Start warfarin.", SourceType.CPG)],
+        facets,
+    )
+    blocked = detect_contradictions(
+        rhinitis + build_retrieval_ledger([passage("war", "Avoid warfarin.")], facets)
+    )
+    assert any("warfarin" in pair.reason for pair in blocked)
+    assert all("apixaban" not in pair.reason for pair in blocked)
+
+
 def test_an_order_after_a_contraindication_keeps_that_order():
     from app.medswin.normalize import QueryNormalizer
 

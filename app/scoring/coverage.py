@@ -213,6 +213,60 @@ _BENIGN_DO_NOT = re.compile(
     re.I,
 )
 _QUALIFY = re.compile(r"\b(?:unless|except|cautions?|precautions?|monitor)\b", re.I)
+_NAMED_SAFETY = re.compile(
+    r"\b(?:allerg(?:y|ic|ies)|anaphylaxis|anaphylactic|hypersensitivity|adverse|toxicity|interaction|interacts)\b",
+    re.I,
+)
+_SAFETY_LIST = re.compile(r"^\s+list\b", re.I)
+
+
+def _token_names_drug(word: str) -> bool:
+    """True when one word is a listed drug. This does not read caution polarity."""
+    from app.medswin.ledger import _DRUG_ALIASES, _DRUG_SUFFIXES, _DRUG_WORDS, _NOT_DRUGS, _SHORT_ALIASES, _WORD
+
+    token = (word or "").lower().strip(".,;")
+    if token in _SHORT_ALIASES:
+        return True
+    for raw in _WORD.findall(token):
+        for part in raw.split("-"):
+            if len(part) < 4 or part in _NOT_DRUGS:
+                continue
+            if part.endswith("s") and part[:-1] in _DRUG_WORDS:
+                part = part[:-1]
+            if part in _DRUG_ALIASES or part in _DRUG_WORDS or part.endswith(_DRUG_SUFFIXES):
+                return True
+            if any(len(drug) >= 6 and part.startswith(drug) for drug in _DRUG_WORDS):
+                return True
+    return False
+
+
+def _named_safety_caution(text: str) -> bool:
+    """True when a safety word names a drug and a nearby negation does not cancel it."""
+    raw = text or ""
+    words = raw.split()
+    if not words:
+        return False
+    spans = []
+    cursor = 0
+    for word in words:
+        at = raw.find(word, cursor)
+        spans.append(at)
+        cursor = at + len(word)
+    for match in _NAMED_SAFETY.finditer(raw):
+        window = raw[max(0, match.start() - 48):match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        if _SAFETY_LIST.match(raw[match.end():]):
+            continue
+        anchor = 0
+        for index, begin in enumerate(spans):
+            if begin <= match.start() < begin + len(words[index]):
+                anchor = index
+                break
+        near = words[max(0, anchor - 4): min(len(words), anchor + 5)]
+        if any(_token_names_drug(word) for word in near):
+            return True
+    return False
 
 
 def _ungoverned_caution(text: str) -> bool:
@@ -225,7 +279,7 @@ def _ungoverned_caution(text: str) -> bool:
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(text[match.end():]):
             continue
         return True
-    return False
+    return _named_safety_caution(text)
 
 
 def infer_polarity(passage: CandidatePassage, facet: ClinicalFacet) -> EvidencePolarity:
