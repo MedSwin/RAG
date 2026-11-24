@@ -1097,6 +1097,10 @@ _SUPPLY_VERB = re.compile(
     r"\b(?:suppl(?:y|ies|ied|ying)|dispens(?:e|es|ed|ing))\b",
     re.I,
 )
+_CHART_ORDER_VERB = re.compile(
+    r"\b(?:order(?:s|ed|ing)?|chart(?:s|ed|ing)?)\b",
+    re.I,
+)
 _PUT_ON = re.compile(
     r"\b(?:put|puts|putting|placed?|placing)\b(?:\s+\w+){0,5}\s+on\b",
     re.I,
@@ -1401,7 +1405,7 @@ def _verb_orders_named_drug(text: str, start: int, end: int) -> bool:
 
 
 def _has_recommendation_verb(text: str) -> bool:
-    from app.scoring.coverage import _LOCAL_NEGATION, _QUALIFY
+    from app.scoring.coverage import _LOCAL_NEGATION, _ON_TOPIC, _QUALIFY
 
     for match in _RECOMMEND_VERB.finditer(text or ""):
         window = text[max(0, match.start() - 48): match.start()]
@@ -1423,6 +1427,27 @@ def _has_recommendation_verb(text: str) -> bool:
         if _direct_drug_object(tail):
             return True
         if not re.search(r"\b(?:was|is|were|been|be)\s+$", prefix or "", re.I):
+            continue
+        if (
+            intervention_tokens(prefix)
+            and not intervention_tokens(tail)
+            and _subject_is_drug(prefix)
+            and not _MONITOR_WORD.search(tail or "")
+        ):
+            return True
+    for match in _CHART_ORDER_VERB.finditer(text or ""):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        tail = text[match.end():]
+        prefix = text[: match.start()]
+        word = match.group(0).lower()
+        if _direct_drug_object(tail):
+            content = _content_words(tail)
+            nxt = content[1] if len(content) >= 2 else ""
+            if not (nxt and _ON_TOPIC.match(nxt)):
+                return True
+        if word not in {"ordered", "charted"}:
             continue
         if (
             intervention_tokens(prefix)
