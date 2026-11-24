@@ -179,6 +179,26 @@ def test_a_passed_gate_with_an_unstructured_answer_is_not_called_insufficient():
     assert "did not accept" not in withheld_card["detail"]
 
 
+def test_a_low_caution_is_named_on_the_warning_card():
+    from app.schemas.evidence import ContradictionPair
+
+    response = _response(accepted=False)
+    response.contradictions = [
+        ContradictionPair(
+            facet="guideline_concordance",
+            chunk_id_a="cpg",
+            chunk_id_b="caution",
+            severity="low",
+            reason="Same-drug caution qualifies this recommendation.",
+        )
+    ]
+    card = cards_from_chat(response)[0]
+    assert card["indicator"] == "warning"
+    assert card["summary"] == "An unresolved caution qualifies this recommendation."
+    assert "unresolved caution" in card["detail"].lower()
+    assert "high-severity" not in card["summary"].lower()
+
+
 def test_insufficient_decision_returns_a_warning_card():
     cards = cards_from_chat(_response(accepted=False))
     assert cards[0]["indicator"] == "warning"

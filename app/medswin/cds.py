@@ -89,7 +89,11 @@ def cards_from_chat(
         summary = "The model did not return a structured clinical answer."
     else:
         indicator = "warning"
-        summary = "The available evidence is insufficient."
+        summary = (
+            "An unresolved caution qualifies this recommendation."
+            if _has_unresolved_caution(decision, contradictions)
+            else "The available evidence is insufficient."
+        )
     detail = _detail(
         accepted=accepted,
         synthesis_failed=synthesis_failed,
@@ -97,6 +101,7 @@ def cards_from_chat(
         missing=missing,
         passage_ids=passage_ids,
         contradiction_count=len(contradictions),
+        qualifying=_has_unresolved_caution(decision, contradictions),
     )
     card: Dict[str, Any] = {
         "uuid": response.trace_id or str(uuid.uuid4()),
@@ -170,6 +175,14 @@ def _clip(text: str) -> str:
     return compact[: _SUMMARY_LIMIT - 1].rstrip() + "…"
 
 
+def _has_unresolved_caution(decision: Any, contradictions: List[Any]) -> bool:
+    """True when a non-high pair still blocks the card."""
+    pairs = list(contradictions or [])
+    if decision is not None:
+        pairs.extend(list(getattr(decision, "contradictions", []) or []))
+    return any(not item.resolved and item.severity != "high" for item in pairs)
+
+
 def _detail(
     *,
     accepted: bool,
@@ -178,6 +191,7 @@ def _detail(
     passage_ids: List[str],
     contradiction_count: int,
     synthesis_failed: bool = False,
+    qualifying: bool = False,
 ) -> str:
     missing_text = ", ".join(missing) if missing else "none"
     passage_text = ", ".join(passage_ids) if passage_ids else "none"
@@ -191,6 +205,8 @@ def _detail(
     else:
         outcome = "The evidence gate did not accept this card."
     lead = outcome if synthesis_failed else f"{outcome} {reason}"
+    if qualifying:
+        lead = f"{lead} An unresolved caution qualifies this recommendation."
     return (
         f"{lead} "
         f"Missing facets: {missing_text}. "
