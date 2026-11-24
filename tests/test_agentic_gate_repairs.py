@@ -2115,6 +2115,55 @@ def test_a_recommendation_heading_does_not_clear_a_one_keyword_sentence():
     assert row.status != "satisfied"
 
 
+def test_a_safety_label_does_not_cover_the_guideline_facet():
+    warning = _passage("note", "Avoid warfarin when bleeding risk is high.")
+    warning.calibrated_score = 1.0
+    warning.evidence_grade_score = 1.0
+    guideline = ClinicalFacet(
+        name="guideline_concordance",
+        keywords=["warfarin", "bleeding"],
+        source_policy="LIT",
+        required=True,
+        threshold=0.70,
+    )
+    safety = ClinicalFacet(
+        name="safety_contraindications",
+        keywords=["avoid", "warfarin"],
+        source_policy="SAFETY",
+        required=True,
+        threshold=0.70,
+    )
+    score_passage_facets(warning, [guideline])
+    ledger = build_retrieval_ledger([warning], [guideline])
+    batch = AgentClaimBatch(
+        agent_id="guideline",
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Avoid warfarin when bleeding risk is high.",
+                polarity=EvidencePolarity.SAFETY,
+                chunk_id="note",
+                confidence=1.0,
+                calibrated_relevance=1.0,
+                evidence_grade=EvidenceGrade(score=1.0),
+                agent_id="guideline",
+            )
+        ],
+    )
+    merged = merge_agent_claims(ledger, [batch], [warning])
+    row = compute_facet_coverage([guideline], merged)[0]
+    assert row.status != "satisfied"
+    assert row.supporting_chunk_ids == []
+    assert "note" in row.contradicting_chunk_ids
+
+    safety_note = warning.model_copy(update={"chunk_id": "safety-note", "doc_id": "safety-note"})
+    safety_ledger = build_retrieval_ledger([safety_note], [safety])
+    safety_row = compute_facet_coverage([safety], safety_ledger)[0]
+    assert any(claim.polarity == EvidencePolarity.SAFETY for claim in safety_ledger[0].claims)
+    assert safety_row.status == "satisfied"
+    assert safety_row.supporting_chunk_ids == ["safety-note"]
+
+
 def test_a_specialist_recommendation_does_not_cover_the_safety_facet():
     passage = _passage("note", "Warfarin is recommended. Use apixaban with caution.")
     passage.calibrated_score = 1.0

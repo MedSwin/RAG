@@ -151,7 +151,12 @@ def compute_facet_coverage(
                     continue
                 if claim.polarity == EvidencePolarity.IRRELEVANT:
                     continue
-                if claim.polarity in {EvidencePolarity.CONTRADICTS, EvidencePolarity.QUALIFIES}:
+                # A safety warning covers the safety facet. On every other facet it is a conflict.
+                safety_conflict = (
+                    claim.polarity == EvidencePolarity.SAFETY
+                    and facet.name != "safety_contraindications"
+                )
+                if claim.polarity in {EvidencePolarity.CONTRADICTS, EvidencePolarity.QUALIFIES} or safety_conflict:
                     contradicting.append(entry.chunk_id)
                     continue
                 contrib = _contribution(claim, entry)
