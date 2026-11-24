@@ -215,6 +215,59 @@ def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
     assert different == []
 
 
+def test_a_mixed_note_keeps_the_recommendation_and_the_warning():
+    from app.schemas.enums import SourceType
+
+    passage = CandidatePassage(
+        chunk_id="note",
+        doc_id="note",
+        source_type=SourceType.LIT,
+        text="Apixaban is recommended. Avoid warfarin.",
+        calibrated_score=0.90,
+    )
+    facets = [
+        ClinicalFacet(name="guideline_concordance", keywords=["apixaban", "recommended"], source_policy="LIT"),
+        ClinicalFacet(name="safety_contraindications", keywords=["avoid", "warfarin"], source_policy="SAFETY"),
+    ]
+    ledger = build_retrieval_ledger([passage], facets)
+    polarities = {claim.polarity for claim in ledger[0].claims}
+    assert EvidencePolarity.SUPPORTS in polarities
+    assert EvidencePolarity.CONTRADICTS in polarities or EvidencePolarity.SAFETY in polarities
+
+    support = _entry(
+        "cpg",
+        "guideline_concordance",
+        "Guideline recommendation supports apixaban.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    support.text = "Guideline recommendation supports apixaban."
+    assert detect_contradictions([*ledger, support]) == []
+
+    warfarin = _entry(
+        "war",
+        "guideline_concordance",
+        "Warfarin is recommended.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    warfarin.text = "Warfarin is recommended."
+    pairs = detect_contradictions([*ledger, warfarin])
+    assert pairs
+    assert all("warfarin" in pair.reason for pair in pairs)
+    assert all("apixaban" not in pair.reason for pair in pairs)
+
+    history = CandidatePassage(
+        chunk_id="history",
+        doc_id="history",
+        source_type=SourceType.LIT,
+        text="The clinic visit was routine. Avoid warfarin.",
+        calibrated_score=0.90,
+    )
+    history_ledger = build_retrieval_ledger([history], facets)
+    assert EvidencePolarity.SUPPORTS not in {claim.polarity for claim in history_ledger[0].claims}
+
+
 def test_a_warfarin_caution_does_not_block_an_apixaban_recommendation():
     support = _entry(
         "cpg",

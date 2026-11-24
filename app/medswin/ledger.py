@@ -34,6 +34,29 @@ def _provenance(passage: CandidatePassage) -> dict:
     }
 
 
+def _sentence_scopes(text: str) -> List[tuple]:
+    """Split a note when the recommendation and the warning name different drugs."""
+    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+    caution_rows = []
+    other_rows = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
+            caution_rows.append(sentence)
+        else:
+            other_rows.append(sentence)
+    caution = named_caution_text(" ".join(caution_rows)) if caution_rows else ""
+    other = " ".join(other_rows)
+    if intervention_tokens(caution) and intervention_tokens(other) and intervention_tokens(caution).isdisjoint(
+        intervention_tokens(other)
+    ):
+        return [("support", other), ("caution", caution)]
+    return [("", text or "")]
+
+
 def build_retrieval_ledger(
     passages: List[CandidatePassage],
     facets: List[ClinicalFacet],
@@ -55,19 +78,38 @@ def build_retrieval_ledger(
             if score <= 0.0:
                 continue
             matched.append(facet.name)
-            claims.append(
-                EvidenceClaim(
-                    facet=facet.name,
-                    claim=" ".join(lead_with_caution(passage.text).split())[:280],
-                    polarity=infer_polarity(passage, facet),
-                    chunk_id=passage.chunk_id,
-                    confidence=clamp(score),
-                    evidence_grade=grade,
-                    calibrated_relevance=calibrated,
-                    agent_id=agent_id,
-                    provenance=_provenance(passage),
+            for scope, scope_text in _sentence_scopes(passage.text or ""):
+                if scope == "caution":
+                    polarity = (
+                        EvidencePolarity.SAFETY
+                        if facet.name == "safety_contraindications"
+                        else EvidencePolarity.CONTRADICTS
+                    )
+                    claim_text = scope_text
+                elif scope == "support":
+                    from app.scoring.coverage import _QUALIFY
+
+                    polarity = EvidencePolarity.QUALIFIES if _QUALIFY.search(scope_text) else EvidencePolarity.SUPPORTS
+                    claim_text = scope_text
+                else:
+                    polarity = infer_polarity(passage, facet)
+                    claim_text = " ".join(lead_with_caution(passage.text).split())[:280]
+                provenance = _provenance(passage)
+                if scope:
+                    provenance = {**provenance, "sentence_scope": scope}
+                claims.append(
+                    EvidenceClaim(
+                        facet=facet.name,
+                        claim=" ".join(claim_text.split())[:280],
+                        polarity=polarity,
+                        chunk_id=passage.chunk_id,
+                        confidence=clamp(score),
+                        evidence_grade=grade,
+                        calibrated_relevance=calibrated,
+                        agent_id=agent_id,
+                        provenance=provenance,
+                    )
                 )
-            )
         ledger.append(
             EvidenceLedgerEntry(
                 chunk_id=passage.chunk_id,
@@ -105,6 +147,9 @@ def merge_agent_claims(
                 continue
             text_polarity = infer_polarity(passage, ClinicalFacet(name=claim.facet))
             updates: Dict[str, object] = {}
+            caution_drugs = intervention_tokens(named_caution_text(passage.text or ""))
+            claim_drugs = intervention_tokens(claim.claim or "")
+            different_drug = bool(caution_drugs and claim_drugs and caution_drugs.isdisjoint(claim_drugs))
             if (
                 text_polarity
                 in {
@@ -113,6 +158,7 @@ def merge_agent_claims(
                     EvidencePolarity.QUALIFIES,
                 }
                 and claim.polarity == EvidencePolarity.SUPPORTS
+                and not different_drug
             ):
                 updates["polarity"] = text_polarity
             if text_score < 0.50 and float(claim.confidence or 0.0) > text_score:
@@ -425,6 +471,8 @@ def _reason_with_drug(reason: str, left: str, right: str) -> str:
 
 def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = None) -> str:
     """Use the full passage when the claim preview was cut."""
+    if claim is not None and (claim.provenance or {}).get("sentence_scope") and (claim.claim or "").strip():
+        return claim.claim.strip()
     stored = (entry.text or "").strip()
     if stored:
         return stored
