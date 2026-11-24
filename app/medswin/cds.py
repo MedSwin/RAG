@@ -293,12 +293,14 @@ def _caution_drug_name(
     if not found:
         from app.medswin.ledger import PATIENT_CHART_ID
 
+        known = {getattr(passage, "chunk_id", None) for passage in passages or []}
         for item in pairs:
-            if item.resolved or PATIENT_CHART_ID not in {item.chunk_id_a, item.chunk_id_b}:
+            if item.resolved or not _pair_matches_severity(item, severity):
                 continue
-            if not _pair_matches_severity(item, severity):
+            cited = {item.chunk_id_a, item.chunk_id_b}
+            if cited <= known and PATIENT_CHART_ID not in cited:
                 continue
-            for drug in sorted(intervention_tokens(item.reason)):
+            for drug in sorted(intervention_tokens(getattr(item, "reason", "") or "")):
                 if drug not in found:
                     found.append(drug)
     return ", ".join(found)

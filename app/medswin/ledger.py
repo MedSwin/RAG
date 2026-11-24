@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Optional
 
+from app.core.config import settings
 from app.schemas.agents import AgentClaimBatch
 from app.schemas.enums import EvidencePolarity
 from app.schemas.evidence import (
@@ -152,6 +153,22 @@ def filter_ledger(
 ) -> List[EvidenceLedgerEntry]:
     """Keep merged agent+retrieval claims for the selected bundle only."""
     return [entry.model_copy(deep=True) for entry in ledger if entry.chunk_id in chunk_ids]
+
+
+def audit_chunk_ids(selected: List[CandidatePassage], ranked: List[CandidatePassage]) -> set:
+    """Keep packed passages and included cautions for conflict detection."""
+    from app.agents.base import _is_prompt_caution
+
+    ids = {passage.chunk_id for passage in selected}
+    for passage in ranked:
+        if passage.chunk_id in ids:
+            continue
+        score = passage.calibrated_score
+        if score is None or float(score) < settings.SUFF_T_INCLUSION:
+            continue
+        if _is_prompt_caution(passage):
+            ids.add(passage.chunk_id)
+    return ids
 
 
 def apply_claim_alignment(

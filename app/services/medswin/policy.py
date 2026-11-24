@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from app.medswin.gate import EvidenceGate
-from app.medswin.ledger import build_retrieval_ledger, detect_contradictions
+from app.medswin.ledger import audit_chunk_ids, build_retrieval_ledger, detect_contradictions
 from app.medswin.normalize import QueryNormalizer
 from app.schemas.evidence import CandidatePassage, QuerySpec
 from app.schemas.facets import ClinicalFacet
@@ -43,11 +43,26 @@ class EvidenceSufficiencyPolicy:
         facets = self.build_facets(query, query_spec, constraints, patient_id)
         review = passages if selected_passages is None else selected_passages
         ledger = build_retrieval_ledger(review, facets)
-        check = self.gate.check(ledger, facets, review, iteration, constraints or {}, query_spec)
+        audit_ids = audit_chunk_ids(review, passages)
+        contradictions = detect_contradictions(
+            build_retrieval_ledger(
+                [passage for passage in passages if passage.chunk_id in audit_ids],
+                facets,
+            )
+        )
+        check = self.gate.check(
+            ledger,
+            facets,
+            review,
+            iteration,
+            constraints or {},
+            query_spec,
+            contradictions=contradictions,
+        )
         self.last_policy_decision = check.policy_decision
         self.last_evidence_ledger = ledger
         self.last_facet_coverage = check.facet_coverage
-        self.last_contradictions = detect_contradictions(ledger)
+        self.last_contradictions = contradictions
         return check
 
     def should_retrieve_more(self, check: SufficiencyCheck) -> bool:

@@ -27,6 +27,7 @@ from app.medswin.ledger import (
     adjudicate_contradictions,
     apply_claim_alignment,
     build_retrieval_ledger,
+    audit_chunk_ids,
     chart_contradictions,
     detect_contradictions,
     filter_ledger,
@@ -927,7 +928,9 @@ class MedSwinOrchestrator:
             selected = pack_bundle(selected, facets=facets, token_budget=budget)
             selected_ids = {p.chunk_id for p in selected}
             selected_ledger = filter_ledger(ledger, selected_ids)
-            detected_contradictions = detect_contradictions(selected_ledger)
+            detected_contradictions = detect_contradictions(
+                filter_ledger(ledger, audit_chunk_ids(selected, ranked_candidates))
+            )
             contradictions = (
                 adjudicate_contradictions(detected_contradictions, batches)
                 if self.policy.enable_mac

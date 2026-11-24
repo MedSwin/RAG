@@ -181,6 +181,53 @@ def test_facet_sufficiency_passes_with_required_coverage():
     assert {item.facet for item in check.facet_coverage} == {"guideline_concordance", "safety_contraindications"}
 
 
+def test_an_unpacked_caution_still_blocks_the_same_drug():
+    policy = EvidenceSufficiencyPolicy()
+    facets = [
+        ClinicalFacet(name="guideline_concordance", threshold=0.55, keywords=["guideline", "recommendation", "apixaban"]),
+        ClinicalFacet(name="safety_contraindications", threshold=0.45, keywords=["contraindication", "avoid"]),
+    ]
+    constraints = {"required_facets": [facet.model_dump() for facet in facets]}
+    support = _passage("support", "Guideline recommendation supports apixaban for stroke prevention.")
+    confirm = _passage("confirm", "Current guideline recommendation confirms treatment for the eligible population.")
+    safety = _passage(
+        "safety",
+        "Review contraindications and avoid aspirin when a severe allergy is present.",
+        source_type=SourceType.SAFETY,
+    )
+    caution = _passage(
+        "caution",
+        "Avoid apixaban when bleeding risk is high.",
+        source_type=SourceType.SAFETY,
+        score=0.80,
+    )
+    weak = _passage(
+        "weak",
+        "Avoid apixaban when the dose is uncertain.",
+        source_type=SourceType.SAFETY,
+        score=0.40,
+    )
+    packed = policy.check_sufficiency(
+        [support, confirm, safety],
+        constraints=constraints,
+        selected_passages=[support, confirm, safety],
+    )
+    blocked = policy.check_sufficiency(
+        [support, confirm, safety, caution],
+        constraints=constraints,
+        selected_passages=[support, confirm, safety],
+    )
+    ignored = policy.check_sufficiency(
+        [support, confirm, safety, weak],
+        constraints=constraints,
+        selected_passages=[support, confirm, safety],
+    )
+    assert packed.passed is True
+    assert blocked.passed is False
+    assert "apixaban" in blocked.policy_decision.reason
+    assert ignored.passed is True
+
+
 def test_an_empty_selection_does_not_review_the_dropped_passages():
     policy = EvidenceSufficiencyPolicy()
     facets = [
