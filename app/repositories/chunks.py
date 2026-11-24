@@ -43,8 +43,19 @@ class ChunkRepository(BaseRepository):
         logger.info("Chunks collection tenant-safe indexes created")
 
     async def create(self, chunk: Chunk, org_id: str) -> Dict[str, Any]:
-        """Create or replace a chunk within its tenant natural key."""
+        """Create or replace a chunk without moving its patient."""
         data = self._ensure_org_id(chunk.model_dump(), org_id)
+        existing = await self.collection.find_one(
+            {"org_id": org_id, "chunk_id": chunk.chunk_id},
+            {"patient_id": 1, "source_type": 1, "doc_id": 1},
+        )
+        if self._identity_changed(existing, data, ("patient_id", "source_type", "doc_id")):
+            return {
+                "chunk_id": chunk.chunk_id,
+                "inserted_id": chunk.chunk_id,
+                "upserted": False,
+                "rejected": True,
+            }
         result = await self.collection.replace_one(
             {"org_id": org_id, "chunk_id": chunk.chunk_id},
             data,
@@ -54,31 +65,48 @@ class ChunkRepository(BaseRepository):
             "chunk_id": chunk.chunk_id,
             "inserted_id": str(result.upserted_id) if result.upserted_id else chunk.chunk_id,
             "upserted": bool(result.upserted_id),
+            "rejected": False,
         }
 
     async def create_many(self, chunks: List[Chunk], org_id: str) -> List[Dict[str, Any]]:
-        """Create or replace multiple chunks inside one tenant."""
+        """Create or replace multiple chunks without moving a patient."""
         if not chunks:
             return []
+        cursor = self.collection.find(
+            {"org_id": org_id, "chunk_id": {"$in": [chunk.chunk_id for chunk in chunks]}},
+            {"chunk_id": 1, "patient_id": 1, "source_type": 1, "doc_id": 1},
+        )
+        existing_rows = await cursor.to_list(length=None)
+        existing = {row.get("chunk_id"): row for row in existing_rows}
         operations = []
-        for chunk in chunks:
+        kept: List[tuple] = []
+        rejected = set()
+        for idx, chunk in enumerate(chunks):
             data = self._ensure_org_id(chunk.model_dump(), org_id)
-            operations.append(
-                ReplaceOne(
-                    {"org_id": org_id, "chunk_id": chunk.chunk_id},
-                    data,
-                    upsert=True,
-                )
-            )
-        result = await self.collection.bulk_write(operations, ordered=False)
-        return [
-            {
+            if self._identity_changed(existing.get(chunk.chunk_id), data, ("patient_id", "source_type", "doc_id")):
+                rejected.add(idx)
+                continue
+            operations.append(ReplaceOne({"org_id": org_id, "chunk_id": chunk.chunk_id}, data, upsert=True))
+            kept.append((idx, chunk))
+        result = await self.collection.bulk_write(operations, ordered=False) if operations else None
+        rows: List[Optional[Dict[str, Any]]] = [None] * len(chunks)
+        for write_idx, (idx, chunk) in enumerate(kept):
+            upserted_id = result.upserted_ids.get(write_idx) if result else None
+            rows[idx] = {
                 "chunk_id": chunk.chunk_id,
-                "inserted_id": str(result.upserted_ids.get(idx, chunk.chunk_id)),
-                "upserted": idx in result.upserted_ids,
+                "inserted_id": str(upserted_id) if upserted_id else chunk.chunk_id,
+                "upserted": bool(upserted_id),
+                "rejected": False,
             }
-            for idx, chunk in enumerate(chunks)
-        ]
+        for idx in rejected:
+            chunk = chunks[idx]
+            rows[idx] = {
+                "chunk_id": chunk.chunk_id,
+                "inserted_id": chunk.chunk_id,
+                "upserted": False,
+                "rejected": True,
+            }
+        return [row for row in rows if row is not None]
 
     async def get_by_id(self, chunk_id: str, org_id: str) -> Optional[Dict[str, Any]]:
         return await self.collection.find_one({"chunk_id": chunk_id, "org_id": org_id})

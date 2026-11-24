@@ -36,6 +36,26 @@ class BaseRepository:
         if "org_id" not in data:
             data["org_id"] = org_id
         return data
+
+    @staticmethod
+    def _identity_changed(
+        existing: Optional[Dict[str, Any]],
+        data: Dict[str, Any],
+        fields: tuple,
+    ) -> bool:
+        """True when a replace would move the patient or the record identity."""
+        if not existing:
+            return False
+        for field in fields:
+            current = existing.get(field)
+            incoming = data.get(field)
+            if hasattr(current, "value"):
+                current = current.value
+            if hasattr(incoming, "value"):
+                incoming = incoming.value
+            if current != incoming:
+                return True
+        return False
     
     async def create_indexes(self):
         """Create indexes for the collection. Override in subclasses."""

@@ -429,6 +429,87 @@ def test_a_chart_update_keeps_the_patient_and_the_identity_fields():
     ]
 
 
+def test_a_chart_replace_keeps_the_patient():
+    import asyncio
+
+    from app.models.medswin import Chunk, Document
+    from app.repositories.chunks import ChunkRepository
+    from app.repositories.documents import DocumentRepository
+
+    class _Result:
+        upserted_id = None
+
+    class _Store:
+        def __init__(self, existing):
+            self.existing = existing
+            self.replaces = []
+
+        async def find_one(self, _query, _projection=None):
+            return self.existing
+
+        async def replace_one(self, query, data, upsert=False):
+            self.replaces.append((query, data.get("patient_id")))
+            return _Result()
+
+    chunk_store = _Store({"patient_id": "pt-1", "source_type": "EMR", "doc_id": "doc-1"})
+    chunks = ChunkRepository()
+    chunks._db = {"chunks": chunk_store}
+    moved = Chunk(
+        chunk_id="c1",
+        doc_id="doc-1",
+        source_type=SourceType.EMR,
+        text="moved",
+        patient_id="pt-2",
+        org_id="org-a",
+    )
+    kept = moved.model_copy(update={"patient_id": "pt-1", "text": "same patient"})
+    rejected = asyncio.run(chunks.create(moved, "org-a"))
+    saved = asyncio.run(chunks.create(kept, "org-a"))
+    document_store = _Store({"patient_id": "pt-1", "source_type": "EMR"})
+    documents = DocumentRepository()
+    documents._db = {"documents": document_store}
+    moved_doc = Document(
+        doc_id="doc-1",
+        source_type=SourceType.LIT,
+        title="moved",
+        patient_id="pt-1",
+        org_id="org-a",
+    )
+    relabelled = asyncio.run(documents.create(moved_doc, "org-a"))
+    assert rejected["rejected"] is True
+    assert saved["rejected"] is False
+    assert relabelled["rejected"] is True
+    assert chunk_store.replaces == [({"org_id": "org-a", "chunk_id": "c1"}, "pt-1")]
+    assert document_store.replaces == []
+
+    class _Cursor:
+        async def to_list(self, length=None):
+            return [{"chunk_id": "c1", "patient_id": "pt-1", "source_type": "EMR", "doc_id": "doc-1"}]
+
+    class _Batch:
+        def __init__(self):
+            self.operations = []
+
+        def find(self, _query, _projection=None):
+            return _Cursor()
+
+        async def bulk_write(self, operations, ordered=False):
+            self.operations.extend(operations)
+
+            class _Bulk:
+                upserted_ids = {}
+
+            return _Bulk()
+
+    batch = _Batch()
+    many = ChunkRepository()
+    many._db = {"chunks": batch}
+    fresh = kept.model_copy(update={"chunk_id": "c2", "text": "new"})
+    rows = asyncio.run(many.create_many([moved, fresh], "org-a"))
+    assert [row["rejected"] for row in rows] == [True, False]
+    assert len(batch.operations) == 1
+
+
 def test_a_trace_update_keeps_the_owner_and_the_identity_fields():
     import asyncio
 

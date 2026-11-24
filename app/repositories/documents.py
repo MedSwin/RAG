@@ -42,8 +42,19 @@ class DocumentRepository(BaseRepository):
         logger.info("Documents collection tenant-safe indexes created")
 
     async def create(self, document: Document, org_id: str) -> Dict[str, Any]:
-        """Create or replace a document within its tenant natural key."""
+        """Create or replace a document without moving its patient."""
         data = self._ensure_org_id(document.model_dump(), org_id)
+        existing = await self.collection.find_one(
+            {"org_id": org_id, "doc_id": document.doc_id},
+            {"patient_id": 1, "source_type": 1},
+        )
+        if self._identity_changed(existing, data, ("patient_id", "source_type")):
+            return {
+                "doc_id": document.doc_id,
+                "inserted_id": document.doc_id,
+                "upserted": False,
+                "rejected": True,
+            }
         result = await self.collection.replace_one(
             {"org_id": org_id, "doc_id": document.doc_id},
             data,
@@ -53,31 +64,48 @@ class DocumentRepository(BaseRepository):
             "doc_id": document.doc_id,
             "inserted_id": str(result.upserted_id) if result.upserted_id else document.doc_id,
             "upserted": bool(result.upserted_id),
+            "rejected": False,
         }
 
     async def create_many(self, documents: List[Document], org_id: str) -> List[Dict[str, Any]]:
-        """Create or replace multiple documents inside one tenant."""
+        """Create or replace multiple documents without moving a patient."""
         if not documents:
             return []
+        cursor = self.collection.find(
+            {"org_id": org_id, "doc_id": {"$in": [doc.doc_id for doc in documents]}},
+            {"doc_id": 1, "patient_id": 1, "source_type": 1},
+        )
+        existing_rows = await cursor.to_list(length=None)
+        existing = {row.get("doc_id"): row for row in existing_rows}
         operations = []
-        for doc in documents:
+        kept: List[tuple] = []
+        rejected = set()
+        for idx, doc in enumerate(documents):
             data = self._ensure_org_id(doc.model_dump(), org_id)
-            operations.append(
-                ReplaceOne(
-                    {"org_id": org_id, "doc_id": doc.doc_id},
-                    data,
-                    upsert=True,
-                )
-            )
-        result = await self.collection.bulk_write(operations, ordered=False)
-        return [
-            {
+            if self._identity_changed(existing.get(doc.doc_id), data, ("patient_id", "source_type")):
+                rejected.add(idx)
+                continue
+            operations.append(ReplaceOne({"org_id": org_id, "doc_id": doc.doc_id}, data, upsert=True))
+            kept.append((idx, doc))
+        result = await self.collection.bulk_write(operations, ordered=False) if operations else None
+        rows: List[Optional[Dict[str, Any]]] = [None] * len(documents)
+        for write_idx, (idx, doc) in enumerate(kept):
+            upserted_id = result.upserted_ids.get(write_idx) if result else None
+            rows[idx] = {
                 "doc_id": doc.doc_id,
-                "inserted_id": str(result.upserted_ids.get(idx, doc.doc_id)),
-                "upserted": idx in result.upserted_ids,
+                "inserted_id": str(upserted_id) if upserted_id else doc.doc_id,
+                "upserted": bool(upserted_id),
+                "rejected": False,
             }
-            for idx, doc in enumerate(documents)
-        ]
+        for idx in rejected:
+            doc = documents[idx]
+            rows[idx] = {
+                "doc_id": doc.doc_id,
+                "inserted_id": doc.doc_id,
+                "upserted": False,
+                "rejected": True,
+            }
+        return [row for row in rows if row is not None]
 
     async def get_by_id(self, doc_id: str, org_id: str) -> Optional[Dict[str, Any]]:
         """Get a document by tenant-scoped source ID."""
