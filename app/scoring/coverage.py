@@ -397,6 +397,15 @@ _NO_LONGER = re.compile(
     r"\bno longer\b(?:\s+\w+){0,3}\s+(?:on|taking|takes|take)\b",
     re.I,
 )
+_OFF_DRUG = re.compile(
+    r"\b(?:is|was|were|are|am|been)\s+off(?:\s+of)?\b"
+    r"|\boff(?:\s+of)?(?=\s+[A-Za-z])",
+    re.I,
+)
+_NOT_FOR = re.compile(
+    r"\bnot\s+for\b|\bnot\s+to\s+have\b|\bnot\s+to\s+be\s+given\b",
+    re.I,
+)
 
 
 def _no_longer_stop(text: str) -> bool:
@@ -424,6 +433,43 @@ def _no_longer_stop(text: str) -> bool:
         if any(_token_names_drug(word) for word in near):
             return True
     return False
+
+
+def _pattern_names_drug(text: str, pattern: re.Pattern) -> bool:
+    """True when this pattern sits next to a named drug and a negation does not cancel it."""
+    raw = text or ""
+    words = raw.split()
+    if not words:
+        return False
+    spans = []
+    cursor = 0
+    for word in words:
+        at = raw.find(word, cursor)
+        spans.append(at)
+        cursor = at + len(word)
+    for match in pattern.finditer(raw):
+        window = raw[max(0, match.start() - 48):match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        anchor = 0
+        for index, begin in enumerate(spans):
+            if begin <= match.start() < begin + len(words[index]):
+                anchor = index
+                break
+        near = words[max(0, anchor - 4): min(len(words), anchor + 9)]
+        if any(_token_names_drug(word) for word in near):
+            return True
+    return False
+
+
+def _off_drug_stop(text: str) -> bool:
+    """True when the patient is off a named drug."""
+    return _pattern_names_drug(text, _OFF_DRUG)
+
+
+def _not_for_stop(text: str) -> bool:
+    """True when the line says the patient is not for a named drug."""
+    return _pattern_names_drug(text, _NOT_FOR)
 
 
 def _come_off_stop(text: str) -> bool:
@@ -533,6 +579,8 @@ def _ungoverned_caution(text: str) -> bool:
         or _source_stop(text)
         or _come_off_stop(text)
         or _no_longer_stop(text)
+        or _off_drug_stop(text)
+        or _not_for_stop(text)
     )
 
 

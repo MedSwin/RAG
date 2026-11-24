@@ -580,6 +580,8 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         _STOP_ORDER,
         _COME_OFF,
         _NO_LONGER,
+        _OFF_DRUG,
+        _NOT_FOR,
         _away_split,
         _negated_away_split,
     )
@@ -595,7 +597,9 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
     soft_matches = []
     for item in list(_CAUTION.finditer(sentence or "")) + list(_QUALIFY.finditer(sentence or "")) + list(
         _STOP_ORDER.finditer(sentence or "")
-    ) + list(_COME_OFF.finditer(sentence or "")) + list(_NO_LONGER.finditer(sentence or "")):
+    ) + list(_COME_OFF.finditer(sentence or "")) + list(_NO_LONGER.finditer(sentence or "")) + list(
+        _OFF_DRUG.finditer(sentence or "")
+    ) + list(_NOT_FOR.finditer(sentence or "")):
         window = sentence[max(0, item.start() - 48):item.start()]
         if _LOCAL_NEGATION.search(window):
             continue
@@ -667,6 +671,8 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         _STOP_ORDER.fullmatch(match.group(0) or "")
         or _COME_OFF.fullmatch(match.group(0) or "")
         or _NO_LONGER.fullmatch(match.group(0) or "")
+        or _OFF_DRUG.fullmatch(match.group(0) or "")
+        or _NOT_FOR.fullmatch(match.group(0) or "")
     ) and not before and after:
         limit = min(len(words), anchor + 9)
         split_at = None
@@ -801,7 +807,14 @@ PATIENT_CHART_ID = "patient-chart"
 _CONTINUE_VERB = re.compile(r"\b(?:continue|continuing|continued)\b", re.I)
 _BE_CONTINUED = re.compile(r"\b(?:be|was|is|were|been)\s+continued\b", re.I)
 _TO_CONTINUE = re.compile(r"\bto\s+(?:be\s+)?continued?\b", re.I)
-_REMAIN_ON = re.compile(r"\b(?:remain|remains|stay|stays|still)\s+on\b", re.I)
+_REMAIN_ON = re.compile(
+    r"\b(?:remain|remains|stay|stays|still|currently|now|back)\s+on\b",
+    re.I,
+)
+_PLANNED_FOR = re.compile(
+    r"\b(?:is|was|were|are|am)\s+for\b|\b(?:is|was|were|are|am)\s+to\s+have\b",
+    re.I,
+)
 _KEEP_VERB = re.compile(
     r"\b(?:resume[ds]?|resuming|restart(?:ed|s|ing)?|recommence[ds]?|recommencing|"
     r"keep|keeps|kept|keeping|maintain(?:ed|s|ing)?)\b",
@@ -1066,6 +1079,12 @@ def _has_recommendation_verb(text: str) -> bool:
             continue
         if _object_is_drug(text[match.end():]):
             return True
+    for match in _PLANNED_FOR.finditer(text or ""):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        if _object_is_drug(text[match.end():]):
+            return True
     for match in _WITH_DRUG.finditer(text or ""):
         window = text[max(0, match.start() - 48): match.start()]
         if _LOCAL_NEGATION.search(window):
@@ -1256,6 +1275,8 @@ def _chart_caution_text(chart: str) -> str:
         _away_split,
         _come_off_stop,
         _no_longer_stop,
+        _off_drug_stop,
+        _not_for_stop,
         _negated_away_split,
         _ungoverned_caution,
     )
@@ -1271,6 +1292,8 @@ def _chart_caution_text(chart: str) -> str:
                 or _negated_away_split(sentence)
                 or _come_off_stop(sentence)
                 or _no_longer_stop(sentence)
+                or _off_drug_stop(sentence)
+                or _not_for_stop(sentence)
             ):
                 kept.append(named_caution_text(sentence))
             else:
