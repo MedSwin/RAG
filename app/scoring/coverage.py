@@ -88,18 +88,15 @@ def _contribution(claim: EvidenceClaim, entry: EvidenceLedgerEntry) -> float:
     a_dj = clamp(claim.confidence)
     p_hat = clamp(entry.calibrated_relevance or claim.calibrated_relevance or 0.0)
     g_ebm = clamp(entry.evidence_grade.score if entry.evidence_grade else claim.evidence_grade.score)
-    contribution = clamp(a_dj * p_hat * g_ebm)
-    if claim.polarity == EvidencePolarity.CONTRADICTS:
-        contribution *= 0.35
-    return contribution
+    return clamp(a_dj * p_hat * g_ebm)
 
 
 def _bootstrap_lcb(contributions: Sequence[float], n_boot: int = 64, seed: int = 42) -> float:
     if not contributions:
         return 0.0
     if len(contributions) < 2:
-        prob = clamp(1.0 - math.prod(1.0 - c for c in contributions))
-        return clamp(prob - settings.SUFF_LCB_MARGIN)
+        # One document has no bootstrap sample. Entropy rejects an uncertain probability.
+        return clamp(1.0 - math.prod(1.0 - c for c in contributions))
     rng = random.Random(seed)
     samples = []
     n = len(contributions)
@@ -132,14 +129,15 @@ def compute_facet_coverage(
             for claim in entry.claims:
                 if claim.facet != facet.name:
                     continue
+                if claim.polarity == EvidencePolarity.CONTRADICTS:
+                    contradicting.append(entry.chunk_id)
+                    continue
                 contrib = _contribution(claim, entry)
                 prev = best_by_chunk.get(entry.chunk_id)
                 if prev is None or contrib > prev:
                     best_by_chunk[entry.chunk_id] = contrib
                     doc_of_chunk[entry.chunk_id] = entry.doc_id or entry.chunk_id
-                if claim.polarity == EvidencePolarity.CONTRADICTS:
-                    contradicting.append(entry.chunk_id)
-                elif claim.polarity != EvidencePolarity.IRRELEVANT:
+                if claim.polarity != EvidencePolarity.IRRELEVANT:
                     supporting.append(entry.chunk_id)
         best_by_doc: Dict[str, float] = {}
         for chunk_id, contrib in best_by_chunk.items():

@@ -296,6 +296,84 @@ def test_mixed_retrieval_probes_the_guideline_source():
     assert SourceType.CPG in seen
 
 
+def test_one_document_bound_is_its_coverage_probability():
+    from app.core.config import settings
+    from app.scoring.coverage import compute_facet_coverage
+
+    assert settings.SUFF_LCB_MARGIN == 0.08
+    grade = EvidenceGrade(score=1.0)
+    entry = EvidenceLedgerEntry(
+        chunk_id="one",
+        doc_id="one",
+        source_type=SourceType.CPG,
+        calibrated_relevance=1.0,
+        evidence_grade=grade,
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Guideline recommendation.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="one",
+                confidence=0.80,
+                calibrated_relevance=1.0,
+                evidence_grade=grade,
+            )
+        ],
+    )
+    facet = ClinicalFacet(name="guideline_concordance", required=True, threshold=0.78)
+    row = compute_facet_coverage([facet], [entry])[0]
+    assert row.coverage_probability == 0.80
+    assert row.lower_confidence_bound == 0.80
+    assert row.status == "satisfied"
+
+
+def test_a_contradiction_does_not_raise_coverage():
+    from app.scoring.coverage import compute_facet_coverage
+
+    grade = EvidenceGrade(score=1.0)
+    entry = EvidenceLedgerEntry(
+        chunk_id="clash",
+        doc_id="clash",
+        source_type=SourceType.LIT,
+        calibrated_relevance=1.0,
+        evidence_grade=grade,
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="This recommendation is outdated.",
+                polarity=EvidencePolarity.CONTRADICTS,
+                chunk_id="clash",
+                confidence=0.90,
+                calibrated_relevance=1.0,
+                evidence_grade=grade,
+            )
+        ],
+    )
+    facet = ClinicalFacet(name="guideline_concordance", required=True, threshold=0.55)
+    row = compute_facet_coverage([facet], [entry])[0]
+    assert row.coverage_probability == 0.0
+    assert row.supporting_chunk_ids == []
+    assert row.status == "contradicted"
+
+
+def test_a_contradiction_lowers_marginal_utility():
+    from app.core.config import settings
+    from app.scoring.utility import marginal_utility
+
+    assert settings.CONTRADICTION_PENALTY_WEIGHT == 0.40
+    plain = CandidatePassage(
+        chunk_id="plain",
+        doc_id="plain",
+        source_type=SourceType.CPG,
+        text="Guideline recommendation.",
+        fusion_score=0.80,
+        calibrated_score=0.80,
+        contradiction_score=0.0,
+    )
+    clash = plain.model_copy(update={"chunk_id": "clash", "doc_id": "clash", "contradiction_score": 0.50})
+    assert marginal_utility(clash, [], None) < marginal_utility(plain, [], None)
+
+
 def test_outpatient_does_not_force_the_chart_facet():
     from app.medswin.normalize import QueryNormalizer
 

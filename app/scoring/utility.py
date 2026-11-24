@@ -87,7 +87,7 @@ def marginal_utility(
         + settings.SAFETY_REWARD_WEIGHT * safety
         + 0.25 * ebm
         + _facet_gain(candidate, selected, facets)
-        + 0.12 * contradiction
+        - settings.CONTRADICTION_PENALTY_WEIGHT * contradiction
         - settings.REDUNDANCY_PENALTY_WEIGHT * _redundancy(candidate, selected)
         - settings.NOISE_PENALTY_WEIGHT * (candidate.noise_score or 0.0)
     )
