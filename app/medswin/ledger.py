@@ -164,6 +164,16 @@ def merge_agent_claims(
             caution_drugs = intervention_tokens(named_caution_text(passage.text or ""))
             claim_drugs = intervention_tokens(claim.claim or "")
             different_drug = bool(caution_drugs and claim_drugs and caution_drugs.isdisjoint(claim_drugs))
+            if different_drug and claim.polarity == EvidencePolarity.SUPPORTS:
+                # The caution sentence opened this facet. A recommendation for
+                # another drug must not become the support that clears it.
+                current = by_chunk.get(claim.chunk_id)
+                has_support = any(
+                    item.facet == claim.facet and item.polarity == EvidencePolarity.SUPPORTS
+                    for item in (current.claims if current else [])
+                )
+                if not has_support:
+                    continue
             if (
                 text_polarity
                 in {

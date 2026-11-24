@@ -2115,6 +2115,62 @@ def test_a_recommendation_heading_does_not_clear_a_one_keyword_sentence():
     assert row.status != "satisfied"
 
 
+def test_a_specialist_recommendation_does_not_cover_the_safety_facet():
+    passage = _passage("note", "Warfarin is recommended. Use apixaban with caution.")
+    passage.calibrated_score = 1.0
+    passage.evidence_grade_score = 1.0
+    safety = ClinicalFacet(
+        name="safety_contraindications",
+        keywords=["caution", "apixaban"],
+        source_policy="SAFETY",
+        required=True,
+        threshold=0.70,
+    )
+    guideline = ClinicalFacet(
+        name="guideline_concordance",
+        keywords=["warfarin", "recommended"],
+        source_policy="LIT",
+        required=True,
+        threshold=0.70,
+    )
+    facets = [safety, guideline]
+    score_passage_facets(passage, facets)
+    ledger = build_retrieval_ledger([passage], facets)
+    batch = AgentClaimBatch(
+        agent_id="safety",
+        claims=[
+            EvidenceClaim(
+                facet="safety_contraindications",
+                claim="Warfarin is recommended.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="note",
+                confidence=1.0,
+                calibrated_relevance=1.0,
+                evidence_grade=EvidenceGrade(score=1.0),
+                agent_id="safety",
+            ),
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Warfarin is recommended.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="note",
+                confidence=0.9,
+                calibrated_relevance=1.0,
+                evidence_grade=EvidenceGrade(score=1.0),
+                agent_id="guideline",
+            ),
+        ],
+    )
+    merged = merge_agent_claims(ledger, [batch], [passage])
+    safety_claims = [claim for claim in merged[0].claims if claim.facet == "safety_contraindications"]
+    guideline_claims = [claim for claim in merged[0].claims if claim.facet == "guideline_concordance"]
+    assert all(claim.polarity != EvidencePolarity.SUPPORTS for claim in safety_claims)
+    assert any(claim.polarity == EvidencePolarity.SUPPORTS for claim in guideline_claims)
+    coverage = {row.facet: row.status for row in compute_facet_coverage(facets, merged)}
+    assert coverage["safety_contraindications"] != "satisfied"
+    assert coverage["guideline_concordance"] == "satisfied"
+
+
 def test_a_specialist_confidence_cannot_cover_a_facet_the_passage_does_not_support():
     passage = _passage("cpg-1", "Metformin is first-line for type 2 diabetes.")
     passage.calibrated_score = 1.0
