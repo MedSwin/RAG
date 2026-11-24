@@ -191,13 +191,35 @@ class LexicalRetriever:
         return terms
 
     @staticmethod
+    def _caution_span(sentence: str) -> str:
+        """Keep the caution and its drug. Trailing history words stay out."""
+        from app.medswin.ledger import intervention_tokens
+        from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+        words = (sentence or "").split()
+        if len(words) <= 6:
+            return " ".join(words)
+        anchor = 0
+        for index in range(len(words)):
+            window = " ".join(words[max(0, index - 5):index + 1])
+            if _ungoverned_caution(window) or _QUALIFY.search(window):
+                anchor = index
+                break
+        begin = max(0, anchor - 4)
+        end = anchor + 1
+        limit = min(len(words), anchor + 6)
+        while end < limit and not intervention_tokens(" ".join(words[begin:end])):
+            end += 1
+        return " ".join(words[begin:end])
+
+    @staticmethod
     def _caution_sentences(context: str) -> List[str]:
         """Keep caution sentences. A history sentence stays out."""
         from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 
         sentences = re.split(r"(?<=[.!?])\s+|\n+", context or "")
         return [
-            sentence.strip()
+            LexicalRetriever._caution_span(sentence)
             for sentence in sentences
             if sentence.strip() and (_ungoverned_caution(sentence) or _QUALIFY.search(sentence))
         ]

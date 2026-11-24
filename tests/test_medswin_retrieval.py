@@ -216,6 +216,23 @@ def test_a_sentence_period_does_not_hide_a_chart_drug():
     assert _matching_indexes(index, query, 2) == [0]
 
 
+def test_a_caution_without_a_period_drops_the_following_history():
+    from app.medswin.orchestrator import _chart_synopsis
+    from app.retrieval.lexical import LexicalRetriever
+
+    note = "Avoid apixaban " + " ".join(f"history{i}" for i in range(30))
+    synopsis = _chart_synopsis([{"text": note}])
+    query = f"Which metformin dose?\n\nPatient retrieval context:\n{synopsis}"
+    terms = LexicalRetriever._lexical_terms(query)
+    focus = LexicalRetriever.focus_query(query)
+    assert "apixaban" in terms
+    assert "metformin" in terms
+    assert "history29" not in terms
+    assert "history0" not in terms
+    assert "history29" not in focus
+    assert "history0" not in focus
+
+
 def test_a_question_word_does_not_outrank_the_question_drug():
     from app.retrieval.lexical import BM25Okapi, LexicalRetriever, _matching_indexes
 
