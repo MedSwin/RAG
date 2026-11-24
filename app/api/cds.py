@@ -73,6 +73,7 @@ class FeedbackRequest(BaseModel):
 
 
 FeedbackFunc = Callable[[str, List[Dict[str, Any]]], Awaitable[None]]
+CardLookup = Callable[[str], Awaitable[Optional[Dict[str, Any]]]]
 
 
 async def default_record_feedback(service_id: str, documents: List[Dict[str, Any]]) -> None:
@@ -84,6 +85,17 @@ async def default_record_feedback(service_id: str, documents: List[Dict[str, Any
 
 def get_feedback_recorder() -> FeedbackFunc:
     return default_record_feedback
+
+
+async def default_lookup_card(card_id: str) -> Optional[Dict[str, Any]]:
+    """Return the trace for a card. The card id is the trace id."""
+    from app.core.database import get_database
+
+    return await get_database().traces.find_one({"trace_id": card_id})
+
+
+def get_card_lookup() -> CardLookup:
+    return default_lookup_card
 
 
 @router.get("/cds-services")
@@ -137,15 +149,21 @@ async def cds_feedback(
     body: FeedbackRequest,
     request: Request,
     record: FeedbackFunc = Depends(get_feedback_recorder),
+    lookup: CardLookup = Depends(get_card_lookup),
 ) -> Dict[str, Any]:
     if service_id != SERVICE_ID:
         raise HTTPException(status_code=404, detail="Unknown CDS service")
     token_user = str(getattr(request.state, "user_id", "") or "").strip()
-    user_id = None
-    org_id = None
-    if token_user:
-        token_org = str(getattr(request.state, "org_id", "") or "").strip()
-        user_id, org_id = bind_tenant(request, token_user, token_org)
+    if not token_user:
+        raise HTTPException(status_code=401, detail="Feedback requires a signed caller")
+    token_org = str(getattr(request.state, "org_id", "") or "").strip()
+    user_id, org_id = bind_tenant(request, token_user, token_org)
+    for item in body.feedback:
+        trace = await lookup(item.card)
+        owner = fhir_id(str((trace or {}).get("user_id") or ""))
+        owner_org = str((trace or {}).get("org_id") or "")
+        if not trace or owner != fhir_id(user_id) or owner_org != org_id:
+            raise HTTPException(status_code=403, detail="The card does not belong to this caller")
     recorded_at = datetime.now(timezone.utc).isoformat()
     documents = feedback_documents(
         service_id,

@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import AuthMiddleware
-from app.api.cds import get_feedback_recorder, router as cds_router
+from app.api.cds import get_card_lookup, get_feedback_recorder, router as cds_router
 from app.api.v1.endpoints import embedding as embedding_endpoint
 from app.api.v1.endpoints import pipelines
 from app.core.config import settings
@@ -357,7 +357,14 @@ def test_full_cdss_workflow_and_agentic_control_plane_end_to_end(monkeypatch):
     app.include_router(pipelines.router, prefix="/api/v1/pipelines")
     app.include_router(embedding_endpoint.router, prefix="/api/v1/embedding")
     app.include_router(cds_router)
+    async def _lookup_card(card_id: str):
+        for (trace_id, _org_id), doc in traces.rows.items():
+            if trace_id == card_id:
+                return doc
+        return None
+
     app.dependency_overrides[get_feedback_recorder] = lambda: _record_feedback
+    app.dependency_overrides[get_card_lookup] = lambda: _lookup_card
 
     client = TestClient(app)
     clinician_token = _sign(
