@@ -926,6 +926,81 @@ def test_a_synthesis_abstain_is_the_last_stored_decision():
     assert stored[-1].degraded_mode.get("synthesis") is True
 
 
+def test_a_saturated_queue_abstains_on_the_same_model():
+    import asyncio
+
+    import httpx
+
+    from app.schemas.evidence import EvidenceBundle, PolicyDecision
+
+    class Sessions:
+        async def create(self, session, org_id):
+            return {}
+
+    class Traces:
+        async def create(self, trace, org_id):
+            return {}
+
+    class Normalizer:
+        async def normalize(self, query, trace):
+            return QuerySpec(canonical_terms=["treatment"])
+
+        def build_facets(self, query, query_spec, constraints, patient_id):
+            return [ClinicalFacet(name="treatment", required=True, threshold=0.7)]
+
+    class LocalQueue:
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, json, headers):
+            self.calls.append(url)
+            request = httpx.Request("POST", url)
+            return httpx.Response(503, request=request)
+
+    passage = CandidatePassage(
+        chunk_id="c1",
+        doc_id="d1",
+        source_type=SourceType.CPG,
+        text="Guideline recommendation supports treatment.",
+        calibrated_score=0.9,
+    )
+    accept = PolicyDecision(passed=True, action=PolicyAction.ACCEPT, reason="gate passed")
+    bundle = EvidenceBundle(
+        passages=[passage],
+        total_tokens=12,
+        cpg_count=1,
+        emr_count=0,
+        lit_count=0,
+        policy_decision=accept,
+    )
+
+    async def _retrieve(**kwargs):
+        kwargs["trace"].policy_decisions.append(accept)
+        return bundle, type("Check", (), {"iteration": 0, "policy_decision": accept})()
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    queue = LocalQueue()
+    orchestrator.session_repo = Sessions()
+    orchestrator.trace_repo = Traces()
+    orchestrator.normalizer = Normalizer()
+    orchestrator.supervisor.backend = "medswin_local"
+    orchestrator.supervisor.model = "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
+    orchestrator.supervisor.base_url = "http://127.0.0.1:9/v1/chat/completions"
+    orchestrator.supervisor.client = queue
+    orchestrator._retrieve_with_sufficiency = _retrieve
+    response = asyncio.run(orchestrator.chat(query="q", user_id="u1", org_id="org1"))
+
+    assert queue.calls == ["http://127.0.0.1:9/v1/chat/completions"]
+    assert response.generator_profile == "medswin"
+    assert response.answer_artifact.abstained is True
+    assert response.policy_decision.passed is False
+    assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert "evidence check failed" in response.answer.lower()
+    assert "start warfarin" not in response.answer.lower()
+
+
 def test_trace_failure_keeps_the_gated_answer():
     import asyncio
 

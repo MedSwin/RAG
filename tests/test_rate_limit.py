@@ -165,3 +165,53 @@ def test_a_generation_admission_retries_once_when_retry_after_is_short():
     )
     assert response.status_code == 200
     assert client.calls == 2
+
+
+def test_a_saturated_queue_does_not_call_another_model():
+    local = "http://127.0.0.1:9/v1/chat/completions"
+    limiter = AdaptiveModelRateLimiter()
+    blocked = _StatusClient([(503, {})])
+    seen = []
+
+    async def _post(url, json, headers):
+        seen.append(url)
+        return await _StatusClient.post(blocked, url, json, headers)
+
+    blocked.post = _post
+    response = asyncio.run(
+        limiter.post(
+            blocked,
+            local,
+            key="gen-saturated",
+            logger=logging.getLogger("test-rate-limit"),
+            json={"messages": []},
+            headers={},
+            replay_safe=False,
+        )
+    )
+    assert response.status_code == 503
+    assert blocked.calls == 1
+    assert seen == [local]
+
+    again = _StatusClient([(503, {"Retry-After": "0"}), (503, {"Retry-After": "0"})])
+    repeated = []
+
+    async def _post_again(url, json, headers):
+        repeated.append(url)
+        return await _StatusClient.post(again, url, json, headers)
+
+    again.post = _post_again
+    response = asyncio.run(
+        limiter.post(
+            again,
+            local,
+            key="gen-saturated-retry",
+            logger=logging.getLogger("test-rate-limit"),
+            json={"messages": []},
+            headers={},
+            replay_safe=False,
+        )
+    )
+    assert response.status_code == 503
+    assert again.calls == 2
+    assert repeated == [local, local]
