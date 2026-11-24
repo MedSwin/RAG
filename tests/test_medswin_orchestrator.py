@@ -136,6 +136,26 @@ def test_a_caution_at_the_end_of_a_long_note_stays_in_the_synopsis():
     assert len(returned.split()) <= 160
 
 
+def test_a_second_caution_in_a_long_note_stays_in_the_synopsis():
+    import asyncio
+
+    note = " ".join(["history"] * 150) + " Avoid warfarin. Avoid apixaban."
+
+    class Charts:
+        async def get_by_patient_id(self, patient_id, org_id, **_kwargs):
+            return [{"source_type": "EMR", "text": note}]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.chunk_repo = Charts()
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
+    returned = asyncio.run(orchestrator._patient_query("Which dose?", "org", "pt-1", {}, trace))
+    assert "Avoid warfarin." in returned
+    assert "Avoid apixaban." in returned
+    assert len(returned.split()) <= 160
+
+
 def test_the_model_question_drops_the_phone():
     import asyncio
 

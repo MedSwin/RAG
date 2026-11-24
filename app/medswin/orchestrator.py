@@ -195,6 +195,7 @@ def _source_filter_for_hints(
 
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_CAUTION_KEEP = 16
 
 
 def _caution_window(words: List[str], room: int) -> List[str]:
@@ -221,22 +222,26 @@ def _fit_row(text: str, allowance: int) -> List[str]:
     if len(words) <= allowance:
         return words
     sentences = [part.strip() for part in _SENTENCE_SPLIT.split(text) if part.strip()] or [text]
-    caution_indexes = {index for index, sentence in enumerate(sentences) if _ungoverned_caution(sentence)}
-    order = [index for index in range(len(sentences)) if index in caution_indexes]
-    order.extend(index for index in range(len(sentences)) if index not in caution_indexes)
-    picked: List[str] = []
+    caution_indexes = [index for index, sentence in enumerate(sentences) if _ungoverned_caution(sentence)]
+    caution_bits: List[str] = []
     used = 0
-    for index in order:
+    for index in caution_indexes:
         if used >= allowance:
             break
         piece = sentences[index].split()
         room = allowance - used
-        if len(piece) > room:
-            piece = _caution_window(piece, room) if index in caution_indexes else piece[:room]
+        if len(piece) > _CAUTION_KEEP:
+            piece = _caution_window(piece, min(room, _CAUTION_KEEP))
+        elif len(piece) > room:
+            piece = piece[:room]
         if piece:
-            picked.append(" ".join(piece))
+            caution_bits.append(" ".join(piece))
             used += len(piece)
-    return " ".join(picked).split()[:allowance]
+    prefix = words[:allowance]
+    if caution_bits and all(bit in " ".join(prefix) for bit in caution_bits):
+        return prefix
+    leading = words[: max(0, allowance - used)]
+    return f"{' '.join(caution_bits)} {' '.join(leading)}".split()[:allowance]
 
 
 def _chart_synopsis(chunks: List, budget: int = 140) -> str:
