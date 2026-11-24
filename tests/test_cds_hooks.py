@@ -54,6 +54,26 @@ def _app(chat):
     return TestClient(app)
 
 
+def test_a_card_is_a_cds_hooks_card():
+    import json
+    from pathlib import Path
+
+    card = cards_from_chat(
+        _response(accepted=True),
+        hook_instance="hook-1",
+        patient_id="pt-1",
+    )[0]
+    assert set(card) == {"uuid", "summary", "indicator", "source", "detail", "extension"}
+    assert "resourceType" not in card
+    assert "GuidanceResponse" not in json.dumps(card)
+    hits = [
+        str(path.relative_to(Path("app")))
+        for path in Path("app").rglob("*.py")
+        if "GuidanceResponse" in path.read_text(encoding="utf-8")
+    ]
+    assert hits == []
+
+
 def test_discovery_names_the_evidence_service():
     response = _app(None).get("/cds-services")
     assert response.status_code == 200
