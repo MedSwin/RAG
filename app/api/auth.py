@@ -116,6 +116,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.org_id = str(org).strip() if org else None
         roles = _claim_roles(claims)
         request.state.roles = sorted(roles)
-        if settings.ENABLE_RBAC and not roles.intersection(_allowed_roles()):
+        clinical = bool(roles.intersection(_allowed_roles()))
+        if settings.ENABLE_RBAC and not clinical and "operator" not in roles:
             return JSONResponse(status_code=403, content={"detail": "Clinical role is required"})
         return await call_next(request)

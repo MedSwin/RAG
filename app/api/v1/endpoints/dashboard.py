@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import logging
 
+from app.api.tenant import require_operator
 from app.services.dataset import HuggingFaceDatasetService
 from app.services.ingestion import IngestionPipelineService
 from app.models.download import ModelDownloadService
@@ -909,9 +910,11 @@ async def get_dashboard_stats(hf_service = Depends(get_hf_service)):
 async def start_dataset_ingestion(
     dataset_name: str,
     background_tasks: BackgroundTasks,
+    http_request: Request,
     ingestion_service = Depends(get_ingestion_service)
 ):
     """Start ingestion pipeline for a dataset."""
+    require_operator(http_request)
     try:
         # Start ingestion in background
         background_tasks.add_task(
@@ -970,8 +973,9 @@ async def get_models_info(model_service = Depends(get_model_service)):
         raise HTTPException(status_code=500, detail=f"Failed to get models info: {str(e)}")
 
 @router.post("/download-models")
-async def download_models(model_service = Depends(get_model_service)):
+async def download_models(http_request: Request, model_service = Depends(get_model_service)):
     """Download all required models."""
+    require_operator(http_request)
     try:
         results = await model_service.download_all_models()
         return {"results": results}

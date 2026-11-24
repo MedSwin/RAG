@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.api.auth import AuthMiddleware
 from app.api.cds import get_cds_chat, router as cds_router
-from app.api.tenant import bind_org, bind_tenant
+from app.api.tenant import bind_org, bind_tenant, require_operator
 from app.api.v1.endpoints import pipelines, retrieval, storage
 from app.core.config import settings
 from app.schemas.enums import PipelineId
@@ -187,3 +187,86 @@ def test_retrieval_token_blocks_another_organisation_before_embed(monkeypatch):
         json={"query": "first-line antibiotic", "org_id": "org-b", "use_reranking": False},
     )
     assert response.status_code == 403
+
+
+def test_shared_index_build_requires_an_operator(monkeypatch):
+    token = _auth(monkeypatch)
+    built = []
+
+    class Storage:
+        async def build_hnsw_index_async(self, **kwargs):
+            built.append(kwargs)
+            return {
+                "success": True,
+                "index_path": "configured.bin",
+                "mapping_path": "configured.json",
+                "total_vectors": 0,
+                "message": "built",
+            }
+
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(storage.router, prefix="/api/v1/storage")
+    app.dependency_overrides[storage.get_storage_service] = lambda: Storage()
+    client = TestClient(app)
+    denied = client.post(
+        "/api/v1/storage/index/build",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"force_rebuild": True},
+    )
+    assert denied.status_code == 403
+    assert built == []
+    operator = _token(
+        "clinical-secret-value",
+        {"sub": "ops-1", "org_id": "org-a", "role": "operator", "exp": int(time.time()) + 60},
+    )
+    allowed = client.post(
+        "/api/v1/storage/index/build",
+        headers={"Authorization": f"Bearer {operator}"},
+        json={"force_rebuild": True},
+    )
+    assert allowed.status_code == 200
+    assert built[0]["index_path"] == settings.HNSW_INDEX_PATH
+    assert built[0]["mapping_path"] == settings.HNSW_MAPPING_PATH
+    rejected = client.post(
+        "/api/v1/storage/index/build",
+        headers={"Authorization": f"Bearer {operator}"},
+        json={"index_path": "/tmp/other.bin"},
+    )
+    assert rejected.status_code == 400
+    assert len(built) == 1
+
+
+def test_operator_can_build_the_index_when_rbac_is_on(monkeypatch):
+    secret = "clinical-secret-value"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "ENABLE_RBAC", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    monkeypatch.setattr(settings, "RBAC_ALLOWED_ROLES", "clinician")
+
+    class Storage:
+        async def build_hnsw_index_async(self, **kwargs):
+            return {
+                "success": True,
+                "index_path": kwargs["index_path"],
+                "mapping_path": kwargs["mapping_path"],
+                "total_vectors": 0,
+                "message": "built",
+            }
+
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(storage.router, prefix="/api/v1/storage")
+    app.dependency_overrides[storage.get_storage_service] = lambda: Storage()
+    operator = _token(secret, {"sub": "ops-1", "org_id": "org-a", "role": "operator", "exp": int(time.time()) + 60})
+    response = TestClient(app).post(
+        "/api/v1/storage/index/build",
+        headers={"Authorization": f"Bearer {operator}"},
+        json={},
+    )
+    assert response.status_code == 200
+
+
+def test_local_index_build_stays_open_without_a_token():
+    require_operator(_Request())

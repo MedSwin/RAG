@@ -29,6 +29,17 @@ def bind_org(request: Request, org_id: str) -> str:
     return bound_org
 
 
+def require_operator(request: Request) -> None:
+    """Allow a local caller. A signed caller must hold the operator role."""
+    token_user = str(getattr(request.state, "user_id", "") or "").strip()
+    if not token_user:
+        return
+    roles = getattr(request.state, "roles", []) or []
+    held = {str(role).strip().lower() for role in roles}
+    if "operator" not in held:
+        raise HTTPException(status_code=403, detail="An operator role is required")
+
+
 def bind_body_org(request: Request, body):
     """Return the body with the token organisation. A mismatch returns 403."""
     org_id = bind_org(request, str(body.org_id))

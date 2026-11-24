@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 import asyncio
 
-from app.api.tenant import bind_body_org, bind_org
+from app.api.tenant import bind_body_org, bind_org, require_operator
 from app.core.config import settings
 from app.core.database import get_database
 from app.schemas.enums import SourceType
@@ -285,13 +285,17 @@ async def store_chunks(
 @router.post("/index/build", response_model=BuildIndexResponse)
 async def build_index(
     request: BuildIndexRequest,
+    http_request: Request,
     storage_service: StorageService = Depends(get_storage_service),
 ):
     """Rebuild the one shared ordinary ANN over all active tenant vectors."""
+    require_operator(http_request)
+    if request.index_path or request.mapping_path:
+        raise HTTPException(status_code=400, detail="The index path comes from the server configuration")
     try:
         result = await storage_service.build_hnsw_index_async(
-            index_path=request.index_path or settings.HNSW_INDEX_PATH,
-            mapping_path=request.mapping_path or settings.HNSW_MAPPING_PATH,
+            index_path=settings.HNSW_INDEX_PATH,
+            mapping_path=settings.HNSW_MAPPING_PATH,
             force_rebuild=request.force_rebuild,
             org_id=None,
         )
