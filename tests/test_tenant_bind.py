@@ -224,6 +224,22 @@ def test_pipeline_token_uses_the_token_organisation(monkeypatch):
     assert seen == [(PipelineId.TWO_STAGE, "clinician-1", "org-a")]
 
 
+def test_a_storage_error_hides_the_exception_text(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", False)
+
+    class Storage:
+        async def list_chunks(self, skip, limit, filters):
+            raise RuntimeError("chart row 555-234-5678")
+
+    app = FastAPI()
+    app.include_router(storage.router, prefix="/api/v1/storage")
+    app.dependency_overrides[storage.get_storage_service] = lambda: Storage()
+    response = TestClient(app).get("/api/v1/storage/chunks", params={"org_id": "org-a"})
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to list chunks: RuntimeError"
+    assert "555-234-5678" not in response.text
+
+
 def test_a_pipeline_error_hides_the_exception_text(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_AUTH", False)
 

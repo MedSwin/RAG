@@ -338,7 +338,7 @@ async def store_chunks(
         raise
     except Exception as exc:
         logger.error("Error storing chunks: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to store chunks: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to store chunks: {type(exc).__name__}")
 
 
 @router.post("/index/build", response_model=BuildIndexResponse)
@@ -372,7 +372,7 @@ async def build_index(
         )
     except Exception as exc:
         logger.error("Error building index: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to build index: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to build index: {type(exc).__name__}")
 
 
 @router.post("/embeddings/refresh")
@@ -396,7 +396,7 @@ async def refresh_cloud_embeddings(
         return result
     except Exception as exc:
         logger.error("Error refreshing cloud embeddings: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to refresh cloud embeddings: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to refresh cloud embeddings: {type(exc).__name__}")
 
 
 @router.post("/benchmark/reset")
@@ -415,7 +415,7 @@ async def reset_benchmark_org(
         return {"success": True, **result}
     except Exception as exc:
         logger.error("Error resetting benchmark org: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to reset benchmark org: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to reset benchmark org: {type(exc).__name__}")
 
 
 @router.get("/stats", response_model=StorageStats)
@@ -429,7 +429,7 @@ async def get_storage_stats(
         return StorageStats(**(await storage_service.get_storage_stats(org_id=org_id)))
     except Exception as exc:
         logger.error("Error getting storage stats: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get storage stats: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to get storage stats: {type(exc).__name__}")
 
 
 @router.delete("/chunks")
@@ -451,7 +451,7 @@ async def clear_chunks(
         }
     except Exception as exc:
         logger.error("Error clearing chunks: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to clear chunks: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear chunks: {type(exc).__name__}")
 
 
 @router.get("/chunks/{chunk_id}")
@@ -471,7 +471,7 @@ async def get_chunk(
         raise
     except Exception as exc:
         logger.error("Error getting chunk: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get chunk: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to get chunk: {type(exc).__name__}")
 
 
 @router.get("/chunks")
@@ -497,7 +497,7 @@ async def list_chunks(
         return {"chunks": chunks, "total": len(chunks), "skip": skip, "limit": limit, "org_id": org_id}
     except Exception as exc:
         logger.error("Error listing chunks: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list chunks: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to list chunks: {type(exc).__name__}")
 
 
 @router.post("/validate")
@@ -519,4 +519,4 @@ async def validate_storage(
         }
     except Exception as exc:
         logger.error("Error validating storage: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to validate storage: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to validate storage: {type(exc).__name__}")
