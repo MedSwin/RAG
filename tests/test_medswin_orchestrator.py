@@ -606,6 +606,38 @@ def test_two_stage_skips_mac_but_keeps_gate():
     assert mac[0].result["status"] == "skipped_by_pipeline"
 
 
+def test_two_stage_does_not_adjudicate_a_conflict(monkeypatch):
+    import asyncio
+
+    calls = []
+
+    def _spy(pairs, batches):
+        calls.append(list(batches))
+        return pairs
+
+    monkeypatch.setattr("app.medswin.orchestrator.adjudicate_contradictions", _spy)
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.retriever = FakeRetriever()
+    orchestrator.chunk_repo = EmptyRepo()
+    from app.schemas.traces import AuditTrace
+
+    trace = AuditTrace(trace_id="t4b", session_id="s1", user_id="u1", org_id="org1", query="q", patient_id="patient1")
+    asyncio.run(
+        orchestrator._retrieve_with_sufficiency(
+            query="What treatment is safe for this patient?",
+            query_spec=QuerySpec(canonical_terms=["treatment"]),
+            org_id="org1",
+            patient_id="patient1",
+            constraints={},
+            trace=trace,
+        )
+    )
+    assert orchestrator.policy.enable_mac is False
+    assert calls == []
+
+
 def test_retrieval_packs_with_the_policy_token_budget(monkeypatch):
     import asyncio
 
