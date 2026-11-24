@@ -234,10 +234,10 @@ class LexicalRetriever:
             spans.append((begin, end))
             covered = set(range(begin, end))
             for index in drug_at:
-                if index > anchor and index not in covered:
+                if index not in covered:
                     spans.append((index, index + 1))
         merged = []
-        for begin, end in spans:
+        for begin, end in sorted(spans):
             if merged and begin <= merged[-1][1]:
                 merged[-1] = (merged[-1][0], max(merged[-1][1], end))
             else:

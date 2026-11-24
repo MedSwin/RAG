@@ -460,6 +460,67 @@ def test_a_second_drug_in_the_same_caution_sentence_still_blocks():
     assert metformin_pairs == []
 
 
+def test_a_drug_before_the_caution_word_still_blocks():
+    from app.medswin.ledger import chart_contradictions
+    from app.medswin.orchestrator import _chart_synopsis
+    from app.retrieval.lexical import LexicalRetriever
+    from app.schemas.enums import EvidencePolarity, SourceType
+    from app.schemas.evidence import EvidenceClaim, EvidenceGrade, EvidenceLedgerEntry
+
+    lead = (
+        "Apixaban remains the selected agent after the prolonged admission "
+        "and the bleeding review says"
+    )
+    assert len(lead.split()) > 4
+    note = (
+        f"{lead} avoid therapy in active bleeding. Metformin is continued. "
+        + " ".join(f"history{i}" for i in range(20))
+    )
+    synopsis = _chart_synopsis([{"text": note}])
+    terms = LexicalRetriever._lexical_terms(
+        f"Which dose?\n\nPatient retrieval context:\n{synopsis}"
+    )
+    assert "apixaban" in terms
+    assert "metformin" not in terms
+    assert "history0" not in terms
+    support = EvidenceLedgerEntry(
+        chunk_id="rec",
+        doc_id="rec",
+        source_type=SourceType.CPG,
+        text="Apixaban is recommended.",
+        evidence_grade=EvidenceGrade(score=0.90),
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Apixaban is recommended.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="rec",
+                confidence=0.9,
+            )
+        ],
+    )
+    pairs = chart_contradictions(synopsis, [support])
+    assert pairs
+    assert "apixaban" in pairs[0].reason
+    other = EvidenceLedgerEntry(
+        chunk_id="met",
+        doc_id="met",
+        source_type=SourceType.CPG,
+        text="Metformin is recommended.",
+        evidence_grade=EvidenceGrade(score=0.90),
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Metformin is recommended.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="met",
+                confidence=0.9,
+            )
+        ],
+    )
+    assert chart_contradictions(synopsis, [other]) == []
+
+
 def test_a_drug_several_words_after_the_caution_stays_in_the_search():
     from app.medswin.orchestrator import _chart_synopsis
     from app.retrieval.lexical import LexicalRetriever
