@@ -268,6 +268,47 @@ def test_a_mixed_note_keeps_the_recommendation_and_the_warning():
     assert EvidencePolarity.SUPPORTS not in {claim.polarity for claim in history_ledger[0].claims}
 
 
+def test_a_warfarin_warning_does_not_conflict_with_the_apixaban_sentence():
+    from app.schemas.enums import SourceType
+
+    passage = CandidatePassage(
+        chunk_id="note",
+        doc_id="note",
+        source_type=SourceType.LIT,
+        text="Apixaban is recommended. Avoid warfarin.",
+        calibrated_score=0.90,
+    )
+    facets = [
+        ClinicalFacet(name="guideline_concordance", keywords=["apixaban", "recommended"], source_policy="LIT"),
+    ]
+    ledger = build_retrieval_ledger([passage], facets)
+    grade = EvidenceGrade(score=0.95)
+    warfarin = EvidenceLedgerEntry(
+        chunk_id="ext",
+        doc_id="ext",
+        source_type=SourceType.SAFETY,
+        evidence_grade=grade,
+        text="Avoid warfarin.",
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Avoid warfarin.",
+                polarity=EvidencePolarity.CONTRADICTS,
+                chunk_id="ext",
+                evidence_grade=grade,
+            )
+        ],
+    )
+    assert detect_contradictions([*ledger, warfarin]) == []
+    apixaban = warfarin.model_copy(deep=True)
+    apixaban.text = "Avoid apixaban."
+    apixaban.claims[0].claim = "Avoid apixaban."
+    pairs = detect_contradictions([*ledger, apixaban])
+    assert len(pairs) == 1
+    assert "apixaban" in pairs[0].reason
+    assert "warfarin" not in pairs[0].reason
+
+
 def test_a_chart_warfarin_warning_does_not_block_the_apixaban_recommendation():
     from app.schemas.enums import SourceType
 

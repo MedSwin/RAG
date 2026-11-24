@@ -612,22 +612,32 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
         )
 
     for facet, bucket in by_facet.items():
-        for support in bucket["support"]:
-            for conflict in bucket["contradict"]:
-                support_text = _pairing_text(support)
-                conflict_text = _conflict_text(conflict)
-                if not same_intervention(support_text, conflict_text):
-                    continue
-                _add(
-                    facet,
-                    support,
-                    conflict,
-                    _reason_with_drug(
-                        "Incompatible support and caution for the same intervention.",
-                        support_text,
-                        conflict_text,
-                    ),
-                )
+        supports = list({id(entry): entry for entry in bucket["support"]}.values())
+        conflicts = list({id(entry): entry for entry in bucket["contradict"]}.values())
+        for support in supports:
+            support_claims = [
+                claim for claim in support.claims if claim.facet == facet and _supports_facet(claim, facet)
+            ]
+            for conflict in conflicts:
+                conflict_claims = [
+                    claim for claim in conflict.claims if claim.facet == facet and _contradicts_facet(claim, facet)
+                ]
+                for support_claim in support_claims:
+                    for conflict_claim in conflict_claims:
+                        support_text = _pairing_text(support, support_claim)
+                        conflict_text = _conflict_text(conflict, conflict_claim)
+                        if not same_intervention(support_text, conflict_text):
+                            continue
+                        _add(
+                            facet,
+                            support,
+                            conflict,
+                            _reason_with_drug(
+                                "Incompatible support and caution for the same intervention.",
+                                support_text,
+                                conflict_text,
+                            ),
+                        )
 
     safety_warnings: List[tuple[EvidenceLedgerEntry, EvidenceClaim]] = []
     other_supports: List[tuple[EvidenceLedgerEntry, EvidenceClaim]] = []
