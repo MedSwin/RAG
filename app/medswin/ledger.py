@@ -935,6 +935,7 @@ _PLANNED_FOR = re.compile(
     r"|\b(?:needs?|requir(?:e|es|ed))\b",
     re.I,
 )
+_BARE_FOR = re.compile(r"^\s*(?:please\s+)?for\b", re.I)
 _KEEP_VERB = re.compile(
     r"\b(?:resume[ds]?|resuming|restart(?:ed|s|ing)?|recommence[ds]?|recommencing|"
     r"keep|keeps|kept|keeping|maintain(?:ed|s|ing)?)\b",
@@ -1838,7 +1839,7 @@ def _repeat_orders_drug(text: str) -> bool:
 
 
 def _has_recommendation_verb(text: str) -> bool:
-    from app.scoring.coverage import _LOCAL_NEGATION, _ON_TOPIC, _QUALIFY
+    from app.scoring.coverage import _LOCAL_NEGATION, _ON_TOPIC, _QUALIFY, _on_object_is_drug
 
     for match in _RECOMMEND_VERB.finditer(text or ""):
         window = text[max(0, match.start() - 48): match.start()]
@@ -1904,6 +1905,10 @@ def _has_recommendation_verb(text: str) -> bool:
         if _LOCAL_NEGATION.search(window):
             continue
         if _object_is_drug(text[match.end():]):
+            return True
+    bare_for = _BARE_FOR.search(text or "")
+    if bare_for and not _COUNSEL_ON.search(text or ""):
+        if _on_object_is_drug(text[bare_for.end():]):
             return True
     for match in _WITH_DRUG.finditer(text or ""):
         window = text[max(0, match.start() - 48): match.start()]
