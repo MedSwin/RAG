@@ -25,11 +25,26 @@ def discovery() -> Dict[str, Any]:
                 "description": (
                     "Returns one card from the two-stage evidence gate. "
                     "Send the clinical question in context.question. "
-                    "A request with no question returns no cards. "
+                    "A request with no question returns one warning card. "
                     "POST /cds-services/medswin-evidence/feedback records an accepted or overridden card."
                 ),
             }
         ]
+    }
+
+
+def missing_question_card(patient_id: str | None = None) -> Dict[str, Any]:
+    """Return one warning card when patient-view has no clinical question."""
+    who = (patient_id or "").strip() or "this patient"
+    return {
+        "uuid": str(uuid.uuid4()),
+        "summary": "No clinical question was sent for this patient view.",
+        "indicator": "warning",
+        "source": {"label": SOURCE_LABEL},
+        "detail": (
+            f"The patient-view hook for {who} did not include a clinical question. "
+            "MedSwin did not run the evidence gate."
+        ),
     }
 
 

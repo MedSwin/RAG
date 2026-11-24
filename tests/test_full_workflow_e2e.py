@@ -52,7 +52,7 @@ class _MemorySessions:
         self.rows[(session.session_id, org_id)] = doc
         return doc
 
-    async def update_last_active(self, session_id: str, org_id: str) -> None:
+    async def update_last_active(self, session_id: str, org_id: str, user_id: str | None = None) -> None:
         if (session_id, org_id) in self.rows:
             self.rows[(session_id, org_id)]["last_active"] = "updated"
 

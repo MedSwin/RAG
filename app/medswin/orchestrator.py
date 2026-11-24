@@ -90,6 +90,59 @@ PIPELINE_POLICIES = {
 }
 
 
+async def _resume_or_create_session(repo, session_id: str, user_id: str, org_id: str) -> str:
+    """Keep a session only when this user already owns it. Otherwise mint a new id."""
+    updated = await repo.update_last_active(session_id, org_id, user_id=user_id)
+    if updated:
+        return session_id
+    getter = getattr(repo, "get_by_id", None)
+    existing = await getter(session_id, org_id) if getter else None
+    owner = existing.get("user_id") if isinstance(existing, dict) else None
+    if existing is not None and owner == user_id:
+        return session_id
+    if existing is not None:
+        session_id = str(uuid.uuid4())
+    await repo.create(Session(session_id=session_id, user_id=user_id, org_id=org_id), org_id)
+    return session_id
+
+
+def _hint_signature(hints: Optional[Dict[str, Any]]) -> tuple:
+    hints = hints or {}
+    missing = hints.get("missing_facets") or []
+    return (
+        tuple(missing),
+        hints.get("focus_source"),
+        bool(hints.get("exclusive_source")),
+        bool(hints.get("contradiction_review")),
+        bool(hints.get("safety_search")),
+    )
+
+
+def retrieve_stall_action(
+    *,
+    iteration: int,
+    max_loops: int,
+    hints: Optional[Dict[str, Any]],
+    next_hints: Optional[Dict[str, Any]],
+    wants_more: bool,
+) -> str:
+    """Continue only when the next retrieve would use a different hint."""
+    if wants_more and iteration + 1 < max_loops and _hint_signature(next_hints) != _hint_signature(hints):
+        return "continue"
+    return "abstain"
+
+
+def _source_filter_for_hints(
+    pinned: Optional[SourceType],
+    hints: Optional[Dict[str, Any]],
+) -> Optional[SourceType]:
+    """Let a safety or chart hint override a guideline-only pin for one loop."""
+    focus = str((hints or {}).get("focus_source") or "")
+    if focus in {item.value for item in SourceType}:
+        return SourceType(focus)
+    return pinned
+
+
 class MedSwinOrchestrator:
     """Centralized orchestrator-mediated multi-agent CDSS runtime."""
 
@@ -151,12 +204,9 @@ class MedSwinOrchestrator:
                     org_id,
                 )
             else:
-                updated = await self.session_repo.update_last_active(session_id, org_id)
-                if not updated:
-                    await self.session_repo.create(
-                        Session(session_id=session_id, user_id=user_id, org_id=org_id),
-                        org_id,
-                    )
+                session_id = await _resume_or_create_session(
+                    self.session_repo, session_id, user_id, org_id
+                )
         except Exception as exc:  # noqa: BLE001
             logger.error("Session persistence failed: %s", exc)
             degraded["session"] = True
@@ -500,11 +550,12 @@ class MedSwinOrchestrator:
                 if expanded_embeddings:
                     query_embedding = expanded_embeddings[0]
                     last_embedded = loop_query
+            loop_filter = _source_filter_for_hints(source_type_filter, hints)
             candidates, retrieval_trace = await self.retriever.retrieve(
                 query=loop_query,
                 query_embedding=query_embedding,
                 org_id=org_id,
-                source_type_filter=source_type_filter,
+                source_type_filter=loop_filter,
                 patient_id=patient_id,
                 hints=hints,
                 constraints=constraints,
@@ -548,15 +599,41 @@ class MedSwinOrchestrator:
                         result={"count": 0},
                     )
                 )
-                terminal_iter = max(iteration, settings.MAX_RETRIEVE_LOOPS - 1)
+                preview = self.gate.check(
+                    selected_ledger,
+                    facets,
+                    selected,
+                    iteration=iteration,
+                    constraints=constraints,
+                    query_spec=query_spec,
+                    contradictions=contradictions if "contradictions" in locals() else [],
+                )
+                next_hints = (
+                    preview.policy_decision.retrieval_hints if preview.policy_decision else {}
+                )
+                if retrieve_stall_action(
+                    iteration=iteration,
+                    max_loops=settings.MAX_RETRIEVE_LOOPS,
+                    hints=hints,
+                    next_hints=next_hints,
+                    wants_more=self.policy.enable_retrieve_more and self.gate.should_retrieve_more(preview),
+                ) == "continue":
+                    final_check = preview
+                    trace.sufficiency_checks.append(preview)
+                    if preview.policy_decision:
+                        trace.policy_decisions.append(preview.policy_decision)
+                    hints = next_hints
+                    iteration += 1
+                    continue
                 check = self.gate.check(
                     selected_ledger,
                     facets,
                     selected,
-                    iteration=terminal_iter,
+                    iteration=iteration,
                     constraints=constraints,
                     query_spec=query_spec,
                     contradictions=contradictions if "contradictions" in locals() else [],
+                    stop_retrieval=True,
                 )
                 final_check = check
                 trace.sufficiency_checks.append(check)

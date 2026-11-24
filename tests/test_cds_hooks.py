@@ -62,7 +62,7 @@ def test_discovery_names_the_evidence_service():
     assert service["hook"] == "patient-view"
 
 
-def test_missing_question_returns_no_cards_and_does_not_call_chat():
+def test_missing_question_returns_a_warning_card_and_does_not_call_chat():
     calls = []
 
     async def chat(**kwargs):
@@ -74,7 +74,10 @@ def test_missing_question_returns_no_cards_and_does_not_call_chat():
         json={"hook": "patient-view", "hookInstance": "hook-1", "context": {"patientId": "p1"}},
     )
     assert response.status_code == 200
-    assert response.json() == {"cards": []}
+    card = response.json()["cards"][0]
+    assert card["indicator"] == "warning"
+    assert "No clinical question" in card["summary"]
+    assert "p1" in card["detail"]
     assert calls == []
 
 

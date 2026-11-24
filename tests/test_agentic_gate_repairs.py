@@ -1,3 +1,4 @@
+from app.medswin.gate import EvidenceGate
 from app.medswin.ledger import (
     adjudicate_contradictions,
     detect_contradictions,
@@ -141,6 +142,63 @@ def test_exact_source_match_without_a_keyword_does_not_cover_the_facet():
 
     assert score_passage_facets(bare, [facet])["guideline_concordance"] == 0.0
     assert score_passage_facets(named, [facet])["guideline_concordance"] > 0.0
+
+
+def test_a_missing_calibrated_score_fails_inclusion():
+    passage = CandidatePassage(
+        chunk_id="c1",
+        doc_id="d1",
+        source_type=SourceType.CPG,
+        text="Guideline recommendation supports treatment.",
+        fusion_score=0.95,
+        rerank_score=0.95,
+        dense_score=0.95,
+    )
+    check = EvidenceGate().check([], [], [passage], contradictions=[])
+    assert check.policy_decision.retrieval_hints["inclusion_passed"] is False
+    assert check.mean_confidence == 0.0
+
+
+def test_a_duplicate_page_abstains_at_the_real_iteration():
+    from app.medswin.orchestrator import retrieve_stall_action
+
+    assert retrieve_stall_action(
+        iteration=1,
+        max_loops=3,
+        hints={"missing_facets": ["safety_contraindications"], "focus_source": "SAFETY"},
+        next_hints={"missing_facets": ["safety_contraindications"], "focus_source": "SAFETY"},
+        wants_more=True,
+    ) == "abstain"
+    assert retrieve_stall_action(
+        iteration=1,
+        max_loops=3,
+        hints={"missing_facets": ["safety_contraindications"], "focus_source": "SAFETY"},
+        next_hints={"missing_facets": ["patient_applicability"], "focus_source": "EMR"},
+        wants_more=True,
+    ) == "continue"
+
+
+def test_another_users_session_id_is_not_reused():
+    import asyncio
+
+    from app.medswin.orchestrator import _resume_or_create_session
+
+    created = []
+
+    class Sessions:
+        async def update_last_active(self, session_id, org_id, user_id=None):
+            return False
+
+        async def get_by_id(self, session_id, org_id):
+            return {"session_id": session_id, "org_id": org_id, "user_id": "other-clinician"}
+
+        async def create(self, session, org_id):
+            created.append(session.session_id)
+            return {"session_id": session.session_id}
+
+    new_id = asyncio.run(_resume_or_create_session(Sessions(), "sess-owned", "dr-chen", "org-1"))
+    assert new_id != "sess-owned"
+    assert created == [new_id]
 
 
 def test_drug_tokens_fold_plurals_and_ignore_april():

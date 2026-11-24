@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.tenant import bind_tenant
-from app.medswin.cds import SERVICE_ID, cards_from_chat, discovery, feedback_documents
+from app.medswin.cds import SERVICE_ID, cards_from_chat, discovery, feedback_documents, missing_question_card
 
 router = APIRouter()
 
@@ -128,7 +128,7 @@ async def cds_service(
     extra = body.context.model_extra or {}
     question = " ".join((body.context.question or str(extra.get("clinicalQuestion") or "")).split())
     if not question:
-        return {"cards": []}
+        return {"cards": [missing_question_card(body.context.patientId)]}
     response = await chat(
         question=question,
         user_id=user_id,

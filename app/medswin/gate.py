@@ -22,15 +22,10 @@ from app.medswin.ledger import detect_contradictions
 
 
 def _passage_confidence(passage: CandidatePassage) -> Optional[float]:
-    for value in (
-        passage.calibrated_score,
-        passage.rerank_score,
-        passage.fusion_score,
-        passage.dense_score,
-    ):
-        if value is not None:
-            return float(value)
-    return None
+    """Use the calibrated score only. A fusion or dense fallback must not clear 0.55."""
+    if passage.calibrated_score is None:
+        return None
+    return float(passage.calibrated_score)
 
 
 def _confidence_vote(passages: List[CandidatePassage]) -> tuple[bool, bool, float]:
@@ -130,6 +125,7 @@ class EvidenceGate:
         iteration: int,
         clinical_scope: ClinicalScope,
         contradictions: Optional[List[ContradictionPair]] = None,
+        stop_retrieval: bool = False,
     ) -> PolicyDecision:
         coverage = compute_facet_coverage(facets, ledger)
         contradictions = contradictions if contradictions is not None else detect_contradictions(ledger)
@@ -145,7 +141,7 @@ class EvidenceGate:
         unresolved = [item for item in contradictions if not item.resolved]
         unresolved_critical = any(item.severity == "high" for item in unresolved)
         marginal = estimate_marginal_utility_per_token(passages, coverage)
-        can_retrieve_more = iteration < self.max_loops - 1
+        can_retrieve_more = iteration < self.max_loops - 1 and not stop_retrieval
         contradiction_overflow = len(unresolved) > settings.SUFF_MAX_CONTRADICTIONS
         provenance_ok = bool(passages) and all(
             bool(p.chunk_id)
@@ -227,13 +223,20 @@ class EvidenceGate:
         constraints: Optional[Dict[str, Any]] = None,
         query_spec: Optional[QuerySpec] = None,
         contradictions: Optional[List[ContradictionPair]] = None,
+        stop_retrieval: bool = False,
     ) -> SufficiencyCheck:
         constraints = constraints or {}
         scope = self._clinical_scope(constraints)
         if query_spec and query_spec.clinical_scope:
             scope = query_spec.clinical_scope
         decision = self.decide(
-            ledger, facets, passages, iteration, scope, contradictions=contradictions
+            ledger,
+            facets,
+            passages,
+            iteration,
+            scope,
+            contradictions=contradictions,
+            stop_retrieval=stop_retrieval,
         )
         cpg = [p for p in passages if p.source_type == SourceType.CPG]
         emr = [p for p in passages if p.source_type == SourceType.EMR]

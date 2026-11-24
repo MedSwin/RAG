@@ -193,7 +193,11 @@ class NaiveRAGOrchestrator:
                     org_id,
                 )
             else:
-                await self.session_repo.update_last_active(session_id, org_id)
+                from app.medswin.orchestrator import _resume_or_create_session
+
+                session_id = await _resume_or_create_session(
+                    self.session_repo, session_id, user_id, org_id
+                )
         except Exception as exc:  # noqa: BLE001
             logger.error("Session persistence failed: %s", exc)
             degraded["session"] = True

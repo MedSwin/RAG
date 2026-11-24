@@ -214,7 +214,7 @@ def test_supplied_session_id_is_created_when_it_is_missing():
     created = []
 
     class Sessions:
-        async def update_last_active(self, session_id, org_id):
+        async def update_last_active(self, session_id, org_id, user_id=None):
             return False
 
         async def create(self, session, org_id):

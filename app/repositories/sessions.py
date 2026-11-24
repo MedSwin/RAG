@@ -43,13 +43,16 @@ class SessionRepository(BaseRepository):
             cursor = cursor.limit(limit)
         return await cursor.to_list(length=None)
     
-    async def update_last_active(self, session_id: str, org_id: str) -> bool:
-        """Update last active timestamp."""
+    async def update_last_active(self, session_id: str, org_id: str, user_id: Optional[str] = None) -> bool:
+        """Update last active timestamp when this user owns the session."""
+        query: Dict[str, Any] = {"session_id": session_id, "org_id": org_id}
+        if user_id is not None:
+            query["user_id"] = user_id
         result = await self.collection.update_one(
-            {"session_id": session_id, "org_id": org_id},
-            {"$set": {"last_active": datetime.utcnow()}}
+            query,
+            {"$set": {"last_active": datetime.utcnow()}},
         )
-        return result.modified_count > 0
+        return result.matched_count > 0
     
     async def update_metadata(self, session_id: str, org_id: str, 
                              metadata: Dict[str, Any]) -> bool:
