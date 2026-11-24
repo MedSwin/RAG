@@ -358,6 +358,25 @@ def test_a_missing_calibrated_score_fails_inclusion():
     assert check.mean_confidence == 0.0
 
 
+def test_an_expanded_search_keeps_the_synonym_off_the_chart_history():
+    from app.retrieval.hints import expand_query
+    from app.retrieval.lexical import LexicalRetriever
+
+    context = "Avoid apixaban. " + " ".join(f"history{i}" for i in range(20))
+    query = f"Which metformin dose?\n\nPatient retrieval context:\n{context}"
+    hints = {"expand_synonyms": True, "missing_facets": ["safety_contraindications"]}
+    expanded = expand_query(query, hints)
+    terms = LexicalRetriever._lexical_terms(expanded)
+    focus = LexicalRetriever.focus_query(expanded)
+    assert "biguanide" in terms
+    assert "metformin" in terms
+    assert "apixaban" in terms
+    assert "history19" not in terms
+    assert "history19" not in focus
+    assert "biguanide" in focus.lower()
+    assert expand_query(expanded, hints) == expanded
+
+
 def test_a_second_expansion_does_not_change_the_query():
     from app.retrieval.hints import expand_query
 

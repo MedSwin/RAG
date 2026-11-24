@@ -52,7 +52,13 @@ def expand_query(query: str, hints: Optional[Dict[str, Any]]) -> str:
                 extras.append(word)
         if not extras:
             return current
-        current = f"{current} {' '.join(sorted(set(extras)))}"
+        addition = " ".join(sorted(set(extras)))
+        marker = "patient retrieval context:"
+        index = current.lower().find(marker)
+        if index >= 0:
+            current = f"{current[:index].rstrip()} {addition}\n\n{current[index:]}"
+        else:
+            current = f"{current} {addition}"
     return current
 
 
