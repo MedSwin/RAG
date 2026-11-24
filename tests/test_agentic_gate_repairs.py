@@ -1041,6 +1041,17 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
     assert len(kept_dose) == 1
     assert "warfarin" in kept_dose[0].reason
     assert pairs_for("Hold apixaban.", "Warfarin is recommended.") == []
+    tapered = "Taper off apixaban and start warfarin."
+    assert pairs_for(tapered, "Warfarin is recommended.") == []
+    assert pairs_for(tapered, "Avoid apixaban.") == []
+    started = pairs_for(tapered, "Avoid warfarin.")
+    assert len(started) == 1
+    assert "warfarin" in started[0].reason
+    assert "apixaban" not in started[0].reason
+    stopped_other = pairs_for(tapered, "Apixaban is recommended.")
+    assert len(stopped_other) == 1
+    assert "apixaban" in stopped_other[0].reason
+    assert "warfarin" not in stopped_other[0].reason
     assert pairs_for("Do not hold warfarin.", "Warfarin is recommended.") == []
     for note in (
         "Warfarin should be held.",
@@ -1056,6 +1067,12 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
         "Warfarin should be halted.",
         "Warfarin should be interrupted.",
         "Pause the morning dose of warfarin.",
+        "Taper off warfarin.",
+        "Taper the patient off warfarin.",
+        "Wean off warfarin.",
+        "Wean the patient off warfarin.",
+        "Wean warfarin.",
+        "Warfarin should be tapered off.",
     ):
         assert pairs_for(note, "Avoid warfarin.") == [], note
         pairs = pairs_for(note, "Warfarin is recommended.")
@@ -1100,6 +1117,8 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
         "Do not pause warfarin.",
         "Do not halt warfarin.",
         "Do not interrupt warfarin.",
+        "Do not taper off warfarin.",
+        "Do not wean off warfarin.",
     ):
         assert pairs_for(note, "Warfarin is recommended.") == [], note
         kept_passive = pairs_for(note, "Avoid warfarin.")

@@ -211,7 +211,8 @@ _LOCAL_NEGATION = re.compile(
 _BENIGN_DO_NOT = re.compile(
     r"^\s+(?:(?:be|being)\s+)?"
     r"(?:delay|withhold|withheld|wait|hesitate|stop(?:ped)?|discontinue[d]?|cease[d]?|"
-    r"interrupt(?:ed)?|hold|held|suspend(?:ed)?|pause[d]?|halt(?:ed)?)\b",
+    r"interrupt(?:ed)?|hold|held|suspend(?:ed)?|pause[d]?|halt(?:ed)?|"
+    r"tapers?|tapered|tapering|weans?|weaned|weaning)\b",
     re.I,
 )
 _QUALIFY = re.compile(r"\b(?:unless|except|cautions?|precautions?|monitor)\b", re.I)
@@ -382,6 +383,40 @@ def _negated_source_keep(text: str) -> bool:
     return _token_names_drug(word)
 
 
+_COME_OFF = re.compile(
+    r"\b(?:tapers?|tapered|tapering|weans?|weaned|weaning)\b(?:\s+\w+){0,4}\s+off\b"
+    r"|\b(?:weans?|weaned|weaning)\b",
+    re.I,
+)
+
+
+def _come_off_stop(text: str) -> bool:
+    """True when taper or wean takes the patient off a named drug."""
+    raw = text or ""
+    words = raw.split()
+    if not words:
+        return False
+    spans = []
+    cursor = 0
+    for word in words:
+        at = raw.find(word, cursor)
+        spans.append(at)
+        cursor = at + len(word)
+    for match in _COME_OFF.finditer(raw):
+        window = raw[max(0, match.start() - 48):match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        anchor = 0
+        for index, begin in enumerate(spans):
+            if begin <= match.start() < begin + len(words[index]):
+                anchor = index
+                break
+        near = words[max(0, anchor - 4): min(len(words), anchor + 9)]
+        if any(_token_names_drug(word) for word in near):
+            return True
+    return False
+
+
 def _source_stop(text: str) -> bool:
     """True when the line stops one named drug. The new drug stays out of this check."""
     raw = text or ""
@@ -412,7 +447,7 @@ def _ungoverned_caution(text: str) -> bool:
         if phrase in {"do not", "should not"} and _negated_source_keep(text):
             continue
         return True
-    return _named_safety_caution(text) or _source_stop(text)
+    return _named_safety_caution(text) or _source_stop(text) or _come_off_stop(text)
 
 
 def infer_polarity(passage: CandidatePassage, facet: ClinicalFacet) -> EvidencePolarity:

@@ -578,6 +578,7 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         _LOCAL_NEGATION,
         _QUALIFY,
         _STOP_ORDER,
+        _COME_OFF,
         _away_split,
         _negated_away_split,
     )
@@ -593,14 +594,14 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
     soft_matches = []
     for item in list(_CAUTION.finditer(sentence or "")) + list(_QUALIFY.finditer(sentence or "")) + list(
         _STOP_ORDER.finditer(sentence or "")
-    ):
+    ) + list(_COME_OFF.finditer(sentence or "")):
         window = sentence[max(0, item.start() - 48):item.start()]
         if _LOCAL_NEGATION.search(window):
             continue
         phrase = item.group(0).lower()
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(sentence[item.end():]):
             continue
-        if _CAUTION.fullmatch(item.group(0)):
+        if _CAUTION.fullmatch(item.group(0)) or _COME_OFF.fullmatch(item.group(0)):
             hard_matches.append(item)
         else:
             soft_matches.append(item)
@@ -661,7 +662,9 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
     ):
         clause_begin = after_near[0]
         clause_end = max(after_near) + 1
-    elif _STOP_ORDER.fullmatch(match.group(0) or "") and not before and after:
+    elif (
+        _STOP_ORDER.fullmatch(match.group(0) or "") or _COME_OFF.fullmatch(match.group(0) or "")
+    ) and not before and after:
         limit = min(len(words), anchor + 9)
         split_at = None
         for index in range(anchor + 1, limit):
@@ -1059,6 +1062,7 @@ def _chart_caution_text(chart: str) -> str:
         _QUALIFY,
         _STOP_ORDER,
         _away_split,
+        _come_off_stop,
         _negated_away_split,
         _ungoverned_caution,
     )
@@ -1068,7 +1072,12 @@ def _chart_caution_text(chart: str) -> str:
         if not sentence.strip():
             continue
         if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
-            if _STOP_ORDER.search(sentence) or _away_split(sentence) or _negated_away_split(sentence):
+            if (
+                _STOP_ORDER.search(sentence)
+                or _away_split(sentence)
+                or _negated_away_split(sentence)
+                or _come_off_stop(sentence)
+            ):
                 kept.append(named_caution_text(sentence))
             else:
                 kept.append(LexicalRetriever._caution_span(sentence))
