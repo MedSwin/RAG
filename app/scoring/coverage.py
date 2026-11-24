@@ -457,6 +457,11 @@ _NOT_HOME_DRUG = re.compile(
     re.I,
 )
 _NOT_DRUG_AT_HOME = re.compile(r"\bnot\s+at\s+home\b", re.I)
+_NOT_BROUGHT = re.compile(
+    r"\b(?:not|never)\s+(?:yet\s+|been\s+)?(?:brought|bring(?:ing)?)\b"
+    r"(?:\s+(?:in|his|her|their|the|a|an))?",
+    re.I,
+)
 _NOT_REGULAR_MED = re.compile(
     r"\b(?:is|was|were|are|am|been)\s+not\s+"
     r"(?:(?:a|an|the|his|her|their)\s+)?"
@@ -802,6 +807,19 @@ def _not_home_stop(text: str) -> bool:
     return False
 
 
+def _not_brought_stop(text: str) -> bool:
+    """True when the patient did not bring in a named drug."""
+    raw = text or ""
+    if re.search(r"\b(?:counsel|discuss|advise|update|inform|educat\w*)\b", raw, re.I):
+        return False
+    if _MED_TOPIC.search(raw) or _MED_HISTORY.search(raw):
+        return False
+    for match in _NOT_BROUGHT.finditer(raw):
+        if _on_object_is_drug(raw[match.end():]):
+            return True
+    return False
+
+
 def _not_for_stop(text: str) -> bool:
     """True when the line says the patient is not for a named drug."""
     if _negated_off_keep(text):
@@ -1024,6 +1042,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _not_have_stop(text)
         or _not_regular_med_stop(text)
         or _not_home_stop(text)
+        or _not_brought_stop(text)
         or _med_list_stop(text)
         or _refused_stop(text)
     )
