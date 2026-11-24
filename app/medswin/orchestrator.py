@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from pymongo.errors import DuplicateKeyError
 
+from app.agents.base import prioritize_passages
 from app.agents.critic import ContradictionAgent
 from app.agents.emr import EMRAgent
 from app.agents.guideline import GuidelineAgent
@@ -247,6 +248,11 @@ def _fit_row(text: str, allowance: int) -> List[str]:
         return prefix
     leading = words[: max(0, allowance - used)]
     return f"{' '.join(caution_bits)} {' '.join(leading)}".split()[:allowance]
+
+
+def _specialist_candidates(ranked: List, limit: int = 40) -> List:
+    """Show specialists the ranked cautions, not the first retrieved rows."""
+    return prioritize_passages(list(ranked))[:limit]
 
 
 def _chart_synopsis(chunks: List, budget: int = 140) -> str:
@@ -851,9 +857,10 @@ class MedSwinOrchestrator:
 
             routed = (hints or {}).get("routed_agents") or (hints or {}).get("routed_agent")
             missing = (hints or {}).get("missing_facets") or []
+            ranked_candidates = self.retriever.rank(all_candidates, facets=facets)
             batches = await self._dispatch_agents(
                 query=query,
-                candidates=all_candidates[:40],
+                candidates=_specialist_candidates(ranked_candidates),
                 facets=facets,
                 patient_id=patient_id,
                 routed=routed,
@@ -861,8 +868,6 @@ class MedSwinOrchestrator:
                 contradiction_review=bool((hints or {}).get("contradiction_review")),
                 trace=trace,
             )
-
-            ranked_candidates = self.retriever.rank(all_candidates, facets=facets)
             ledger = build_retrieval_ledger(ranked_candidates, facets)
             if self.policy.enable_mac:
                 ledger = merge_agent_claims(ledger, batches, ranked_candidates)

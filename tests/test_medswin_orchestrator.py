@@ -193,6 +193,58 @@ def test_monitoring_at_the_end_of_a_long_note_does_not_replace_the_start():
     assert "monitoring" not in returned
 
 
+def test_a_late_caution_reaches_the_specialist_pool():
+    import asyncio
+
+    passages = [
+        CandidatePassage(
+            chunk_id=f"fill-{index}",
+            doc_id=f"fill-{index}",
+            source_type=SourceType.CPG,
+            text=f"A general diet note {index}.",
+            calibrated_score=0.95,
+        )
+        for index in range(41)
+    ]
+    passages.append(
+        CandidatePassage(
+            chunk_id="caution",
+            doc_id="caution",
+            source_type=SourceType.SAFETY,
+            text="Avoid apixaban.",
+            calibrated_score=0.90,
+        )
+    )
+    seen = []
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+
+    async def retrieve(**kwargs):
+        return list(passages), RetrievalTrace(union_count=len(passages))
+
+    async def rerank(query, candidates, **kwargs):
+        return list(candidates), RerankTrace()
+
+    async def _capture(**kwargs):
+        seen.append([item.chunk_id for item in kwargs["candidates"]])
+        return []
+
+    orchestrator.retriever.retrieve = retrieve
+    orchestrator.retriever.rerank = rerank
+    orchestrator._dispatch_agents = _capture
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
+    spec = QuerySpec(canonical_terms=["apixaban"], facets=[
+        ClinicalFacet(name="safety_contraindications", required=True, threshold=0.7, keywords=["apixaban"])
+    ])
+    asyncio.run(
+        orchestrator._retrieve_with_sufficiency("Which dose?", spec, "org", None, {}, trace)
+    )
+    assert seen
+    assert "caution" in seen[0]
+    assert seen[0][0] == "caution"
+
+
 def test_the_model_question_drops_the_phone():
     import asyncio
 
