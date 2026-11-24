@@ -542,6 +542,31 @@ def test_a_seventh_short_caution_stays_in_the_local_answer():
 
 
 @pytest.mark.asyncio
+async def test_a_caution_id_stays_in_the_local_citation_list():
+    caution = _passage("caution-apixaban", SourceType.EMR, "Avoid apixaban.", calibrated_score=0.1)
+    literature = [
+        _passage(f"lit-{index}-{'x' * 80}", SourceType.LIT, "A general note.", calibrated_score=0.99 - (index * 0.01))
+        for index in range(6)
+    ]
+
+    class _Client:
+        backend = "medswin_local"
+        calls = []
+
+        async def call_llm(self, messages, json_schema=None, **kwargs):
+            self.calls.append(messages)
+            return {"content": json.dumps({"answer": "See the note.", "evidence_used": [], "insufficient_evidence": False})}
+
+    client = _Client()
+    await SynthesisAgent(client).synthesize_with_artifact("apixaban", _bundle([*literature, caution]))
+    user = client.calls[0][1]["content"]
+    evidence = user.split("Evidence:\n", 1)[1].split("\n\nValid chunk_ids:", 1)[0]
+    allowed = user.split("Valid chunk_ids:", 1)[1].split("\n", 1)[0]
+    assert "Avoid apixaban." in evidence
+    assert "caution-apixaban" in allowed
+
+
+@pytest.mark.asyncio
 async def test_local_synthesis_bounds_evidence_and_reads_inline_chunk_ids():
     safety = _passage("safety-1", SourceType.SAFETY, "Contraindicated in anaphylaxis. " + ("warn " * 300), calibrated_score=0.2)
     cpg = _passage("cpg-1", SourceType.CPG, "First-line therapy. " + ("guide " * 300), calibrated_score=0.95)

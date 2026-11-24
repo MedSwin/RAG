@@ -58,11 +58,20 @@ def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> tuple[str, 
     return "\n\n".join(blocks), shown
 
 
-def _valid_chunk_id_line(passages: Sequence[CandidatePassage], limit: int = 500) -> str:
+def _valid_chunk_id_line(
+    passages: Sequence[CandidatePassage],
+    limit: int = 500,
+    ordered_ids: Optional[Sequence[str]] = None,
+) -> str:
     shown: List[str] = []
     text = ""
     seen = set()
-    for passage in prioritize_passages(list(passages)):
+    if ordered_ids is None:
+        ordered = prioritize_passages(list(passages))
+    else:
+        lookup = {passage.chunk_id: passage for passage in passages}
+        ordered = [lookup[chunk_id] for chunk_id in ordered_ids if chunk_id in lookup]
+    for passage in ordered:
         chunk_id = passage.chunk_id
         if chunk_id in seen:
             continue
@@ -189,7 +198,7 @@ class SynthesisAgent:
             user_content = (
                 f"Query: {query}\n\nFacet coverage:\n{coverage_text}\n\n"
                 f"Evidence:\n{evidence_text}\n\n"
-                f"Valid chunk_ids: {_valid_chunk_id_line(shown_passages)}\n"
+                f"Valid chunk_ids: {_valid_chunk_id_line(shown_passages, ordered_ids=shown)}\n"
                 f"Safety notes: {notes}\n\n"
                 "Provide a clinician decision-support answer with answer, evidence_used "
                 "(chunk_ids only from Valid chunk_ids), uncertainty, contraindications_risks, next_steps. "
