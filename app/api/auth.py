@@ -74,11 +74,19 @@ def verify_hs256(token: str, secret: str, *, now: float | None = None) -> Dict[s
         raise ValueError("claims")
     current = time.time() if now is None else now
     expires = claims.get("exp")
-    if expires is not None and current >= float(expires):
+    if isinstance(expires, bool) or not isinstance(expires, (int, float)):
+        raise ValueError("exp")
+    expires = float(expires)
+    if current >= expires:
         raise ValueError("expired")
+    if expires - current > 7 * 24 * 3600:
+        raise ValueError("exp")
     not_before = claims.get("nbf")
-    if not_before is not None and current < float(not_before):
-        raise ValueError("not_before")
+    if not_before is not None:
+        if isinstance(not_before, bool) or not isinstance(not_before, (int, float)):
+            raise ValueError("not_before")
+        if current < float(not_before):
+            raise ValueError("not_before")
     return claims
 
 

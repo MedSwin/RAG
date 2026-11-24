@@ -230,6 +230,15 @@ class Settings(BaseSettings):
         total = self.fusion_positive_weight_sum()
         return 0.10 <= total <= 2.0
 
+    def enforce_cloud_auth(self) -> None:
+        """Refuse a cloud server that can answer without a signed token."""
+        if not self.CLOUD_MODE:
+            return
+        secret = (self.AUTH_JWT_SECRET or "").strip()
+        if self.ENABLE_AUTH and secret:
+            return
+        raise ValueError("Cloud mode requires ENABLE_AUTH and AUTH_JWT_SECRET")
+
     def enforce_fusion_weights(self) -> None:
         """Stop startup when a fusion weight can distort the evidence gate."""
         if self.validate_fusion_weights():

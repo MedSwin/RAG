@@ -63,6 +63,7 @@ def _validate_cloud_configuration() -> None:
     """
     if not settings.CLOUD_MODE:
         return
+    settings.enforce_cloud_auth()
     if settings.cloud_provider() == "bedrock":
         missing = []
         if not str(settings.AWS_BEDROCK_REGION or "").strip():

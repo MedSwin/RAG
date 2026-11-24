@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 
 from app.core.config import settings
 from app.services.adapters.limiter import request_with_model_rate_limit
-from app.services.prompts.structured import schema_instruction
+from app.services.prompts.structured import JSON_SCHEMA_SYSTEM, schema_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,46 @@ def _clamp_local_completion_tokens(requested: int, prompt_tokens: int) -> int:
         return max(1, capped)
     if room > 0:
         return room
-    return 96
+    return 1
+
+
+def fit_local_messages(messages: List[Dict[str, Any]], completion_tokens: int) -> List[Dict[str, Any]]:
+    """Shrink the last user message until the prompt leaves room for the completion."""
+    fitted = [dict(message) for message in messages]
+    requested = max(1, int(completion_tokens))
+    floor = 96 if requested >= 96 else requested
+    for budget in (requested, floor, 1):
+        if _shrink_user_message(fitted, 1980 - budget):
+            return fitted
+    return fitted
+
+
+def _shrink_user_message(messages: List[Dict[str, Any]], prompt_budget: int) -> bool:
+    for _ in range(16):
+        if _estimate_message_tokens(messages) <= prompt_budget:
+            return True
+        indexes = [index for index, message in enumerate(messages) if message.get("role") == "user"]
+        if not indexes:
+            return False
+        index = indexes[-1]
+        content = str(messages[index].get("content") or "")
+        if len(content) <= 80:
+            return False
+        messages[index]["content"] = content[: max(80, len(content) // 2)]
+    return _estimate_message_tokens(messages) <= prompt_budget
+
+
+def _schema_already_in_messages(messages: List[Dict[str, Any]], local_budget: bool) -> bool:
+    """A second schema block wastes the 2,048-token window."""
+    for message in messages:
+        if message.get("role") != "system":
+            continue
+        content = str(message.get("content") or "")
+        if JSON_SCHEMA_SYSTEM in content:
+            return True
+        if local_budget and "Return one JSON object" in content:
+            return True
+    return False
 
 
 class LLMClient:
@@ -129,10 +168,11 @@ class LLMClient:
             configured = int(settings.BEDROCK_MAX_OUTPUT_TOKENS or 0)
             effective_max_tokens = configured if configured > 0 else 1024
 
-        if json_schema:
+        if json_schema and not _schema_already_in_messages(messages, local_budget):
             system_msg = {"role": "system", "content": schema_instruction(json_schema)}
             payload["messages"] = [system_msg] + messages
         if local_budget and effective_max_tokens:
+            payload["messages"] = fit_local_messages(payload["messages"], effective_max_tokens)
             prompt_tokens = _estimate_message_tokens(payload["messages"])
             effective_max_tokens = _clamp_local_completion_tokens(effective_max_tokens, prompt_tokens)
         if effective_max_tokens:

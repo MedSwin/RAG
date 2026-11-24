@@ -80,6 +80,44 @@ def test_auth_on_accepts_a_signed_token(monkeypatch):
     assert response.json() == {"user_id": "clinician-1", "org_id": "demo-org", "roles": []}
 
 
+def test_cloud_mode_refuses_to_start_without_auth(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", True)
+    monkeypatch.setattr(settings, "ENABLE_AUTH", False)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", None)
+    try:
+        settings.enforce_cloud_auth()
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised is True
+
+
+def test_local_mode_can_start_without_auth(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    monkeypatch.setattr(settings, "ENABLE_AUTH", False)
+    settings.enforce_cloud_auth()
+
+
+def test_auth_on_rejects_a_token_with_no_expiry(monkeypatch):
+    secret = "clinical-secret-value"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    token = _token(secret, {"sub": "clinician-1", "org_id": "demo-org"})
+    response = _client().get("/api/v1/ping", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
+def test_auth_on_rejects_a_token_expiry_that_is_not_a_number(monkeypatch):
+    secret = "clinical-secret-value"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    token = _token(secret, {"sub": "clinician-1", "exp": ["later"]})
+    response = _client().get("/api/v1/ping", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
 def test_auth_on_rejects_an_expired_token(monkeypatch):
     secret = "clinical-secret-value"
     monkeypatch.setattr(settings, "ENABLE_AUTH", True)

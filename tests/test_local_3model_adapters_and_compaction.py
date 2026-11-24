@@ -22,7 +22,7 @@ from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage, EvidenceBundle
 from app.schemas.facets import ClinicalFacet
 from app.services.adapters.embedding import EmbeddingClient
-from app.services.adapters.llm import LLMClient, _clamp_local_completion_tokens, _estimate_message_tokens
+from app.services.adapters.llm import LLMClient, _estimate_message_tokens
 from app.services.adapters.reranker import RerankerClient
 from benchmarks.system_eval.contracts import GENERATOR_CONTRACTS, resolve_generator_contract
 from benchmarks.system_eval.runner import _profile_environment, _retrieval_identity_matches
@@ -441,9 +441,10 @@ async def test_local_llm_defaults_and_clamps_completion_inside_2048(monkeypatch)
 
     huge = "token " * 4000
     await client.call_llm([{"role": "user", "content": huge}])
-    prompt_tokens = _estimate_message_tokens([{"role": "user", "content": huge}])
-    assert seen["json"]["max_tokens"] == _clamp_local_completion_tokens(384, prompt_tokens)
-    assert prompt_tokens + seen["json"]["max_tokens"] <= 1980 or seen["json"]["max_tokens"] == 96
+    sent_tokens = _estimate_message_tokens(seen["json"]["messages"])
+    assert sent_tokens < _estimate_message_tokens([{"role": "user", "content": huge}])
+    assert sent_tokens + seen["json"]["max_tokens"] <= 1980
+    assert seen["json"]["max_tokens"] >= 96
 
     monkeypatch.setattr(settings, "CLOUD_MODE", True)
     monkeypatch.setenv("GENERATION_BACKEND", "foundry")
