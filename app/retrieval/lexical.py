@@ -234,7 +234,7 @@ class LexicalRetriever:
                 spans.append((begin, end))
                 continue
             spans.append((begin, end))
-            later = [index for index in drug_at if anchor < index <= anchor + 12]
+            later = [index for index in drug_at if index > anchor]
             if later:
                 spans.append((later[0], later[0] + 1))
         merged = []
