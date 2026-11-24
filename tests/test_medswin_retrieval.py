@@ -279,6 +279,25 @@ def test_a_later_chart_drug_stays_in_the_search_terms():
         assert drug in terms
 
 
+def test_the_embedding_window_keeps_a_chart_drug_after_a_long_question():
+    from app.core.config import settings
+    from app.retrieval.lexical import LexicalRetriever
+    from app.scoring.utility import _TOKENIZER
+
+    question = " ".join(f"history{index}" for index in range(400)) + " Which dose?"
+    query = f"{question}\n\nPatient retrieval context:\nAvoid apixaban."
+    focus = LexicalRetriever.focus_query(query)
+    tokens = _TOKENIZER.encode(focus)
+    window = _TOKENIZER.decode(tokens[: settings.MAX_SEQUENCE_LENGTH])
+    assert len(tokens) <= settings.MAX_SEQUENCE_LENGTH
+    assert "apixaban" in window.lower()
+    short = LexicalRetriever.focus_query(
+        "Which dose?\n\nPatient retrieval context:\nAvoid apixaban."
+    )
+    assert short.startswith("Which dose?")
+    assert "Avoid apixaban." in short
+
+
 def test_a_chart_dose_at_the_end_of_a_long_note_stays_in_the_search():
     from app.medswin.orchestrator import _chart_synopsis
     from app.retrieval.lexical import LexicalRetriever

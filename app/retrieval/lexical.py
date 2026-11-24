@@ -307,9 +307,43 @@ class LexicalRetriever:
         kept = LexicalRetriever._caution_sentences(raw[index + len(marker):])
         if not kept:
             return LexicalRetriever._with_generics(question)
-        return LexicalRetriever._with_generics(
-            f"{question}\n\nPatient retrieval context:\n{' '.join(kept)}"
+        return LexicalRetriever._fit_embed_query(
+            LexicalRetriever._with_generics(
+                f"{question}\n\nPatient retrieval context:\n{' '.join(kept)}"
+            )
         )
+
+    @staticmethod
+    def _fit_embed_query(text: str) -> str:
+        """Keep the chart caution inside the embedding window."""
+        from app.core.config import settings
+        from app.scoring.utility import _TOKENIZER
+
+        limit = settings.MAX_SEQUENCE_LENGTH
+        tokens = _TOKENIZER.encode(text or "")
+        if len(tokens) <= limit:
+            return text
+        marker = "Patient retrieval context:"
+        index = (text or "").find(marker)
+        if index < 0:
+            return _TOKENIZER.decode(tokens[:limit])
+        caution = text[index:]
+        caution_tokens = _TOKENIZER.encode(caution)
+        if len(caution_tokens) >= limit:
+            return _TOKENIZER.decode(caution_tokens[:limit])
+        question_tokens = _TOKENIZER.encode(text[:index].rstrip())
+        room = max(0, limit - len(caution_tokens))
+        trimmed = _TOKENIZER.decode(question_tokens[:room]).rstrip()
+        fitted = f"{trimmed}\n\n{caution}".strip() if trimmed else caution
+        fitted_tokens = _TOKENIZER.encode(fitted)
+        while len(fitted_tokens) > limit and question_tokens:
+            question_tokens = question_tokens[:-8] or []
+            trimmed = _TOKENIZER.decode(question_tokens).rstrip() if question_tokens else ""
+            fitted = f"{trimmed}\n\n{caution}".strip() if trimmed else caution
+            fitted_tokens = _TOKENIZER.encode(fitted)
+            if not question_tokens:
+                break
+        return fitted
 
     @staticmethod
     def _lexical_terms(query: str) -> List[str]:
