@@ -152,6 +152,13 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "Patient on warfarin.",
         "The patient on warfarin.",
         "On warfarin.",
+        "The patient is taking warfarin.",
+        "The patient was taking warfarin.",
+        "The patient has been taking warfarin.",
+        "Patient is taking warfarin.",
+        "Taking warfarin.",
+        "The patient is taking warfarin 5 mg.",
+        "Patients are taking warfarin.",
         "Continue warfarin and monitor the INR.",
     ):
         pairs = chart_contradictions(chart, [warning, other])
@@ -201,6 +208,13 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "Update the patient on warfarin.",
         "Advise the patient on warfarin.",
         "Effect on warfarin.",
+        "Patient takes warfarin.",
+        "Take warfarin 5 mg daily.",
+        "The patient is not taking warfarin.",
+        "Not taking warfarin.",
+        "Counsel the patient about taking warfarin.",
+        "Discuss taking warfarin.",
+        "The patient has never taken warfarin.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
     recommendation = _entry(
@@ -501,6 +515,7 @@ def test_a_patient_mention_does_not_conflict_with_the_drug_warning():
         "The patient is waiting for warfarin levels.",
         "The patient has never taken warfarin.",
         "Counsel the patient about warfarin.",
+        "Counsel the patient about taking warfarin.",
         "History of warfarin use.",
         "The patient is currently on the warfarin pathway.",
         "The note is on warfarin dosing.",
@@ -1327,6 +1342,9 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
         "No medications include warfarin.",
         "Medications do not include warfarin.",
         "Medications include no warfarin.",
+        "The patient is not taking warfarin.",
+        "Not taking warfarin.",
+        "Patient is not taking warfarin.",
         "Wean off warfarin.",
         "Wean the patient off warfarin.",
         "Wean warfarin.",
