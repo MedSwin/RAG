@@ -473,6 +473,15 @@ _MED_LIST = re.compile(
     r"\b(?:medications?|medicines?|meds)(?:\s+list)?\b(?P<mid>(?:\s+\w+){0,4})\s*(?P<mark>includes?\b|:)",
     re.I,
 )
+_MED_PACK = re.compile(
+    r"\b(?:webster(?:\s+pack)?|blister\s+pack|dosette(?:\s+(?:box|pack))?|pack)\b"
+    r"(?P<mid>(?:\s+\w+){0,4})\s*(?P<mark>includes?\b|contains?\b|:)",
+    re.I,
+)
+_NOT_PACK = re.compile(
+    r"\b(?:ice|information|education|discussion|resource|welcome|cold)\s+pack\b",
+    re.I,
+)
 _MED_HISTORY = re.compile(r"\b(?:history|past|previously)\b", re.I)
 _MED_TOPIC = re.compile(
     r"\b(?:reviews?|discuss(?:ed|ion|ing)?|counsell?(?:ing|ed)?|meetings?|questions?)\b",
@@ -774,14 +783,17 @@ def _med_list_kind(text: str) -> str:
     raw = text or ""
     if _MED_HISTORY.search(raw) or _MED_TOPIC.search(raw):
         return ""
-    for match in _MED_LIST.finditer(raw):
-        window = raw[max(0, match.start() - 48): match.start("mark")]
-        tail = raw[match.end():]
-        negated = bool(_LOCAL_NEGATION.search(window) or re.match(r"\s*(?:no|not)\b", tail, re.I))
-        drug_tail = re.sub(r"^\s*(?:no|not)\b", "", tail, count=1, flags=re.I) if negated else tail
-        if not _on_object_is_drug(drug_tail):
-            continue
-        return "stop" if negated else "keep"
+    for pattern in (_MED_LIST, _MED_PACK):
+        for match in pattern.finditer(raw):
+            if pattern is _MED_PACK and _NOT_PACK.search(raw[max(0, match.start() - 24): match.end()]):
+                continue
+            window = raw[max(0, match.start() - 48): match.start("mark")]
+            tail = raw[match.end():]
+            negated = bool(_LOCAL_NEGATION.search(window) or re.match(r"\s*(?:no|not)\b", tail, re.I))
+            drug_tail = re.sub(r"^\s*(?:no|not)\b", "", tail, count=1, flags=re.I) if negated else tail
+            if not _on_object_is_drug(drug_tail):
+                continue
+            return "stop" if negated else "keep"
     return ""
 
 
