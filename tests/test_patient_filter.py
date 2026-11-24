@@ -43,6 +43,10 @@ def test_the_patient_lookup_reads_three_chart_rows():
             self.query = query
             self.bounded = None
 
+        def sort(self, spec):
+            seen["sort"] = spec
+            return self
+
         def limit(self, count):
             self.bounded = count
             return self
@@ -61,6 +65,7 @@ def test_the_patient_lookup_reads_three_chart_rows():
     repo._db = {"chunks": _Store()}
     asyncio.run(repo.get_by_patient_id("pt-1", "org-a", source_type="EMR", limit=3))
     assert seen["query"] == {"patient_id": "pt-1", "org_id": "org-a", "source_type": "EMR"}
+    assert seen["sort"] == [("metadata.created_timestamp", -1)]
     assert seen["limit"] == 3
     assert seen["length"] == 3
 

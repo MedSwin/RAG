@@ -141,7 +141,7 @@ class ChunkRepository(BaseRepository):
         query: Dict[str, Any] = {"patient_id": patient_id, "org_id": org_id}
         if source_type:
             query["source_type"] = source_type
-        cursor = self.collection.find(query)
+        cursor = self.collection.find(query).sort([("metadata.created_timestamp", -1)])
         bounded = max(1, int(limit)) if limit else None
         if bounded:
             cursor = cursor.limit(bounded)
