@@ -91,6 +91,60 @@ def test_the_retrieval_query_stores_the_redacted_patient_synopsis():
     assert "[REDACTED_PHONE]" in asked
 
 
+def test_the_model_question_drops_the_phone():
+    import asyncio
+
+    seen = []
+
+    class Sessions:
+        async def create(self, session, org_id):
+            return {}
+
+    class Traces:
+        async def create(self, trace, org_id):
+            return {}
+
+    class Normalizer:
+        async def normalize(self, query, trace):
+            seen.append(query)
+            return QuerySpec(canonical_terms=["metformin"])
+
+        def build_facets(self, query, query_spec, constraints, patient_id):
+            seen.append(query)
+            return [ClinicalFacet(name="treatment", required=True, threshold=0.7)]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.session_repo = Sessions()
+    orchestrator.trace_repo = Traces()
+    orchestrator.normalizer = Normalizer()
+
+    async def _retrieve(**kwargs):
+        from app.schemas.evidence import EvidenceBundle, PolicyDecision
+
+        seen.append(kwargs["query"])
+        bundle = EvidenceBundle(
+            passages=[],
+            total_tokens=0,
+            cpg_count=0,
+            emr_count=0,
+            lit_count=0,
+            policy_decision=PolicyDecision(
+                passed=False, action=PolicyAction.INSUFFICIENT_EVIDENCE, reason="stop"
+            ),
+        )
+        return bundle, type("Check", (), {"iteration": 0, "policy_decision": bundle.policy_decision})()
+
+    orchestrator._retrieve_with_sufficiency = _retrieve
+    asyncio.run(
+        orchestrator.chat(query="Call 555-234-5678 about metformin", user_id="u1", org_id="org1")
+    )
+    assert seen
+    assert all("555-234-5678" not in item for item in seen)
+    assert any("[REDACTED_PHONE]" in item for item in seen)
+
+
 def test_query_spec_coercion_recovers_malformed_llm_fields():
     data = QueryNormalizer(None).coerce_spec({
         "canonical_terms": ["heart failure"],

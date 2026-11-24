@@ -256,3 +256,34 @@ def test_compare_responses_reports_overlap_and_medswin_abstention():
     assert diff["jaccard"] == 1 / 3
     assert "empty context" not in NAIVE_POLICY_REASON
     assert "only when dense retrieval returns passages" in NAIVE_POLICY_REASON
+
+
+def test_naive_search_and_answer_drop_the_phone():
+    class RecordingEmbed:
+        def __init__(self):
+            self.texts = []
+
+        async def embed(self, texts):
+            self.texts.extend(texts)
+            return [np.array([1.0, 0.0], dtype=np.float32)]
+
+    embed = RecordingEmbed()
+    dense = FakeDense()
+    llm = FakeLLM()
+    orch = NaiveRAGOrchestrator(
+        embedding_client=embed,
+        llm_client=llm,
+        dense_retriever=dense,
+    )
+    orch.session_repo = EmptyRepo()
+    orch.trace_repo = RecordingTraceRepo()
+    asyncio.run(
+        orch.chat(query="Call 555-234-5678 about metformin", user_id="u1", org_id="org1")
+    )
+    assert embed.texts
+    assert "555-234-5678" not in embed.texts[0]
+    assert "[REDACTED_PHONE]" in embed.texts[0]
+    assert "metformin" in embed.texts[0]
+    blob = str(llm.calls)
+    assert "555-234-5678" not in blob
+    assert "[REDACTED_PHONE]" in blob

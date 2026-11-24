@@ -22,7 +22,7 @@ import numpy as np
 from app.core.config import settings
 from app.core.database import get_database
 from app.medswin.ledger import build_retrieval_ledger
-from app.services.medswin.governance import ensure_cds_language
+from app.services.medswin.governance import ensure_cds_language, redact_phi_text
 from app.repositories.sessions import SessionRepository
 from app.repositories.traces import TraceRepository
 from app.retrieval.dense import DenseRetriever
@@ -255,6 +255,7 @@ class NaiveRAGOrchestrator:
             hook_instance=(hook_instance or "").strip() or None,
         )
         trace.degraded_mode.update(session_state)
+        query = redact_phi_text(query)
 
         try:
             embed_started = time.perf_counter()

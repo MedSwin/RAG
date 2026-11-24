@@ -302,6 +302,7 @@ class MedSwinOrchestrator:
             generator_model=getattr(self.supervisor, "model", None) or None,
             hook_instance=(hook_instance or "").strip() or None,
         )
+        query = redact_phi_text(query)
         ranked_evidence: List[RankedEvidenceItem] = []
 
         try:
