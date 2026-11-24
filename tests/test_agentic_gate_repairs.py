@@ -175,6 +175,10 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "Regular warfarin.",
         "Chronic warfarin.",
         "Maintenance warfarin.",
+        "Warfarin as directed.",
+        "Warfarin 5 mg as directed.",
+        "Warfarin as prescribed.",
+        "Warfarin as charted.",
         "The patient is dependent on warfarin.",
         "The patient was dependent on warfarin.",
         "Dependent on warfarin.",
@@ -251,6 +255,9 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "Long-term warfarin levels.",
         "Regular monitoring of warfarin.",
         "Discuss long-term warfarin.",
+        "Monitor warfarin as directed.",
+        "Discuss warfarin as directed.",
+        "Follow the protocol for warfarin as directed.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
     recommendation = _entry(

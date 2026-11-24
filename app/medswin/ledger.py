@@ -835,6 +835,15 @@ _DURATION_DRUG = re.compile(
     r"(?:long-?term|regular|chronic|maintenance)\s+",
     re.I,
 )
+_AS_DIRECTED = re.compile(r"\bas\s+(?:directed|prescribed|charted)\b", re.I)
+_DOSE_WORD = re.compile(
+    r"^(?:\d+(?:\.\d+)?|mg|mcg|g|ml|units?|daily|oral|nocte|mane|bd|tds|qds|po|the|a|an|to|of|for|please)$",
+    re.I,
+)
+_NOT_DIRECTED = re.compile(
+    r"\b(?:study|trial|meeting|slide|protocol|guidelines?|paper|review)\b",
+    re.I,
+)
 _COUNSEL_ON = re.compile(
     r"\b(?:update[sd]?|updating|advis(?:e|es|ed|ing)|inform(?:s|ed|ing)?|"
     r"tell(?:s|ing)?|told|counsel(?:s|led|ling|ing)?|discuss(?:es|ed|ing)?|"
@@ -993,6 +1002,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
         return True
     if _duration_drug(sentence):
         return True
+    if _directed_drug(sentence):
+        return True
     for match in _CAUTION.finditer(sentence or ""):
         phrase = match.group(0).lower()
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(sentence[match.end():]):
@@ -1139,6 +1150,26 @@ def _duration_drug(sentence: str) -> bool:
         if _on_object_is_drug(text[match.end():]):
             return True
     return False
+
+
+def _directed_drug(sentence: str) -> bool:
+    """True when the chart says to give a named drug as directed."""
+    text = sentence or ""
+    if _COUNSEL_ON.search(text) or _MONITOR_WORD.search(text) or _NOT_DIRECTED.search(text):
+        return False
+    match = _AS_DIRECTED.search(text)
+    if match is None:
+        return False
+    words = re.findall(r"[A-Za-z0-9'-]+", text[: match.start()])
+    kept = [word for word in words if not _DOSE_WORD.match(word)]
+    if not kept:
+        return False
+    order = {"take", "takes", "taking", "give", "gives", "given", "use", "uses", "used"}
+    drugs = [word for word in kept if intervention_tokens(word)]
+    others = [word for word in kept if word not in drugs]
+    if not drugs:
+        return False
+    return all(word.lower() in order for word in others)
 
 
 _WITH_DRUG = re.compile(
