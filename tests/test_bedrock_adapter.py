@@ -109,6 +109,20 @@ async def test_llm_client_calls_converse(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bedrock_chat_caps_output_when_the_caller_omits_max_tokens(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_PROVIDER", "bedrock")
+    monkeypatch.setattr(settings, "BEDROCK_CHAT_MODEL", "global.openai.gpt-6-luna")
+    monkeypatch.setattr(settings, "BEDROCK_MAX_OUTPUT_TOKENS", 1024)
+    monkeypatch.setenv("GENERATION_BACKEND", "bedrock")
+    monkeypatch.delenv("LLM_DEFAULT_MAX_TOKENS", raising=False)
+    client = LLMClient("http://ignored", model="ignored")
+    runtime = FakeRuntime()
+    client.bedrock_runtime = runtime
+    await client.call_llm([{"role": "user", "content": "What is the dose?"}])
+    assert runtime.calls[0][2]["inferenceConfig"]["maxTokens"] == 1024
+
+
+@pytest.mark.asyncio
 async def test_embedding_and_rerank_clients_call_invoke_model(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_MODE", True)
     monkeypatch.setattr(settings, "CLOUD_PROVIDER", "bedrock")

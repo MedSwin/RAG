@@ -29,6 +29,7 @@ def _default_max_tokens() -> Optional[int]:
     Foundry GPT from receiving a larger output allowance than the local MedSwin
     model merely because one backend has a larger context window. Ordinary
     application behavior remains uncapped when the variable is absent/zero.
+    Bedrock still applies BEDROCK_MAX_OUTPUT_TOKENS.
     """
     raw = (os.getenv("LLM_DEFAULT_MAX_TOKENS") or "").strip()
     if not raw:
@@ -90,6 +91,10 @@ class LLMClient:
             payload["temperature"] = temperature
 
         effective_max_tokens = max_tokens or _default_max_tokens()
+        if not effective_max_tokens and self.backend == "bedrock":
+            # Luna can emit 128000 tokens. A clinical answer stays inside this cap.
+            configured = int(settings.BEDROCK_MAX_OUTPUT_TOKENS or 0)
+            effective_max_tokens = configured if configured > 0 else 1024
         if effective_max_tokens:
             if self.model.lower().startswith("gpt-5"):
                 payload["max_completion_tokens"] = effective_max_tokens

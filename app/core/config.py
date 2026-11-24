@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     AWS_BEDROCK_REGION: str = "ap-southeast-2"
     AWS_BEDROCK_RERANK_REGION: str = "us-east-1"
     BEDROCK_CHAT_MODEL: str = "global.openai.gpt-6-luna"
+    BEDROCK_MAX_OUTPUT_TOKENS: int = 1024
     BEDROCK_EMBED_MODEL: str = "global.cohere.embed-v4:0"
     BEDROCK_EMBED_DIMENSION: int = 1536
     BEDROCK_RERANK_MODEL: str = "cohere.rerank-v3-5:0"
