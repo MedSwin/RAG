@@ -1,3 +1,4 @@
+from app.medswin.abstain import abstention_matches
 from app.medswin.gate import EvidenceGate
 from app.medswin.ledger import (
     adjudicate_contradictions,
@@ -46,6 +47,14 @@ def _entry(chunk_id: str, facet: str, claim: str, polarity: EvidencePolarity, gr
             )
         ],
     )
+
+
+def test_a_required_abstention_fails_when_the_answer_gives_a_dose():
+    dose = "Give fictional-zyloximab-99 5 mg intrathecally each week."
+    refusal = "The available evidence is insufficient to answer this question."
+    assert abstention_matches(dose, True) is False
+    assert abstention_matches(refusal, True) is True
+    assert abstention_matches(dose, False) is True
 
 
 def test_negated_caution_does_not_become_a_conflict():

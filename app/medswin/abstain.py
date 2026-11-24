@@ -9,6 +9,27 @@ from app.schemas.facets import FacetCoverage
 from app.services.medswin.governance import ensure_cds_language, redact_phi_text
 
 
+_ABSTAIN_MARKERS = (
+    "insufficient",
+    "no evidence",
+    "not contain",
+    "do not contain",
+    "cannot answer",
+    "cannot be answered",
+    "unavailable",
+    "unanswered",
+    "lack of evidence",
+)
+
+
+def abstention_matches(content: str, expect_abstain: bool) -> bool:
+    """Return whether a required abstention is present. An answerable case stays open."""
+    if not expect_abstain:
+        return True
+    lowered = (content or "").lower()
+    return any(marker in lowered for marker in _ABSTAIN_MARKERS)
+
+
 def insufficient_answer(
     query: str,
     decision: PolicyDecision,
