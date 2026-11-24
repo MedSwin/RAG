@@ -28,7 +28,7 @@ from app.schemas import (
     PolicyDecision,
 )
 from app.services.adapters.embedding import EmbeddingClient
-from app.services.medswin.governance import redacted_trace_summary
+from app.services.medswin.governance import redact_phi_payload, redact_phi_text, redacted_trace_summary
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -232,7 +232,7 @@ async def pipeline_compare(request: CompareRequest, http_request: Request):
         adjacent["naive_to_two_stage"] = _diff(results[PipelineId.NAIVE.value], results[PipelineId.TWO_STAGE.value])
     if PipelineId.TWO_STAGE.value in results and PipelineId.FULL.value in results:
         adjacent["two_stage_to_full"] = _diff(results[PipelineId.TWO_STAGE.value], results[PipelineId.FULL.value])
-    return CompareResponse(query=request.query, results=results, adjacent_diffs=adjacent)
+    return CompareResponse(query=redact_phi_text(request.query), results=results, adjacent_diffs=adjacent)
 
 
 @router.get("/ready")
@@ -274,7 +274,7 @@ async def pipeline_session(session_id: str, org_id: str, http_request: Request):
         "org_id": org_id,
         "created_at": str(session.get("created_at")),
         "last_active": str(session.get("last_active")),
-        "metadata": session.get("metadata", {}),
+        "metadata": redact_phi_payload(session.get("metadata") or {}),
     }
 
 

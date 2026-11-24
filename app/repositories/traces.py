@@ -73,6 +73,8 @@ class TraceRepository(BaseRepository):
             return False
         if {"trace_id", "org_id", "user_id", "session_id", "patient_id"} & set(updates):
             return False
+        if settings.LOG_REDACT_PHI:
+            updates = redact_stored_trace(dict(updates))
         result = await self.collection.update_one(
             {"trace_id": trace_id, "org_id": org_id, "user_id": user_id},
             {"$set": updates},

@@ -102,7 +102,7 @@ def test_a_session_read_hides_another_clinician_in_the_same_org(monkeypatch):
                 "user_id": "dr-chen",
                 "created_at": "t0",
                 "last_active": "t1",
-                "metadata": {"note": "private"},
+                "metadata": {"note": "private", "phone": "Call 555-234-5678"},
             }
 
     monkeypatch.setattr(pipelines, "SessionRepository", lambda: _Sessions())
@@ -126,6 +126,8 @@ def test_a_session_read_hides_another_clinician_in_the_same_org(monkeypatch):
     assert "private" not in hidden.text
     assert shown.status_code == 200
     assert shown.json()["user_id"] == "dr-chen"
+    assert shown.json()["metadata"]["note"] == "private"
+    assert "555-234-5678" not in shown.text
 
 
 def test_unsigned_request_keeps_the_body_organisation():
@@ -314,7 +316,7 @@ def test_compare_keeps_a_successful_arm_when_one_pipeline_fails(monkeypatch):
     response = TestClient(app).post(
         "/api/v1/pipelines/compare",
         json={
-            "query": "q",
+            "query": "Call 555-234-5678 about metformin",
             "user_id": "clinician-1",
             "org_id": "org-a",
             "pipelines": ["naive", "full"],
@@ -323,6 +325,7 @@ def test_compare_keeps_a_successful_arm_when_one_pipeline_fails(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert "555-234-5678" not in response.text
+    assert body["query"] == "Call [REDACTED_PHONE] about metformin"
     assert body["results"]["full"]["answer"] == "held"
     failed = body["results"]["naive"]
     assert failed["degraded_mode"]["error"] is True

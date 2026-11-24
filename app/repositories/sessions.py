@@ -82,9 +82,15 @@ class SessionRepository(BaseRepository):
             return False
         if any(not isinstance(key, str) or "." in key or key.startswith("$") for key in metadata):
             return False
+        from app.services.medswin.governance import redact_phi_text
+
+        stored = {
+            key: redact_phi_text(value) if isinstance(value, str) else value
+            for key, value in metadata.items()
+        }
         result = await self.collection.update_one(
             {"session_id": session_id, "org_id": org_id, "user_id": user_id},
-            {"$set": {f"metadata.{key}": value for key, value in metadata.items()}},
+            {"$set": {f"metadata.{key}": value for key, value in stored.items()}},
         )
         return result.matched_count > 0
 

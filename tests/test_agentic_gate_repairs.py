@@ -652,10 +652,12 @@ def test_a_chart_replace_keeps_the_patient():
     assert len(batch.operations) == 1
 
 
-def test_a_trace_update_keeps_the_owner_and_the_identity_fields():
+def test_a_trace_update_keeps_the_owner_and_the_identity_fields(monkeypatch):
     import asyncio
 
     from app.repositories.traces import TraceRepository
+
+    monkeypatch.setattr("app.repositories.traces.settings.LOG_REDACT_PHI", True)
 
     class _Result:
         matched_count = 1
@@ -683,6 +685,13 @@ def test_a_trace_update_keeps_the_owner_and_the_identity_fields():
             {"$set": {"final_answer": "held"}},
         )
     ]
+    phone = asyncio.run(
+        repo.update("trace-1", "org-a", {"final_answer": "Call 555-234-5678. Continue metformin."}, "dr-chen")
+    )
+    assert phone is True
+    written = store.calls[-1][1]["$set"]["final_answer"]
+    assert "555-234-5678" not in written
+    assert "metformin" in written
 
 
 def test_session_metadata_merges_for_the_owner_only():
@@ -717,8 +726,14 @@ def test_session_metadata_merges_for_the_owner_only():
     assert removed is True
     assert store.calls[0][1]["user_id"] == "dr-chen"
     assert store.calls[0][2] == {"$set": {"metadata.note": "a", "metadata.flag": "b"}}
+    noted = asyncio.run(
+        repo.update_metadata("sess-1", "org-a", {"note": "Call 555-234-5678. Creatinine is 1.4."}, "dr-chen")
+    )
+    assert noted is True
+    assert "555-234-5678" not in store.calls[-1][2]["$set"]["metadata.note"]
+    assert "Creatinine is 1.4." in store.calls[-1][2]["$set"]["metadata.note"]
     assert store.calls[1][1]["user_id"] == "dr-chen"
-    assert len(store.calls) == 2
+    assert len(store.calls) == 3
 
 
 def test_another_users_session_id_is_not_reused():
