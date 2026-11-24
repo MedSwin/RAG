@@ -93,6 +93,28 @@ def test_budgeted_selection_preserves_required_literature_source():
     assert SourceType.EMR in selected_sources
 
 
+def test_the_reranker_log_keeps_the_query_phone_out(caplog):
+    import logging
+
+    from app.services.reranker import DocumentReranker
+
+    reranker = DocumentReranker.__new__(DocumentReranker)
+
+    def score(_query, doc):
+        raise RuntimeError(doc)
+
+    reranker.compute_relevance_score = score
+    with caplog.at_level(logging.INFO):
+        ranked = reranker.rerank_documents(
+            "dose for 555-234-5678",
+            [{"chunk_id": "a", "text": "secret chart text"}],
+        )
+    assert ranked == []
+    assert "555-234-5678" not in caplog.text
+    assert "secret chart text" not in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
 def test_document_reranker_scores_text_and_content_chunks():
     from app.services.reranker import DocumentReranker
 

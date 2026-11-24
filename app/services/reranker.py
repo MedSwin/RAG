@@ -7,6 +7,7 @@ from typing import List, Dict, Tuple, Union
 import json
 
 from app.models.pooling import inference_device
+from app.services.medswin.governance import redact_phi_text
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,11 @@ class DocumentReranker:
     
     def rerank_documents(self, query: str, documents: List[Dict], top_k: int = 3) -> List[Dict]:
         """Rerank documents based on relevance to query."""
-        logger.info(f"Reranking {len(documents)} documents for query: {query[:100]}...")
+        logger.info(
+            "Reranking %s documents for query: %s",
+            len(documents),
+            redact_phi_text(query)[:100],
+        )
         
         scored_documents = []
         
@@ -181,7 +186,11 @@ class DocumentReranker:
                 scored_documents.append(doc_with_score)
                 
             except Exception as e:
-                logger.error(f"Error scoring document {doc.get('chunk_id', 'unknown')}: {e}")
+                logger.error(
+                    "Error scoring document %s: %s",
+                    doc.get("chunk_id", "unknown"),
+                    type(e).__name__,
+                )
                 continue
         
         # Sort by rerank score (descending)
