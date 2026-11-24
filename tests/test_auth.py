@@ -100,6 +100,17 @@ def test_local_mode_can_start_without_auth(monkeypatch):
     settings.enforce_cloud_auth()
 
 
+def test_auth_stays_off_until_an_operator_turns_it_on():
+    from app.core.config import Settings
+
+    fields = Settings.model_fields
+    assert fields["ENABLE_AUTH"].default is False
+    assert fields["ENABLE_RBAC"].default is False
+    assert fields["CLOUD_MODE"].default is False
+    assert fields["AUTH_JWT_AUDIENCE"].default is None
+    assert fields["AUTH_JWT_ISSUER"].default is None
+
+
 def test_auth_on_rejects_a_token_with_no_expiry(monkeypatch):
     secret = "clinical-secret-value"
     monkeypatch.setattr(settings, "ENABLE_AUTH", True)
