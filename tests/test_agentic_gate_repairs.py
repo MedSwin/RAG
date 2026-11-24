@@ -4404,8 +4404,9 @@ def test_outpatient_does_not_force_the_chart_facet():
 
 def test_live_report_status_does_not_pass_when_the_answerable_query_abstains():
     import importlib.util
+    from pathlib import Path
 
-    path = "/Users/liamle/Downloads/medswin/scripts/verify_live_fullstack.py"
+    path = Path(__file__).resolve().parents[1] / "scripts" / "verify_live_fullstack.py"
     spec = importlib.util.spec_from_file_location("verify_live_fullstack", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
