@@ -332,6 +332,42 @@ def test_a_lost_session_insert_keeps_the_id_when_this_user_owns_it():
     assert kept == "sess-race"
 
 
+def test_session_metadata_merges_for_the_owner_only():
+    import asyncio
+
+    from app.repositories.sessions import SessionRepository
+
+    class _Result:
+        matched_count = 1
+        deleted_count = 1
+
+    class _Store:
+        def __init__(self):
+            self.calls = []
+
+        async def update_one(self, query, update):
+            self.calls.append(("update", query, update))
+            return _Result()
+
+        async def delete_one(self, query):
+            self.calls.append(("delete", query))
+            return _Result()
+
+    store = _Store()
+    repo = SessionRepository()
+    repo._db = {"sessions": store}
+    saved = asyncio.run(repo.update_metadata("sess-1", "org-a", {"note": "a", "flag": "b"}, "dr-chen"))
+    rejected = asyncio.run(repo.update_metadata("sess-1", "org-a", {"a.b": "c"}, "dr-chen"))
+    removed = asyncio.run(repo.delete("sess-1", "org-a", "dr-chen"))
+    assert saved is True
+    assert rejected is False
+    assert removed is True
+    assert store.calls[0][1]["user_id"] == "dr-chen"
+    assert store.calls[0][2] == {"$set": {"metadata.note": "a", "metadata.flag": "b"}}
+    assert store.calls[1][1]["user_id"] == "dr-chen"
+    assert len(store.calls) == 2
+
+
 def test_another_users_session_id_is_not_reused():
     import asyncio
 

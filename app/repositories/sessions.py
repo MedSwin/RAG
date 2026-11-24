@@ -70,18 +70,31 @@ class SessionRepository(BaseRepository):
         )
         return result.matched_count > 0
     
-    async def update_metadata(self, session_id: str, org_id: str, 
-                             metadata: Dict[str, Any]) -> bool:
-        """Update session metadata."""
+    async def update_metadata(
+        self,
+        session_id: str,
+        org_id: str,
+        metadata: Dict[str, Any],
+        user_id: str,
+    ) -> bool:
+        """Merge metadata keys when this user owns the session."""
+        if not user_id or not metadata:
+            return False
+        if any(not isinstance(key, str) or "." in key or key.startswith("$") for key in metadata):
+            return False
         result = await self.collection.update_one(
-            {"session_id": session_id, "org_id": org_id},
-            {"$set": {"metadata": metadata}}
+            {"session_id": session_id, "org_id": org_id, "user_id": user_id},
+            {"$set": {f"metadata.{key}": value for key, value in metadata.items()}},
         )
-        return result.modified_count > 0
-    
-    async def delete(self, session_id: str, org_id: str) -> bool:
-        """Delete a session."""
-        result = await self.collection.delete_one({"session_id": session_id, "org_id": org_id})
+        return result.matched_count > 0
+
+    async def delete(self, session_id: str, org_id: str, user_id: str) -> bool:
+        """Delete a session when this user owns it."""
+        if not user_id:
+            return False
+        result = await self.collection.delete_one(
+            {"session_id": session_id, "org_id": org_id, "user_id": user_id}
+        )
         return result.deleted_count > 0
     
     async def count_by_org(self, org_id: str) -> int:
