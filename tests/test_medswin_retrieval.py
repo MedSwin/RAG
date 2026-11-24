@@ -660,3 +660,30 @@ def test_a_long_question_keeps_the_chart_caution_in_the_lexical_query():
     assert '"avoid"' in match.split(" OR ")[:8]
     assert '"apixaban"' in match.split(" OR ")[:8]
     assert len(match.split(" OR ")) <= 64
+
+
+def test_a_lexical_caution_stays_when_dense_hits_fill_the_pool():
+    from app.retrieval.hybrid import _with_lexical_cautions
+
+    fillers = [
+        _candidate(f"dense-{index}", "A general note.", dense=0.90)
+        for index in range(80)
+    ]
+    for item in fillers:
+        item.lexical_score = None
+    other = _candidate("other", "A trial report about methods.", dense=None)
+    other.lexical_score = 5.0
+    other.dense_score = None
+    caution = _candidate("caution", "Avoid apixaban.", source_type=SourceType.SAFETY, dense=None)
+    caution.lexical_score = 1.0
+    caution.dense_score = None
+    ordered = sorted(
+        [*fillers, other, caution],
+        key=lambda item: (item.dense_score or 0.0, item.lexical_score or 0.0),
+        reverse=True,
+    )
+    pool = _with_lexical_cautions(ordered, 80)
+    kept = {item.chunk_id for item in pool}
+    assert "caution" in kept
+    assert "other" not in kept
+    assert len(pool) == 81

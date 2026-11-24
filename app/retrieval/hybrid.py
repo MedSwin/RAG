@@ -32,6 +32,31 @@ def _stage_error(stage: Any) -> Optional[str]:
     return str(error) if error else None
 
 
+_LEXICAL_CAUTION_RESERVE = 12
+
+
+def _with_lexical_cautions(
+    ordered: List[CandidatePassage],
+    limit: int,
+) -> List[CandidatePassage]:
+    """Keep a lexical caution when dense hits fill the rerank pool."""
+    from app.agents.base import _is_prompt_caution
+
+    pool = list(ordered[:limit])
+    kept = {item.chunk_id for item in pool}
+    extra: List[CandidatePassage] = []
+    for candidate in ordered[limit:]:
+        if len(extra) >= _LEXICAL_CAUTION_RESERVE:
+            break
+        if candidate.chunk_id in kept or candidate.lexical_score is None:
+            continue
+        if not _is_prompt_caution(candidate):
+            continue
+        extra.append(candidate)
+        kept.add(candidate.chunk_id)
+    return pool + extra
+
+
 class HybridRetriever:
     """Two-stage hybrid retriever with calibrated reranking."""
 
@@ -120,8 +145,8 @@ class HybridRetriever:
 
         self._normalize(all_candidates)
         all_candidates.sort(key=lambda c: (c.dense_score or 0.0, c.lexical_score or 0.0), reverse=True)
-        # TopK' for reranking pool
-        pool = all_candidates[: max(k, settings.CANDIDATE_K)]
+        # TopK' for reranking pool. A lexical caution can still enter after the cut.
+        pool = _with_lexical_cautions(all_candidates, max(k, settings.CANDIDATE_K))
         trace = RetrievalTrace(
             dense_count=len(dense),
             lexical_count=len(lexical),
