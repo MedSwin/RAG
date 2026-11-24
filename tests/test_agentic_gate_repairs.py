@@ -135,6 +135,13 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "The patient is currently on warfarin.",
         "The patient is now on warfarin.",
         "The patient is back on warfarin.",
+        "The patient is on warfarin.",
+        "The patient was on warfarin.",
+        "The patient has been on warfarin.",
+        "Patients are on warfarin.",
+        "The patient is on warfarin 5 mg.",
+        "The patient is on warfarin for AF.",
+        "The patient is currently on warfarin therapy.",
         "Continue warfarin and monitor the INR.",
     ):
         pairs = chart_contradictions(chart, [warning, other])
@@ -163,6 +170,17 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "Monitoring of warfarin should be continued.",
         "Continue INR checks for warfarin.",
         "Do not continue warfarin.",
+        "The patient is not on warfarin.",
+        "The patient is not currently on warfarin.",
+        "The patient is not now on warfarin.",
+        "Not on warfarin.",
+        "Patient not on warfarin.",
+        "The patient has never been on warfarin.",
+        "The patient was never on warfarin.",
+        "The patient is currently on the warfarin pathway.",
+        "The note is on warfarin dosing.",
+        "Advice on warfarin.",
+        "Now on the agenda.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
     recommendation = _entry(
@@ -456,6 +474,9 @@ def test_a_patient_mention_does_not_conflict_with_the_drug_warning():
         "The patient has never taken warfarin.",
         "Counsel the patient about warfarin.",
         "History of warfarin use.",
+        "The patient is currently on the warfarin pathway.",
+        "The note is on warfarin dosing.",
+        "Advice on warfarin.",
     ):
         assert pairs_for(note, "Avoid warfarin.") == [], note
         assert pairs_for(note, "Warfarin is recommended.") == [], note
@@ -1251,6 +1272,16 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
         "The patient declined warfarin.",
         "The patient refused warfarin.",
         "The patient does not take warfarin.",
+        "The patient is not on warfarin.",
+        "The patient is not currently on warfarin.",
+        "The patient is not now on warfarin.",
+        "The patient is not back on warfarin.",
+        "The patient is not still on warfarin.",
+        "Not on warfarin.",
+        "Patient not on warfarin.",
+        "The patient has never been on warfarin.",
+        "The patient was never on warfarin.",
+        "The patient is not on warfarin therapy.",
         "Wean off warfarin.",
         "Wean the patient off warfarin.",
         "Wean warfarin.",

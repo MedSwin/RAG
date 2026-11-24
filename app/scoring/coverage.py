@@ -412,6 +412,18 @@ _NOT_FOR = re.compile(
     r"|\bnot\s+(?:need|needs|require|requires|required|take)\b",
     re.I,
 )
+_NOT_ON = re.compile(
+    r"\bnot\s+on\b"
+    r"|\bnot\s+(?:currently|now|still|back)\s+on\b"
+    r"|\b(?:is|was|were|are|am|been)\s+(?:not|never)\s+on\b",
+    re.I,
+)
+_STATUS_ON = re.compile(r"\b(?:is|was|were|are|am|been)\s+on\b", re.I)
+_ON_TOPIC = re.compile(
+    r"^(?:dosing|pathway|protocol|guidelines?|meeting|study|trial|slide|"
+    r"discussion|agenda|review|notes?|chart|lists?)$",
+    re.I,
+)
 
 
 def _no_longer_stop(text: str) -> bool:
@@ -483,6 +495,40 @@ def _not_for_stop(text: str) -> bool:
 def _refused_stop(text: str) -> bool:
     """True when the patient declined or refused a named drug."""
     return _pattern_names_drug(text, _REFUSED)
+
+
+def _on_object_is_drug(text: str) -> bool:
+    """True when the words after on name a drug, not a topic."""
+    words = re.findall(r"[A-Za-z0-9'-]+", text or "")
+    content: list[str] = []
+    skipping = True
+    for word in words:
+        if skipping and word.lower() in {"to", "the", "a", "an", "his", "her", "their", "this", "that"}:
+            continue
+        skipping = False
+        content.append(word)
+        if len(content) >= 2:
+            break
+    if not content or not _token_names_drug(content[0]):
+        return False
+    return not (len(content) >= 2 and _ON_TOPIC.match(content[1]))
+
+
+def _not_on_stop(text: str) -> bool:
+    """True when the patient is not on a named drug."""
+    raw = text or ""
+    if _negated_off_keep(raw):
+        return False
+    for match in _NOT_ON.finditer(raw):
+        if _on_object_is_drug(raw[match.end():]):
+            return True
+    for match in _STATUS_ON.finditer(raw):
+        window = raw[max(0, match.start() - 48): match.start()]
+        if not (_LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I)):
+            continue
+        if _on_object_is_drug(raw[match.end():]):
+            return True
+    return False
 
 
 def _come_off_stop(text: str) -> bool:
@@ -594,6 +640,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _no_longer_stop(text)
         or _off_drug_stop(text)
         or _not_for_stop(text)
+        or _not_on_stop(text)
         or _refused_stop(text)
     )
 

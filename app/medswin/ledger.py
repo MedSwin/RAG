@@ -582,6 +582,7 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         _NO_LONGER,
         _OFF_DRUG,
         _NOT_FOR,
+        _NOT_ON,
         _REFUSED,
         _away_split,
         _negated_away_split,
@@ -600,7 +601,9 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         _STOP_ORDER.finditer(sentence or "")
     ) + list(_COME_OFF.finditer(sentence or "")) + list(_NO_LONGER.finditer(sentence or "")) + list(
         _OFF_DRUG.finditer(sentence or "")
-    ) + list(_NOT_FOR.finditer(sentence or "")) + list(_REFUSED.finditer(sentence or "")):
+    ) + list(_NOT_FOR.finditer(sentence or "")) + list(_NOT_ON.finditer(sentence or "")) + list(
+        _REFUSED.finditer(sentence or "")
+    ):
         window = sentence[max(0, item.start() - 48):item.start()]
         if _LOCAL_NEGATION.search(window):
             continue
@@ -674,6 +677,7 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         or _NO_LONGER.fullmatch(match.group(0) or "")
         or _OFF_DRUG.fullmatch(match.group(0) or "")
         or _NOT_FOR.fullmatch(match.group(0) or "")
+        or _NOT_ON.fullmatch(match.group(0) or "")
         or _REFUSED.fullmatch(match.group(0) or "")
     ) and not before and after:
         limit = min(len(words), anchor + 9)
@@ -939,8 +943,10 @@ def _is_continuation_sentence(sentence: str) -> bool:
         _BENIGN_DO_NOT,
         _CAUTION,
         _LOCAL_NEGATION,
+        _STATUS_ON,
         _negated_off_keep,
         _negated_source_keep,
+        _on_object_is_drug,
         _ungoverned_caution,
     )
 
@@ -954,8 +960,11 @@ def _is_continuation_sentence(sentence: str) -> bool:
         phrase = match.group(0).lower()
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(sentence[match.end():]):
             return True
-    for match in _REMAIN_ON.finditer(sentence or ""):
-        if _object_is_drug(sentence[match.end():]):
+    for match in list(_REMAIN_ON.finditer(sentence or "")) + list(_STATUS_ON.finditer(sentence or "")):
+        window = sentence[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        if _on_object_is_drug(sentence[match.end():]):
             return True
     continued = _BE_CONTINUED.search(sentence or "")
     if continued and _subject_is_drug(sentence[: continued.start()]):
@@ -1282,6 +1291,7 @@ def _chart_caution_text(chart: str) -> str:
         _no_longer_stop,
         _off_drug_stop,
         _not_for_stop,
+        _not_on_stop,
         _refused_stop,
         _negated_away_split,
         _ungoverned_caution,
@@ -1300,6 +1310,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _no_longer_stop(sentence)
                 or _off_drug_stop(sentence)
                 or _not_for_stop(sentence)
+                or _not_on_stop(sentence)
                 or _refused_stop(sentence)
             ):
                 kept.append(named_caution_text(sentence))
