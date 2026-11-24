@@ -14,6 +14,13 @@ from app.indexes.labels import resolve_label
 logger = logging.getLogger(__name__)
 
 
+def keeps_ann_neighbour(requested_org: Optional[str], owner: Optional[str]) -> bool:
+    """Keep a neighbour for this organisation. A legacy label names no organisation."""
+    if requested_org and owner and owner != requested_org:
+        return False
+    return True
+
+
 def ann_similarity(distance: float, index_kind: str) -> float:
     """Return cosine similarity. FAISS stores squared L2. HNSW cosine space stores 1 - cosine."""
     if index_kind == "FAISS":
@@ -145,7 +152,7 @@ class HybridIndex:
                     owner, chunk_id = resolve_label(index.mapping, lab)
                     if not chunk_id:
                         continue
-                    if requested_org and owner and owner != requested_org:
+                    if not keeps_ann_neighbour(requested_org, owner):
                         continue
                     sim = ann_similarity(float(distances[i]), label) if i < len(distances) else 0.0
                     prev = scores.get(chunk_id)

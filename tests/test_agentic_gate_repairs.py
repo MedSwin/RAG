@@ -3624,6 +3624,15 @@ def test_another_users_session_id_is_not_reused():
     assert created == [new_id]
 
 
+def test_an_ann_neighbour_from_another_organisation_is_dropped():
+    from app.indexes.hybrid import keeps_ann_neighbour
+
+    assert keeps_ann_neighbour("org-a", "org-b") is False
+    assert keeps_ann_neighbour("org-a", "org-a") is True
+    assert keeps_ann_neighbour("org-a", None) is True
+    assert keeps_ann_neighbour(None, "org-b") is True
+
+
 def test_faiss_and_hnsw_distances_share_one_cosine_scale():
     from app.indexes.hybrid import ann_similarity
 
