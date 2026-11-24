@@ -176,6 +176,29 @@ class NaiveRAGOrchestrator:
         self.session_repo = SessionRepository()
         self.trace_repo = TraceRepository()
 
+    async def _open_session(
+        self,
+        session_id: Optional[str],
+        user_id: str,
+        org_id: str,
+        degraded: Dict[str, bool],
+    ) -> str:
+        """Open a session. A database failure does not block the answer."""
+        try:
+            if not session_id:
+                session_id = str(uuid.uuid4())
+                await self.session_repo.create(
+                    Session(session_id=session_id, user_id=user_id, org_id=org_id),
+                    org_id,
+                )
+            else:
+                await self.session_repo.update_last_active(session_id, org_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Session persistence failed: %s", exc)
+            degraded["session"] = True
+            session_id = session_id or str(uuid.uuid4())
+        return session_id
+
     async def chat(
         self,
         query: str,
@@ -195,11 +218,8 @@ class NaiveRAGOrchestrator:
         k = max(1, min(int(raw_k), settings.MAX_TOP_K))
 
         trace_id = str(uuid.uuid4())
-        if not session_id:
-            session_id = str(uuid.uuid4())
-            await self.session_repo.create(Session(session_id=session_id, user_id=user_id, org_id=org_id), org_id)
-        else:
-            await self.session_repo.update_last_active(session_id, org_id)
+        session_state: Dict[str, bool] = {}
+        session_id = await self._open_session(session_id, user_id, org_id, session_state)
 
         trace = AuditTrace(
             trace_id=trace_id,
@@ -210,6 +230,7 @@ class NaiveRAGOrchestrator:
             patient_id=patient_id,
             pipeline=PIPELINE_ID,
         )
+        trace.degraded_mode.update(session_state)
 
         try:
             embed_started = time.perf_counter()
@@ -555,6 +576,7 @@ class NaiveRAGOrchestrator:
         }
         if degraded:
             trace.degraded_mode.update(degraded)
+        mode = dict(trace.degraded_mode)
         trace.evidence_bundle = bundle
         trace.evidence_ledger = ledger
         trace.policy_decisions.append(decision)
@@ -568,9 +590,8 @@ class NaiveRAGOrchestrator:
             await self.trace_repo.create(trace, org_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Naive trace persist failed: %s", exc)
-            if degraded is None:
-                degraded = {}
-            degraded["trace_persist"] = True
+            mode["trace_persist"] = True
+            trace.degraded_mode = mode
         return ChatResponse(
             answer=answer,
             answer_artifact=benchmark_artifact or AnswerArtifact(
@@ -582,7 +603,7 @@ class NaiveRAGOrchestrator:
             evidence_bundle=bundle,
             safety_notes=notes,
             trace_id=trace.trace_id,
-            degraded_mode=degraded or {},
+            degraded_mode=mode,
             uncertainty_level="high" if (degraded or not passages) else "ungated",
             citations=citations,
             policy_decision=decision,

@@ -138,6 +138,25 @@ def test_naive_abstains_when_retrieval_is_empty():
     assert llm.calls == []
 
 
+def test_naive_keeps_the_answer_when_the_session_write_fails():
+    orch, _, llm = _orchestrator(passages=[])
+
+    class BoomSession:
+        async def create(self, session, org_id):
+            raise RuntimeError("mongo down")
+
+    async def _empty(*args, **kwargs):
+        return [], 0
+
+    orch.session_repo = BoomSession()
+    orch._mongo_cosine = _empty
+    response = asyncio.run(orch.chat(query="q", user_id="u1", org_id="org1"))
+    assert response.degraded_mode.get("session") is True
+    assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert "insufficient" in response.answer.lower()
+    assert llm.calls == []
+
+
 def test_naive_refuses_to_pretend_rag_when_corpus_has_no_embeddings():
     orch, _, llm = _orchestrator(passages=[])
 

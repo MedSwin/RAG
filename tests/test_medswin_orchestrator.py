@@ -258,3 +258,54 @@ def test_trace_failure_keeps_the_gated_answer():
     assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
     assert "insufficient" in response.answer.lower()
 
+
+def test_session_failure_keeps_the_gated_answer():
+    import asyncio
+
+    from app.schemas.enums import PolicyAction
+    from app.schemas.evidence import EvidenceBundle, PolicyDecision
+
+    class BoomSession:
+        async def create(self, session, org_id):
+            raise RuntimeError("mongo down")
+
+    class Traces:
+        async def create(self, trace, org_id):
+            return {}
+
+    class Normalizer:
+        async def normalize(self, query, trace):
+            return QuerySpec(canonical_terms=["treatment"])
+
+        def build_facets(self, query, query_spec, constraints, patient_id):
+            return []
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.session_repo = BoomSession()
+    orchestrator.trace_repo = Traces()
+    orchestrator.normalizer = Normalizer()
+    decision = PolicyDecision(
+        passed=False,
+        action=PolicyAction.INSUFFICIENT_EVIDENCE,
+        reason="No evidence.",
+    )
+    bundle = EvidenceBundle(
+        passages=[],
+        total_tokens=0,
+        cpg_count=0,
+        emr_count=0,
+        lit_count=0,
+        policy_decision=decision,
+    )
+
+    async def _retrieve(**kwargs):
+        return bundle, type("Check", (), {"iteration": 0})()
+
+    orchestrator._retrieve_with_sufficiency = _retrieve
+    response = asyncio.run(orchestrator.chat(query="q", user_id="u1", org_id="org1"))
+    assert response.degraded_mode.get("session") is True
+    assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert "insufficient" in response.answer.lower()
+

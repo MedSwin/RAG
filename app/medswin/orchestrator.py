@@ -124,6 +124,29 @@ class MedSwinOrchestrator:
         self.trace_repo = TraceRepository()
         self._last_ranked_evidence: List[RankedEvidenceItem] = []
 
+    async def _open_session(
+        self,
+        session_id: Optional[str],
+        user_id: str,
+        org_id: str,
+        degraded: Dict[str, bool],
+    ) -> str:
+        """Open a session. A database failure does not block the answer."""
+        try:
+            if not session_id:
+                session_id = str(uuid.uuid4())
+                await self.session_repo.create(
+                    Session(session_id=session_id, user_id=user_id, org_id=org_id),
+                    org_id,
+                )
+            else:
+                await self.session_repo.update_last_active(session_id, org_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Session persistence failed: %s", exc)
+            degraded["session"] = True
+            session_id = session_id or str(uuid.uuid4())
+        return session_id
+
     async def _persist_trace(self, trace: AuditTrace, org_id: str, degraded: Dict[str, bool]) -> None:
         """Store the audit trace. A database failure does not replace the answer."""
         try:
@@ -144,11 +167,10 @@ class MedSwinOrchestrator:
     ) -> ChatResponse:
         started = time.perf_counter()
         trace_id = str(uuid.uuid4())
-        if not session_id:
-            session_id = str(uuid.uuid4())
-            await self.session_repo.create(Session(session_id=session_id, user_id=user_id, org_id=org_id), org_id)
-        else:
-            await self.session_repo.update_last_active(session_id, org_id)
+        degraded: Dict[str, bool] = {}
+        if not self.calibration.loaded:
+            degraded["calibration"] = True
+        session_id = await self._open_session(session_id, user_id, org_id, degraded)
 
         trace = AuditTrace(
             trace_id=trace_id,
@@ -159,9 +181,6 @@ class MedSwinOrchestrator:
             patient_id=patient_id,
             pipeline=self.pipeline,
         )
-        degraded: Dict[str, bool] = {}
-        if not self.calibration.loaded:
-            degraded["calibration"] = True
 
         try:
             normalize_started = time.perf_counter()
