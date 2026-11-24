@@ -486,6 +486,26 @@ async def test_local_synthesis_bounds_evidence_and_reads_inline_chunk_ids():
 
 
 @pytest.mark.asyncio
+async def test_the_cloud_prompt_puts_the_caution_before_the_filler():
+    filler = _passage("fill", SourceType.CPG, "A general diet note.", calibrated_score=0.99)
+    caution = _passage("caution", SourceType.SAFETY, "Avoid apixaban.", calibrated_score=0.60)
+    caution.safety_score = 0.40
+    seen = []
+
+    class _Cloud:
+        backend = "foundry"
+
+        async def call_llm(self, messages, json_schema=None, **kwargs):
+            seen.append(messages)
+            return {"content": json.dumps({"answer": "See the caution.", "evidence_used": ["caution"]})}
+
+    await SynthesisAgent(_Cloud()).synthesize_with_artifact("Which dose?", _bundle([filler, caution]))
+    evidence = seen[0][1]["content"].split("Evidence:\n", 1)[1]
+    assert evidence.index("[caution]") < evidence.index("[fill]")
+    assert "Avoid apixaban." in evidence
+
+
+@pytest.mark.asyncio
 async def test_local_llm_defaults_and_clamps_completion_inside_2048(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_MODE", False)
     monkeypatch.setenv("GENERATION_BACKEND", "medswin_local")

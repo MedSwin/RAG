@@ -192,7 +192,8 @@ class SynthesisAgent:
             )
         else:
             evidence_text = "\n\n".join(
-                f"[{p.chunk_id}] {redact_phi_text(p.text or '')}" for p in evidence_bundle.passages
+                f"[{p.chunk_id}] {redact_phi_text(p.text or '')}"
+                for p in prioritize_passages(list(evidence_bundle.passages))
             )
             user_content = (
                 f"Query: {query}\n\nFacet coverage:\n{coverage_text}\n\n"
