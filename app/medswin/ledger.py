@@ -1158,4 +1158,29 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 ),
                 severity="low",
             )
+    unscored = []
+    for entry in ledger:
+        extra = _unscored_caution(entry)
+        if extra:
+            unscored.append((entry, extra[0], extra[1]))
+    for support_entry, support_claim in plain_supports:
+        support_text = _support_text(support_entry, support_claim)
+        if not intervention_tokens(support_text):
+            continue
+        for caution_entry, kind, conflict_text in unscored:
+            if not same_intervention(support_text, conflict_text):
+                continue
+            if kind == "qualify":
+                reason = "Same-drug caution qualifies this recommendation."
+                severity = "low"
+            else:
+                reason = "Same-drug safety warning conflicts with this recommendation."
+                severity = None
+            _add(
+                support_claim.facet,
+                support_entry,
+                caution_entry,
+                _reason_with_drug(reason, support_text, conflict_text),
+                severity=severity,
+            )
     return pairs

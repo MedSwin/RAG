@@ -434,6 +434,56 @@ def test_a_chart_order_qualifies_against_an_unscored_caution():
     assert chart_contradictions("Continue warfarin.", [ledger[1]]) == []
 
 
+def test_an_unscored_caution_qualifies_the_same_drug_recommendation():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("Which dose?", QuerySpec(canonical_terms=["dose"]))
+
+    def passage(chunk_id: str, text: str) -> CandidatePassage:
+        return CandidatePassage(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=SourceType.CPG,
+            text=text,
+            section="Recommendations",
+            calibrated_score=0.90,
+            evidence_grade_score=0.95,
+        )
+
+    support = passage("rec", "Warfarin is recommended.")
+    for text in (
+        "Use warfarin with caution.",
+        "Take precautions with warfarin.",
+        "Monitor warfarin.",
+    ):
+        pairs = detect_contradictions(
+            build_retrieval_ledger([support, passage("q", text)], facets)
+        )
+        assert len(pairs) == 1, text
+        assert pairs[0].chunk_id_a == "rec"
+        assert pairs[0].chunk_id_b == "q"
+        assert pairs[0].severity == "low"
+        assert "warfarin" in pairs[0].reason
+        assert "apixaban" not in pairs[0].reason
+    other = detect_contradictions(
+        build_retrieval_ledger(
+            [support, passage("aq", "Use apixaban with caution.")],
+            facets,
+        )
+    )
+    assert other == []
+    watched = detect_contradictions(
+        build_retrieval_ledger(
+            [
+                support,
+                passage("lab", "Laboratory monitoring is recommended during warfarin treatment."),
+            ],
+            facets,
+        )
+    )
+    assert watched == []
+
+
 def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning():
     warning = _entry(
         "war",
