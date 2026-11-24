@@ -519,14 +519,14 @@ def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
 def named_caution_text(text: str) -> str:
     """Return the caution sentences when they name a drug."""
     from app.retrieval.lexical import LexicalRetriever
-    from app.scoring.coverage import _QUALIFY, _not_regular_med_stop, _ungoverned_caution
+    from app.scoring.coverage import _QUALIFY, _not_home_stop, _not_regular_med_stop, _ungoverned_caution
 
     spans = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
         if not sentence.strip():
             continue
         if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
-            if _not_regular_med_stop(sentence):
+            if _not_regular_med_stop(sentence) or _not_home_stop(sentence):
                 spans.append(sentence.strip())
                 continue
             recommendation, clause = _caution_clause(sentence)
@@ -827,6 +827,8 @@ _TAKING = re.compile(
 )
 _TAKES_AT_HOME = re.compile(r"\btakes\b", re.I)
 _AT_HOME = re.compile(r"\bat\s+home\b", re.I)
+_HOME_DRUG = re.compile(r"\b(?:at\s+)?home\s+", re.I)
+_FACILITY_HOME = re.compile(r"\b(?:nursing|care|residential|aged)\s+home\b", re.I)
 _RECEIVING = re.compile(
     r"(?:^|\b(?:is|was|were|are|am|been|being|patient)\s+)receiv(?:e|es|ed|ing)\b",
     re.I,
@@ -1044,6 +1046,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
         return True
     if _takes_at_home(sentence):
         return True
+    if _home_drug(sentence):
+        return True
     if _receiving_drug(sentence):
         return True
     if _using_drug(sentence):
@@ -1203,6 +1207,50 @@ def _takes_at_home(sentence: str) -> bool:
         if nxt and _ON_TOPIC.match(nxt):
             continue
         return True
+    return False
+
+
+def _home_subject_is_drug(prefix: str) -> bool:
+    """True when the drug is the subject before at home."""
+    words = re.findall(r"[A-Za-z0-9'-]+", prefix or "")
+    if words and words[-1].lower() in {"is", "was", "were", "are", "am", "been"}:
+        words = words[:-1]
+    if not words or not intervention_tokens(words[-1]):
+        return False
+    if intervention_tokens(words[0]):
+        return True
+    leaders = {"the", "a", "an", "his", "her", "their"}
+    return len(words) >= 2 and words[0].lower() in leaders and bool(intervention_tokens(words[1]))
+
+
+def _home_drug(sentence: str) -> bool:
+    """True when a home line names the current drug."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _MED_HISTORY, _MED_TOPIC, _ON_TOPIC, _on_object_is_drug
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text) or _MED_TOPIC.search(text) or _MED_HISTORY.search(text):
+        return False
+    for match in _AT_HOME.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        prefix = text[: match.start()]
+        tail = text[match.end():]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        tail_words = re.findall(r"[A-Za-z0-9'-]+", tail)
+        if any(_ON_TOPIC.match(word) for word in tail_words):
+            continue
+        if intervention_tokens(tail) and intervention_tokens(prefix).isdisjoint(intervention_tokens(tail)):
+            continue
+        if _home_subject_is_drug(prefix):
+            return True
+    for match in _HOME_DRUG.finditer(text):
+        if _FACILITY_HOME.search(text[max(0, match.start() - 16): match.end()]):
+            continue
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        if _on_object_is_drug(text[match.end():]):
+            return True
     return False
 
 
@@ -1874,6 +1922,7 @@ def _chart_caution_text(chart: str) -> str:
         _not_anticoagulated_stop,
         _not_have_stop,
         _not_regular_med_stop,
+        _not_home_stop,
         _med_list_stop,
         _refused_stop,
         _negated_away_split,
@@ -1902,6 +1951,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _not_anticoagulated_stop(sentence)
                 or _not_have_stop(sentence)
                 or _not_regular_med_stop(sentence)
+                or _not_home_stop(sentence)
                 or _med_list_stop(sentence)
                 or _refused_stop(sentence)
             ):
