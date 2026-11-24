@@ -11,7 +11,8 @@ from fastapi.testclient import TestClient
 from app.api.auth import AuthMiddleware
 from app.api.cds import get_cds_chat, router as cds_router
 from app.api.tenant import bind_org, bind_tenant, require_operator
-from app.api.v1.endpoints import pipelines, retrieval, storage
+from app.api.v1.endpoints import dashboard, pipelines, retrieval, storage
+from app.services.ingestion import IngestionPipelineService
 from app.core.config import settings
 from app.services import storage as storage_service
 from app.schemas.enums import PipelineId
@@ -463,3 +464,54 @@ def test_service_refresh_skips_charts_and_does_not_rebuild(monkeypatch):
     assert built == []
     assert status["running"] is False
     assert status["error"] is None
+
+
+def test_cloud_dataset_ingest_does_not_embed_or_rebuild(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", True)
+    service = IngestionPipelineService()
+    called = []
+
+    async def _crawl(name):
+        called.append(name)
+        return {"success": True, "processed_data": []}
+
+    async def _build(**kwargs):
+        called.append(kwargs)
+
+    service.hf_service.crawl_dataset = _crawl
+    service.storage_service.build_hnsw_index_async = _build
+    result = asyncio.run(service.run_full_ingestion_pipeline("meddialog"))
+    assert result["success"] is False
+    assert called == []
+
+    secret = "clinical-secret-value"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "ENABLE_RBAC", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "RBAC_ALLOWED_ROLES", "clinician")
+    scheduled = []
+
+    class Pipeline:
+        async def run_full_ingestion_pipeline(self, name):
+            scheduled.append(name)
+            return {"success": True}
+
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(dashboard.router, prefix="/api/v1/dashboard")
+    app.dependency_overrides[dashboard.get_ingestion_service] = lambda: Pipeline()
+    operator = _token(secret, {"sub": "ops-1", "org_id": "org-a", "role": "operator", "exp": int(time.time()) + 60})
+    denied = TestClient(app).post(
+        "/api/v1/dashboard/ingest/meddialog",
+        headers={"Authorization": f"Bearer {operator}"},
+    )
+    assert denied.status_code == 409
+    assert scheduled == []
+
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    allowed = TestClient(app).post(
+        "/api/v1/dashboard/ingest/meddialog",
+        headers={"Authorization": f"Bearer {operator}"},
+    )
+    assert allowed.status_code == 200
+    assert scheduled == ["meddialog"]

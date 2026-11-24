@@ -25,6 +25,15 @@ class IngestionPipelineService:
     
     async def run_full_ingestion_pipeline(self, dataset_name: str) -> Dict[str, Any]:
         """Run the complete ingestion pipeline for a dataset."""
+        if settings.CLOUD_MODE:
+            return {
+                "success": False,
+                "dataset_name": dataset_name,
+                "error": (
+                    "Dataset ingest uses the local embedder. "
+                    "It stays off in cloud mode so it cannot rebuild the shared index."
+                ),
+            }
         try:
             logger.info(f"Starting full ingestion pipeline for {dataset_name}")
             

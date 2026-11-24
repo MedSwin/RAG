@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 import logging
 
 from app.api.tenant import require_operator
+from app.core.config import settings
 from app.services.dataset import HuggingFaceDatasetService
 from app.services.ingestion import IngestionPipelineService
 from app.models.download import ModelDownloadService
@@ -915,6 +916,14 @@ async def start_dataset_ingestion(
 ):
     """Start ingestion pipeline for a dataset."""
     require_operator(http_request)
+    if settings.CLOUD_MODE:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Dataset ingest uses the local embedder. "
+                "It stays off in cloud mode so it cannot rebuild the shared index."
+            ),
+        )
     try:
         # Start ingestion in background
         background_tasks.add_task(
