@@ -79,6 +79,60 @@ def test_contradictions_are_preserved_in_policy_decision():
     assert check.policy_decision.unresolved_critical_conflicts is True
 
 
+def test_different_drugs_do_not_form_a_critical_conflict():
+    policy = EvidenceSufficiencyPolicy()
+    facets = [
+        ClinicalFacet(
+            name="guideline_concordance",
+            threshold=0.30,
+            keywords=["apixaban", "dabigatran", "recommended", "avoid", "fibrillation"],
+        )
+    ]
+    support = _passage(
+        "cpg-aha-afib-anticoag#0",
+        "AHA guideline: apixaban is recommended over warfarin for nonvalvular atrial fibrillation with CKD.",
+        source_type=SourceType.CPG,
+    )
+    other_drug = _passage(
+        "safety-dabigatran-nsaid-ckd#0",
+        "Avoid dabigatran when creatinine clearance is below 30. NSAIDs such as ibuprofen are contraindicated.",
+        source_type=SourceType.SAFETY,
+    )
+    same_drug = _passage(
+        "safety-apixaban#0",
+        "Avoid apixaban when active pathological bleeding is present. Apixaban is contraindicated.",
+        source_type=SourceType.SAFETY,
+    )
+
+    different = policy.check_sufficiency(
+        [support, other_drug],
+        constraints={"required_facets": [facet.model_dump() for facet in facets]},
+        selected_passages=[support, other_drug],
+    )
+    same = policy.check_sufficiency(
+        [support, same_drug],
+        constraints={"required_facets": [facet.model_dump() for facet in facets]},
+        selected_passages=[support, same_drug],
+    )
+
+    unnamed = _passage(
+        "trec-generic#0",
+        "A trial reports outcomes for older adults with atrial fibrillation and chronic kidney disease.",
+        source_type=SourceType.LIT,
+    )
+    unnamed_pair = policy.check_sufficiency(
+        [unnamed, other_drug],
+        constraints={"required_facets": [facet.model_dump() for facet in facets]},
+        selected_passages=[unnamed, other_drug],
+    )
+
+    assert different.contradiction_count == 0
+    assert different.policy_decision.unresolved_critical_conflicts is False
+    assert unnamed_pair.contradiction_count == 0
+    assert same.contradiction_count >= 1
+    assert same.policy_decision.unresolved_critical_conflicts is True
+
+
 def test_mean_confidence_below_threshold_retrieves_more(monkeypatch):
     from app.core.config import settings
 

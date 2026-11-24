@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional
 
 from app.schemas.agents import AgentClaimBatch
@@ -196,6 +197,64 @@ def _supports_facet(claim: EvidenceClaim, facet: str) -> bool:
     }
 
 
+_DRUG_WORDS = {
+    "apixaban",
+    "dabigatran",
+    "rivaroxaban",
+    "edoxaban",
+    "warfarin",
+    "heparin",
+    "enoxaparin",
+    "aspirin",
+    "nsaid",
+    "nsaids",
+    "ibuprofen",
+    "ketorolac",
+    "metformin",
+}
+_DRUG_SUFFIXES = (
+    "xaban",
+    "gatran",
+    "farin",
+    "parin",
+    "profen",
+    "cillin",
+    "mycin",
+    "statin",
+    "sartan",
+    "pril",
+    "olol",
+    "azole",
+    "mab",
+    "nib",
+)
+_WORD = re.compile(r"[a-z][a-z0-9-]{3,}")
+
+
+def intervention_tokens(text: str) -> set[str]:
+    """Return named drugs in one passage. Class words such as anticoagulant stay out."""
+    found: set[str] = set()
+    for word in _WORD.findall((text or "").lower()):
+        if word in _DRUG_WORDS or word.endswith(_DRUG_SUFFIXES):
+            found.add(word)
+    return found
+
+
+def same_intervention(left: str, right: str) -> bool:
+    """Pair a caution with support only when both name the same drug, or neither names one.
+
+    A named-drug warning does not contradict a passage that names a different drug
+    or no drug. The warning still covers the safety facet.
+    """
+    left_drugs = intervention_tokens(left)
+    right_drugs = intervention_tokens(right)
+    if left_drugs and right_drugs:
+        return not left_drugs.isdisjoint(right_drugs)
+    if left_drugs or right_drugs:
+        return False
+    return True
+
+
 def _pair_severity(left: EvidenceLedgerEntry, right: EvidenceLedgerEntry) -> str:
     return (
         "high"
@@ -236,5 +295,9 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
     for facet, bucket in by_facet.items():
         for support in bucket["support"]:
             for conflict in bucket["contradict"]:
-                _add(facet, support, conflict, "Incompatible support and caution for the same facet.")
+                support_text = " ".join(claim.claim for claim in support.claims)
+                conflict_text = " ".join(claim.claim for claim in conflict.claims)
+                if not same_intervention(support_text, conflict_text):
+                    continue
+                _add(facet, support, conflict, "Incompatible support and caution for the same intervention.")
     return pairs
