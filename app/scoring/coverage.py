@@ -421,6 +421,11 @@ _NOT_USING = re.compile(
     r"\bnot\s+(?:(?:currently|now|still)\s+)?(?:using|uses|use|used)\b",
     re.I,
 )
+_NOT_ESTABLISHED = re.compile(
+    r"\bnot\s+(?:(?:yet|currently|now|still)\s+)?(?:established|stabilised|stabilized|stable)\s+on\b"
+    r"|\bnever\s+(?:been\s+)?(?:established|stabilised|stabilized|stable)\s+on\b",
+    re.I,
+)
 _NOT_ON = re.compile(
     r"\bnot\s+on\b"
     r"|\bnot\s+(?:currently|now|still|back)\s+on\b"
@@ -576,6 +581,20 @@ def _not_using_stop(text: str) -> bool:
         if not _token_names_drug(drug) or (nxt and _ON_TOPIC.match(nxt)):
             continue
         return True
+    return False
+
+
+def _not_established_stop(text: str) -> bool:
+    """True when the patient is not established on a named drug."""
+    raw = text or ""
+    if re.search(r"\b(?:counsel|discuss|advise|update|inform|educat\w*)\b", raw, re.I):
+        return False
+    for match in _NOT_ESTABLISHED.finditer(raw):
+        window = raw[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        if _on_object_is_drug(raw[match.end():]):
+            return True
     return False
 
 
@@ -782,6 +801,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _not_on_stop(text)
         or _not_receiving_stop(text)
         or _not_using_stop(text)
+        or _not_established_stop(text)
         or _med_list_stop(text)
         or _refused_stop(text)
     )

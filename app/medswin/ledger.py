@@ -839,6 +839,10 @@ _ARRIVAL_ON = re.compile(
     re.I,
 )
 _DEPENDENT_ON = re.compile(r"\bdepend(?:s|ed|ent|ing)?\b(?:\s+\w+){0,3}\s+on\b", re.I)
+_ESTABLISHED_ON = re.compile(
+    r"\b(?:established|stabilised|stabilized|stable)\b(?:\s+\w+){0,3}\s+on\b",
+    re.I,
+)
 _DURATION_DRUG = re.compile(
     r"(?:^|\b(?:is|was|were|are|am|been)\s+)"
     r"(?:long-?term|regular|chronic|maintenance)\s+",
@@ -1012,6 +1016,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
     if _arrival_on_drug(sentence):
         return True
     if _dependent_on_drug(sentence):
+        return True
+    if _established_on_drug(sentence):
         return True
     if _duration_drug(sentence):
         return True
@@ -1193,6 +1199,28 @@ def _dependent_on_drug(sentence: str) -> bool:
     if not re.search(r"\bpatient\b", text, re.I) and not re.match(r"\s*depend", text, re.I):
         return False
     for match in _DEPENDENT_ON.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        if _on_object_is_drug(text[match.end():]):
+            return True
+    return False
+
+
+def _established_on_drug(sentence: str) -> bool:
+    """True when the patient is established or stable on a named drug."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _on_object_is_drug
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text):
+        return False
+    if not re.search(r"\bpatients?\b", text, re.I) and not re.match(
+        r"\s*(?:well\s+)?(?:established|stabilis(?:e|ed)|stabiliz(?:e|ed)|stable)\b",
+        text,
+        re.I,
+    ):
+        return False
+    for match in _ESTABLISHED_ON.finditer(text):
         window = text[max(0, match.start() - 48): match.start()]
         if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
             continue
@@ -1531,6 +1559,7 @@ def _chart_caution_text(chart: str) -> str:
         _not_on_stop,
         _not_receiving_stop,
         _not_using_stop,
+        _not_established_stop,
         _med_list_stop,
         _refused_stop,
         _negated_away_split,
@@ -1553,6 +1582,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _not_on_stop(sentence)
                 or _not_receiving_stop(sentence)
                 or _not_using_stop(sentence)
+                or _not_established_stop(sentence)
                 or _med_list_stop(sentence)
                 or _refused_stop(sentence)
             ):
