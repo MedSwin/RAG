@@ -1,4 +1,24 @@
 from app.core.config import settings
+from app.schemas.enums import SourceType
+from app.schemas.evidence import CandidatePassage
+from app.scoring.fusion import _safety
+
+
+def test_a_dose_sentence_does_not_raise_the_safety_rank():
+    dose = CandidatePassage(
+        chunk_id="dose",
+        doc_id="dose",
+        source_type=SourceType.CPG,
+        text="The metformin dose is 500 mg each morning.",
+    )
+    caution = CandidatePassage(
+        chunk_id="caution",
+        doc_id="caution",
+        source_type=SourceType.SAFETY,
+        text="Avoid metformin in pregnancy when renal function is low.",
+    )
+    assert _safety(dose) == 0.0
+    assert _safety(caution) > 0.0
 
 
 def test_default_fusion_weights_include_evidence_and_safety():

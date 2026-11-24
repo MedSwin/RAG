@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime, timezone
 from typing import List
 
@@ -10,6 +11,7 @@ from app.core.config import settings
 from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage
 from app.scoring.calibrate import clamp, first_present
+from app.scoring.coverage import _token_is_caution
 from app.scoring.hierarchy import evidence_grade_from_metadata
 
 
@@ -56,9 +58,12 @@ def _source(candidate: CandidatePassage) -> float:
 
 
 def _safety(candidate: CandidatePassage) -> float:
-    text = candidate.text.lower()
-    terms = ["contraindicat", "allergy", "adverse", "interaction", "avoid", "renal", "pregnan", "dose"]
-    return clamp(sum(1 for term in terms if term in text) * 0.16)
+    tokens = re.findall(r"[a-z0-9]+", candidate.text.lower())
+    hits = 0
+    for token in tokens:
+        if _token_is_caution(token) or token.startswith(("renal", "pregnan")):
+            hits += 1
+    return clamp(hits * 0.16)
 
 
 def _noise(candidate: CandidatePassage) -> float:
