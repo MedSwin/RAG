@@ -21,6 +21,13 @@ logger = logging.getLogger(__name__)
 _PUBLIC_PREFIXES = ("/health", "/docs", "/openapi", "/redoc", "/app")
 
 
+def _is_public_path(path: str) -> bool:
+    """Match a public route on a full path segment."""
+    if path == "/":
+        return True
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in _PUBLIC_PREFIXES)
+
+
 def _claim_roles(claims: Dict[str, Any]) -> set[str]:
     found: set[str] = set()
     role = claims.get("role")
@@ -94,7 +101,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     """Require a signed HS256 bearer token when ENABLE_AUTH is true."""
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        if request.url.path == "/" or request.url.path.startswith(_PUBLIC_PREFIXES):
+        if _is_public_path(request.url.path):
             return await call_next(request)
         # CDS Hooks discovery is a catalog. Service calls stay behind the token.
         if request.method == "GET" and request.url.path.rstrip("/") == "/cds-services":

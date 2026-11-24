@@ -38,8 +38,9 @@ class EvidenceSufficiencyPolicy:
         constraints: Optional[Dict[str, Any]] = None,
         patient_id: Optional[str] = None,
         selected_passages: Optional[List[CandidatePassage]] = None,
+        query: str = "",
     ) -> SufficiencyCheck:
-        facets = self.build_facets("", query_spec, constraints, patient_id)
+        facets = self.build_facets(query, query_spec, constraints, patient_id)
         review = selected_passages or passages
         ledger = build_retrieval_ledger(review, facets)
         check = self.gate.check(ledger, facets, review, iteration, constraints or {}, query_spec)

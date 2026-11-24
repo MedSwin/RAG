@@ -16,6 +16,34 @@ def _passage(chunk_id, text, source_type=SourceType.CPG, score=0.92):
     )
 
 
+def test_the_policy_shim_uses_the_query_text():
+    policy = EvidenceSufficiencyPolicy()
+    check = policy.check_sufficiency(
+        [_passage("c1", "Guideline recommendation for an elderly patient.", score=0.9)],
+        query="anticoagulant choice for an elderly patient",
+        iteration=2,
+    )
+    patient = next(row for row in check.facet_coverage if row.facet == "patient_applicability")
+    assert patient.required is True
+
+
+def test_a_chart_row_without_a_patient_is_rejected():
+    from fastapi import HTTPException
+
+    from app.api.v1.endpoints.storage import _normalize_chunk
+
+    try:
+        _normalize_chunk(
+            {"chunk_id": "chart-1", "text": "Allergy to penicillin.", "source_type": "EMR"},
+            "org-1",
+            SourceType.LIT,
+        )
+        raised = False
+    except HTTPException as exc:
+        raised = exc.status_code == 400
+    assert raised is True
+
+
 def test_facet_sufficiency_passes_with_required_coverage():
     policy = EvidenceSufficiencyPolicy()
     facets = [

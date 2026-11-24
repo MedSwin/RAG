@@ -152,6 +152,10 @@ def _normalize_chunk(raw: Dict[str, Any], org_id: str, source_type: SourceType) 
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Chunk {chunk_id} has invalid source_type {raw_source!r}") from exc
 
+    patient_id = str(chunk.get("patient_id") or metadata.get("patient_id") or "").strip()
+    if normalized_source == SourceType.EMR and not patient_id:
+        raise HTTPException(status_code=400, detail=f"Chunk {chunk_id} is a chart row and requires patient_id")
+
     reliability_defaults = {
         SourceType.CPG: settings.SOURCE_CPG_SCORE,
         SourceType.EMR: settings.SOURCE_EMR_SCORE,
@@ -175,7 +179,7 @@ def _normalize_chunk(raw: Dict[str, Any], org_id: str, source_type: SourceType) 
         "source_type": normalized_source.value,
         "text": text,
         "content": text,
-        "patient_id": chunk.get("patient_id") or metadata.get("patient_id"),
+        "patient_id": patient_id or None,
         "section": chunk.get("section") or metadata.get("section"),
         "source_reliability": reliability,
         "evidence_grade": grade,

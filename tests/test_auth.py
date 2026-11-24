@@ -178,6 +178,21 @@ def test_rbac_without_auth_rejects_the_request(monkeypatch):
     assert response.json()["detail"] == "Authentication is not configured"
 
 
+def test_a_path_that_only_starts_with_health_requires_a_token(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", "clinical-secret-value")
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+
+    @app.get("/healthcare")
+    def healthcare():
+        return {"ok": True}
+
+    response = TestClient(app).get("/healthcare")
+    assert response.status_code == 401
+
+
 def test_health_stays_open_when_auth_is_on(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_AUTH", True)
     monkeypatch.setattr(settings, "AUTH_JWT_SECRET", None)
