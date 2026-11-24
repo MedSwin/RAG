@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, Iterable, List
 
 from app.schemas.evidence import CandidatePassage, EvidenceGrade
+from app.scoring.calibrate import first_present
 from app.scoring.hierarchy import evidence_grade_from_metadata as _hierarchy_grade
 from app.services.adapters.limiter import rate_limit_snapshot
 
@@ -62,7 +63,7 @@ def build_citation(candidate: CandidatePassage, facets: Iterable[str] = ()) -> D
         "effective_date": metadata.get("effective_date"),
         "timestamp": metadata.get("timestamp"),
         "facets": list(facets),
-        "calibrated_relevance": candidate.calibrated_score or candidate.rerank_score,
+        "calibrated_relevance": first_present(candidate.calibrated_score, candidate.rerank_score),
         "fusion_score": candidate.fusion_score,
         "evidence_grade": evidence_grade_from_metadata(candidate).model_dump(),
     }

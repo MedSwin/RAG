@@ -14,7 +14,7 @@ from app.schemas.evidence import (
 )
 from app.schemas.facets import ClinicalFacet
 from app.scoring.coverage import infer_polarity, score_passage_facets
-from app.scoring.calibrate import clamp
+from app.scoring.calibrate import clamp, first_present
 from app.scoring.hierarchy import evidence_grade_from_metadata
 
 
@@ -39,7 +39,14 @@ def build_retrieval_ledger(
     ledger: List[EvidenceLedgerEntry] = []
     for passage in passages:
         grade = evidence_grade_from_metadata(passage)
-        calibrated = clamp(passage.calibrated_score or passage.rerank_score or passage.fusion_score or 0.0)
+        calibrated = clamp(
+            first_present(
+                passage.calibrated_score,
+                passage.rerank_score,
+                passage.fusion_score,
+                default=0.0,
+            )
+        )
         facet_scores = score_passage_facets(passage, facets)
         claims: List[EvidenceClaim] = []
         matched = []
@@ -70,7 +77,7 @@ def build_retrieval_ledger(
                 facets=matched,
                 claims=claims,
                 calibrated_relevance=calibrated,
-                fusion_score=clamp(passage.fusion_score or calibrated),
+                fusion_score=clamp(first_present(passage.fusion_score, default=calibrated)),
                 evidence_grade=grade,
                 safety_relevance=clamp(passage.safety_score or 0.0),
                 contradiction_risk=clamp(passage.contradiction_score or 0.0),

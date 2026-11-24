@@ -9,7 +9,7 @@ from typing import List
 from app.core.config import settings
 from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage
-from app.scoring.calibrate import clamp
+from app.scoring.calibrate import clamp, first_present
 from app.scoring.hierarchy import evidence_grade_from_metadata
 
 
@@ -84,7 +84,11 @@ def _contradiction(candidate: CandidatePassage) -> float:
 def compute_fusion_scores(candidates: List[CandidatePassage]) -> List[CandidatePassage]:
     """Compute fused clinical scores for candidates."""
     for candidate in candidates:
-        p_hat = clamp(candidate.calibrated_score or candidate.rerank_score or 0.50, 1e-6, 1.0 - 1e-6)
+        p_hat = clamp(
+            first_present(candidate.calibrated_score, candidate.rerank_score, default=0.50),
+            1e-6,
+            1.0 - 1e-6,
+        )
         rerank_log_odds = _clip_logit(math.log(p_hat / (1.0 - p_hat)))
         dense = clamp(candidate.dense_score or 0.0)
         lexical = clamp(candidate.lexical_score or 0.0)

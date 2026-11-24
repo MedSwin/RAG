@@ -35,7 +35,7 @@ from app.repositories.sessions import SessionRepository
 from app.repositories.traces import TraceRepository
 from app.retrieval.hybrid import HybridRetriever
 from app.schemas.enums import ClinicalScope, PipelineId, PolicyAction, SourceType
-from app.schemas.evidence import AnswerArtifact, ContradictionLedger, EvidenceBundle, PolicyDecision, QuerySpec, RankedEvidenceItem
+from app.schemas.evidence import AnswerArtifact, CandidatePassage, ContradictionLedger, EvidenceBundle, PolicyDecision, QuerySpec, RankedEvidenceItem
 from app.schemas.facets import FacetMatrix
 from app.schemas.sessions import Session
 from app.schemas.traces import AgentMessage, AuditTrace, ChatResponse, ToolCall
@@ -46,6 +46,18 @@ from app.services.adapters.reranker import RerankerClient
 from app.services.medswin.governance import build_citation, redact_phi_text
 
 logger = logging.getLogger(__name__)
+
+
+def merge_candidate_scores(existing: CandidatePassage, incoming: CandidatePassage) -> None:
+    """Fill missing retrieval scores. A later zero calibration replaces the old score."""
+    if existing.dense_score is None and incoming.dense_score is not None:
+        existing.dense_score = incoming.dense_score
+    if existing.lexical_score is None and incoming.lexical_score is not None:
+        existing.lexical_score = incoming.lexical_score
+    if incoming.rerank_score is not None:
+        existing.rerank_score = incoming.rerank_score
+    if incoming.calibrated_score is not None:
+        existing.calibrated_score = incoming.calibrated_score
 
 
 def _generator_profile(client: LLMClient) -> str:
@@ -508,11 +520,7 @@ class MedSwinOrchestrator:
                 if c.chunk_id not in by_id:
                     by_id[c.chunk_id] = c
                 else:
-                    existing = by_id[c.chunk_id]
-                    existing.dense_score = existing.dense_score or c.dense_score
-                    existing.lexical_score = existing.lexical_score or c.lexical_score
-                    existing.rerank_score = c.rerank_score or existing.rerank_score
-                    existing.calibrated_score = c.calibrated_score or existing.calibrated_score
+                    merge_candidate_scores(by_id[c.chunk_id], c)
             all_candidates = list(by_id.values())
 
             routed = (hints or {}).get("routed_agents") or (hints or {}).get("routed_agent")

@@ -19,6 +19,14 @@ def clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, float(value)))
 
 
+def first_present(*values: Optional[float], default: Optional[float] = None) -> Optional[float]:
+    """Return the first score that was set. A zero stays a zero."""
+    for value in values:
+        if value is not None:
+            return float(value)
+    return default
+
+
 class CalibrationStore:
     """Load fitted Platt/temperature parameters for policy-usable scores."""
 
