@@ -171,7 +171,7 @@ async def search_documents(request: QueryRequest, http_request: Request):
         raise
     except Exception as exc:
         logger.error("Retrieval search failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Search failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {type(exc).__name__}")
 
 
 @router.get("/search", response_model=RetrievalResponse)

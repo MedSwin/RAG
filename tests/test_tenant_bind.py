@@ -224,6 +224,37 @@ def test_pipeline_token_uses_the_token_organisation(monkeypatch):
     assert seen == [(PipelineId.TWO_STAGE, "clinician-1", "org-a")]
 
 
+def test_a_pipeline_error_hides_the_exception_text(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", False)
+
+    async def _chat(pipeline, request):
+        raise RuntimeError("patient phone 555-234-5678")
+
+    async def _search(request):
+        raise RuntimeError("chart text 555-234-5678")
+
+    monkeypatch.setattr(pipelines, "_chat", _chat)
+    monkeypatch.setattr(retrieval, "_search", _search)
+    app = FastAPI()
+    app.include_router(pipelines.router, prefix="/api/v1/pipelines")
+    app.include_router(retrieval.router, prefix="/api/v1/retrieval")
+    client = TestClient(app)
+    chat = client.post(
+        "/api/v1/pipelines/full/chat",
+        json={"query": "q", "user_id": "clinician-1", "org_id": "org-a"},
+    )
+    search = client.post(
+        "/api/v1/retrieval/search",
+        json={"query": "q", "org_id": "org-a"},
+    )
+    assert chat.status_code == 500
+    assert chat.json()["detail"] == "full pipeline failed: RuntimeError"
+    assert "555-234-5678" not in chat.text
+    assert search.status_code == 500
+    assert search.json()["detail"] == "Search failed: RuntimeError"
+    assert "555-234-5678" not in search.text
+
+
 def _auth(monkeypatch):
     secret = "clinical-secret-value"
     monkeypatch.setattr(settings, "ENABLE_AUTH", True)

@@ -145,7 +145,10 @@ async def pipeline_chat(pipeline: PipelineId, request: PipelineChatRequest, http
         raise
     except Exception as exc:  # noqa: BLE001
         logger.error("%s pipeline failed: %s", pipeline.value, exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"{pipeline.value} pipeline failed: {exc}") from exc
+        raise HTTPException(
+            status_code=500,
+            detail=f"{pipeline.value} pipeline failed: {type(exc).__name__}",
+        ) from exc
 
 
 def _diff(left: ChatResponse, right: ChatResponse) -> Dict[str, Any]:
