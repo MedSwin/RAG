@@ -394,7 +394,7 @@ _COME_OFF = re.compile(
 
 
 _NO_LONGER = re.compile(
-    r"\bno longer\b(?:\s+\w+){0,3}\s+(?:on|taking|takes|take)\b",
+    r"\bno longer\b(?:\s+\w+){0,3}\s+(?:on|taking|takes|take|prescrib(?:e|ed|ing))\b",
     re.I,
 )
 _OFF_DRUG = re.compile(
@@ -422,7 +422,8 @@ _NOT_ON = re.compile(
 _STATUS_ON = re.compile(r"\b(?:is|was|were|are|am|been)\s+on\b", re.I)
 _ON_TOPIC = re.compile(
     r"^(?:dosing|pathway|protocol|guidelines?|meeting|study|trial|slide|"
-    r"discussion|agenda|review|notes?|chart|lists?)$",
+    r"discussion|agenda|review|notes?|chart|lists?|levels?|clearances?|"
+    r"concentrations?|results?|values?)$",
     re.I,
 )
 _ON_MODIFIER = re.compile(

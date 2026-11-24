@@ -827,6 +827,7 @@ _ARRIVAL_ON = re.compile(
     r"presents?|presented|presenting|brought)\b(?:\s+\w+){0,5}\s+on\b",
     re.I,
 )
+_DEPENDENT_ON = re.compile(r"\bdepend(?:s|ed|ent|ing)?\b(?:\s+\w+){0,3}\s+on\b", re.I)
 _COUNSEL_ON = re.compile(
     r"\b(?:update[sd]?|updating|advis(?:e|es|ed|ing)|inform(?:s|ed|ing)?|"
     r"tell(?:s|ing)?|told|counsel(?:s|led|ling|ing)?|discuss(?:es|ed|ing)?|"
@@ -981,6 +982,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
         return True
     if _arrival_on_drug(sentence):
         return True
+    if _dependent_on_drug(sentence):
+        return True
     for match in _CAUTION.finditer(sentence or ""):
         phrase = match.group(0).lower()
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(sentence[match.end():]):
@@ -1093,6 +1096,26 @@ def _arrival_on_drug(sentence: str) -> bool:
         if _on_object_is_drug(text[match.end():]):
             return True
     return False
+
+
+def _dependent_on_drug(sentence: str) -> bool:
+    """True when the patient depends on a named drug."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _on_object_is_drug
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text):
+        return False
+    if not re.search(r"\bpatient\b", text, re.I) and not re.match(r"\s*depend", text, re.I):
+        return False
+    for match in _DEPENDENT_ON.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        if _on_object_is_drug(text[match.end():]):
+            return True
+    return False
+
+
 _WITH_DRUG = re.compile(
     r"\b(?:loads?|loaded|loading)\b(?:\s+\w+){0,5}\s+with\b"
     r"|\b(?:cover(?:s|ed|ing)?|bridg(?:e|es|ed|ing))\s+the\s+patient\s+with\b"
