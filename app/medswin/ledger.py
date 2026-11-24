@@ -905,6 +905,30 @@ def _unscored_caution(entry: EvidenceLedgerEntry) -> Optional[tuple[str, str]]:
     return kind, conflict
 
 
+def _unscored_order(entry: EvidenceLedgerEntry) -> Optional[tuple[str, str]]:
+    """Return an order sentence when the passage has no support claim."""
+    if any(claim.polarity == EvidencePolarity.SUPPORTS for claim in entry.claims):
+        return None
+    if any(
+        claim.polarity
+        in {
+            EvidencePolarity.QUALIFIES,
+            EvidencePolarity.SAFETY,
+            EvidencePolarity.CONTRADICTS,
+        }
+        for claim in entry.claims
+    ):
+        return None
+    text = entry.text or ""
+    recommendation = _chart_recommendation_text(text)
+    if recommendation and intervention_tokens(recommendation):
+        return "recommendation", recommendation
+    continuation = _chart_continuation_text(text)
+    if continuation and intervention_tokens(continuation):
+        return "continuation", continuation
+    return None
+
+
 def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[ContradictionPair]:
     """Pair a chart caution with a selected recommendation for the same drug.
 
@@ -1181,6 +1205,57 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 support_entry,
                 caution_entry,
                 _reason_with_drug(reason, support_text, conflict_text),
+                severity=severity,
+            )
+    orders = []
+    for entry in ledger:
+        extra = _unscored_order(entry)
+        if extra:
+            orders.append((entry, extra[1]))
+    for order_entry, order_text in orders:
+        for warning_entry, warning_claim in safety_warnings:
+            conflict_text = _conflict_text(warning_entry, warning_claim)
+            if not intervention_tokens(conflict_text) or not same_intervention(order_text, conflict_text):
+                continue
+            _add(
+                warning_claim.facet,
+                order_entry,
+                warning_entry,
+                _reason_with_drug(
+                    "Same-drug safety warning conflicts with this recommendation.",
+                    order_text,
+                    conflict_text,
+                ),
+            )
+        for qualify_entry, qualify_claim in qualifies:
+            conflict_text = _conflict_text(qualify_entry, qualify_claim)
+            if not intervention_tokens(conflict_text) or not same_intervention(order_text, conflict_text):
+                continue
+            _add(
+                qualify_claim.facet,
+                order_entry,
+                qualify_entry,
+                _reason_with_drug(
+                    "Same-drug caution qualifies this recommendation.",
+                    order_text,
+                    conflict_text,
+                ),
+                severity="low",
+            )
+        for caution_entry, kind, conflict_text in unscored:
+            if not same_intervention(order_text, conflict_text):
+                continue
+            if kind == "qualify":
+                reason = "Same-drug caution qualifies this recommendation."
+                severity = "low"
+            else:
+                reason = "Same-drug safety warning conflicts with this recommendation."
+                severity = None
+            _add(
+                "safety_contraindications",
+                order_entry,
+                caution_entry,
+                _reason_with_drug(reason, order_text, conflict_text),
                 severity=severity,
             )
     return pairs

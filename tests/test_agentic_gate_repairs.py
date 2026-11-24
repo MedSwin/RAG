@@ -484,6 +484,64 @@ def test_an_unscored_caution_qualifies_the_same_drug_recommendation():
     assert watched == []
 
 
+def test_an_unscored_order_conflicts_with_the_same_drug_warning():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("Which dose?", QuerySpec(canonical_terms=["dose"]))
+
+    def passage(chunk_id: str, text: str, source: SourceType = SourceType.CPG) -> CandidatePassage:
+        return CandidatePassage(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=source,
+            text=text,
+            section="Recommendations",
+            calibrated_score=0.90,
+            evidence_grade_score=0.95,
+        )
+
+    warning = passage("war", "Avoid warfarin.", SourceType.SAFETY)
+    for text in ("Start warfarin.", "Warfarin is indicated.", "Continue warfarin."):
+        pairs = detect_contradictions(
+            build_retrieval_ledger([passage("rec", text), warning], facets)
+        )
+        assert len(pairs) == 1, text
+        assert pairs[0].chunk_id_a == "rec"
+        assert pairs[0].chunk_id_b == "war"
+        assert pairs[0].severity == "high"
+        assert "warfarin" in pairs[0].reason
+        assert "apixaban" not in pairs[0].reason
+    qualified = detect_contradictions(
+        build_retrieval_ledger(
+            [passage("rec", "Start warfarin."), passage("q", "Use warfarin with caution.")],
+            facets,
+        )
+    )
+    assert len(qualified) == 1
+    assert qualified[0].severity == "low"
+    assert "warfarin" in qualified[0].reason
+    for text in (
+        "Start apixaban.",
+        "Consider warfarin.",
+        "Warfarin 5 mg daily.",
+        "Continue monitoring warfarin.",
+        "Add a note about warfarin.",
+    ):
+        quiet = detect_contradictions(
+            build_retrieval_ledger([passage("rec", text), warning], facets)
+        )
+        assert quiet == [], text
+    scored = detect_contradictions(
+        build_retrieval_ledger(
+            [passage("rec", "Warfarin is recommended."), warning],
+            facets,
+        )
+    )
+    assert len(scored) == 1
+    assert scored[0].chunk_id_a == "rec"
+    assert scored[0].chunk_id_b == "war"
+
+
 def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning():
     warning = _entry(
         "war",
