@@ -171,6 +171,10 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "The patient went home on warfarin.",
         "Sent home on warfarin.",
         "Home on warfarin.",
+        "Long-term warfarin.",
+        "Regular warfarin.",
+        "Chronic warfarin.",
+        "Maintenance warfarin.",
         "The patient is dependent on warfarin.",
         "The patient was dependent on warfarin.",
         "Dependent on warfarin.",
@@ -243,6 +247,10 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "The patient went home.",
         "The patient went home on Friday.",
         "Home on the agenda.",
+        "Long-term warfarin dosing.",
+        "Long-term warfarin levels.",
+        "Regular monitoring of warfarin.",
+        "Discuss long-term warfarin.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
     recommendation = _entry(
