@@ -179,6 +179,7 @@ class Settings(BaseSettings):
     # Enterprise features
     ENABLE_AUTH: bool = False
     ENABLE_RBAC: bool = False
+    RBAC_ALLOWED_ROLES: str = "clinician"
     ENABLE_OTEL: bool = False
     LOG_REDACT_PHI: bool = True
     TRACE_REDACT_BY_DEFAULT: bool = True

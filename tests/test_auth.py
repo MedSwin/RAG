@@ -31,6 +31,7 @@ def _client() -> TestClient:
         return {
             "user_id": getattr(request.state, "user_id", None),
             "org_id": getattr(request.state, "org_id", None),
+            "roles": list(getattr(request.state, "roles", []) or []),
         }
 
     @app.get("/health")
@@ -76,7 +77,7 @@ def test_auth_on_accepts_a_signed_token(monkeypatch):
     token = _token(secret, {"sub": "clinician-1", "org_id": "demo-org", "exp": int(time.time()) + 60})
     response = _client().get("/api/v1/ping", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
-    assert response.json() == {"user_id": "clinician-1", "org_id": "demo-org"}
+    assert response.json() == {"user_id": "clinician-1", "org_id": "demo-org", "roles": []}
 
 
 def test_auth_on_rejects_an_expired_token(monkeypatch):
@@ -99,6 +100,44 @@ def test_auth_on_rejects_the_none_algorithm(monkeypatch):
     token = f"{header}.{body}."
     response = _client().get("/api/v1/ping", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
+
+
+def _enable_rbac(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "ENABLE_RBAC", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", "clinical-secret-value")
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    monkeypatch.setattr(settings, "RBAC_ALLOWED_ROLES", "clinician")
+
+
+def test_rbac_accepts_a_clinician_role(monkeypatch):
+    _enable_rbac(monkeypatch)
+    token = _token(
+        "clinical-secret-value",
+        {"sub": "clinician-1", "org_id": "demo-org", "role": "clinician", "exp": int(time.time()) + 60},
+    )
+    response = _client().get("/api/v1/ping", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json()["roles"] == ["clinician"]
+
+
+def test_rbac_rejects_a_token_with_no_clinical_role(monkeypatch):
+    _enable_rbac(monkeypatch)
+    token = _token(
+        "clinical-secret-value",
+        {"sub": "clinician-1", "role": "patient", "exp": int(time.time()) + 60},
+    )
+    response = _client().get("/api/v1/ping", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Clinical role is required"
+
+
+def test_rbac_without_auth_rejects_the_request(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", False)
+    monkeypatch.setattr(settings, "ENABLE_RBAC", True)
+    response = _client().get("/api/v1/ping")
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Authentication is not configured"
 
 
 def test_health_stays_open_when_auth_is_on(monkeypatch):

@@ -21,6 +21,27 @@ logger = logging.getLogger(__name__)
 _PUBLIC_PREFIXES = ("/health", "/docs", "/openapi", "/redoc")
 
 
+def _claim_roles(claims: Dict[str, Any]) -> set[str]:
+    found: set[str] = set()
+    role = claims.get("role")
+    if isinstance(role, str) and role.strip():
+        found.add(role.strip().lower())
+    roles = claims.get("roles")
+    if isinstance(roles, list):
+        for item in roles:
+            if isinstance(item, str) and item.strip():
+                found.add(item.strip().lower())
+    return found
+
+
+def _allowed_roles() -> set[str]:
+    return {
+        item.strip().lower()
+        for item in (settings.RBAC_ALLOWED_ROLES or "").split(",")
+        if item.strip()
+    }
+
+
 def _b64url_decode(value: str) -> bytes:
     padding = "=" * (-len(value) % 4)
     return base64.urlsafe_b64decode(value + padding)
@@ -65,9 +86,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
     """Require a signed HS256 bearer token when ENABLE_AUTH is true."""
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        if not settings.ENABLE_AUTH:
-            return await call_next(request)
         if request.url.path.startswith(_PUBLIC_PREFIXES):
+            return await call_next(request)
+        if settings.ENABLE_RBAC and not settings.ENABLE_AUTH:
+            return JSONResponse(status_code=401, content={"detail": "Authentication is not configured"})
+        if not settings.ENABLE_AUTH:
             return await call_next(request)
         header = request.headers.get("Authorization") or ""
         if not header.startswith("Bearer "):
@@ -91,4 +114,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.user_id = subject
         org = claims.get("org_id") if claims.get("org_id") is not None else claims.get("org")
         request.state.org_id = str(org).strip() if org else None
+        roles = _claim_roles(claims)
+        request.state.roles = sorted(roles)
+        if settings.ENABLE_RBAC and not roles.intersection(_allowed_roles()):
+            return JSONResponse(status_code=403, content={"detail": "Clinical role is required"})
         return await call_next(request)
