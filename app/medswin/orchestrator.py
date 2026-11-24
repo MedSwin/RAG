@@ -9,6 +9,8 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from pymongo.errors import DuplicateKeyError
+
 from app.agents.critic import ContradictionAgent
 from app.agents.emr import EMRAgent
 from app.agents.guideline import GuidelineAgent
@@ -120,10 +122,23 @@ async def _resume_or_create_session(
             return session_id
     if existing is not None:
         session_id = str(uuid.uuid4())
-    await repo.create(
-        Session(session_id=session_id, user_id=user_id, org_id=org_id, patient_id=requested),
-        org_id,
-    )
+    try:
+        await repo.create(
+            Session(session_id=session_id, user_id=user_id, org_id=org_id, patient_id=requested),
+            org_id,
+        )
+    except DuplicateKeyError:
+        raced = await getter(session_id, org_id) if getter else None
+        if isinstance(raced, dict):
+            raced_owner = raced.get("user_id")
+            raced_patient = (raced.get("patient_id") or "").strip() or None
+            if raced_owner == user_id and raced_patient == requested:
+                return session_id
+        session_id = str(uuid.uuid4())
+        await repo.create(
+            Session(session_id=session_id, user_id=user_id, org_id=org_id, patient_id=requested),
+            org_id,
+        )
     return session_id
 
 

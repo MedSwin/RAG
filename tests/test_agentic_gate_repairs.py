@@ -226,6 +226,76 @@ def test_a_duplicate_page_abstains_at_the_real_iteration():
     ) == "continue"
 
 
+def test_a_lost_session_insert_does_not_keep_another_users_id():
+    import asyncio
+
+    from pymongo.errors import DuplicateKeyError
+
+    from app.medswin.orchestrator import _resume_or_create_session
+
+    created = []
+
+    class Sessions:
+        def __init__(self):
+            self.reads = 0
+
+        async def update_last_active(self, session_id, org_id, user_id=None):
+            return False
+
+        async def get_by_id(self, session_id, org_id):
+            self.reads += 1
+            if self.reads == 1:
+                return None
+            return {
+                "session_id": session_id,
+                "org_id": org_id,
+                "user_id": "other-clinician",
+                "patient_id": None,
+            }
+
+        async def create(self, session, org_id):
+            if session.session_id == "sess-race":
+                raise DuplicateKeyError("duplicate")
+            created.append(session.session_id)
+            return {"session_id": session.session_id}
+
+    new_id = asyncio.run(_resume_or_create_session(Sessions(), "sess-race", "dr-chen", "org-1"))
+    assert new_id != "sess-race"
+    assert created == [new_id]
+
+
+def test_a_lost_session_insert_keeps_the_id_when_this_user_owns_it():
+    import asyncio
+
+    from pymongo.errors import DuplicateKeyError
+
+    from app.medswin.orchestrator import _resume_or_create_session
+
+    class Sessions:
+        def __init__(self):
+            self.reads = 0
+
+        async def update_last_active(self, session_id, org_id, user_id=None):
+            return False
+
+        async def get_by_id(self, session_id, org_id):
+            self.reads += 1
+            if self.reads == 1:
+                return None
+            return {
+                "session_id": session_id,
+                "org_id": org_id,
+                "user_id": "dr-chen",
+                "patient_id": None,
+            }
+
+        async def create(self, session, org_id):
+            raise DuplicateKeyError("duplicate")
+
+    kept = asyncio.run(_resume_or_create_session(Sessions(), "sess-race", "dr-chen", "org-1"))
+    assert kept == "sess-race"
+
+
 def test_another_users_session_id_is_not_reused():
     import asyncio
 
