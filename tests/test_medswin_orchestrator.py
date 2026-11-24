@@ -213,6 +213,22 @@ def test_a_second_caution_in_a_long_note_stays_in_the_synopsis():
     assert len(returned.split()) <= 160
 
 
+def test_a_later_drug_stays_when_earlier_chart_cautions_are_long():
+    from app.medswin.orchestrator import _chart_synopsis
+
+    note = " ".join(
+        f"Avoid warfarin because the monitoring plan stays long in note {index}."
+        for index in range(8)
+    ) + " Avoid apixaban."
+    synopsis = _chart_synopsis(
+        [{"text": note}, {"text": "Creatinine is 1.4."}, {"text": "Age 80."}]
+    )
+    lowered = synopsis.lower()
+    assert "warfarin" in lowered
+    assert "apixaban" in lowered
+    assert len(synopsis.split()) <= 140
+
+
 def test_a_caution_qualifier_at_the_end_of_a_long_note_stays():
     import asyncio
 
