@@ -153,6 +153,19 @@ class LexicalRetriever:
         return terms
 
     @staticmethod
+    def _caution_terms(context: str) -> List[str]:
+        """Keep terms from caution sentences. A history sentence stays out."""
+        from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+        sentences = re.split(r"(?<=[.!?])\s+|\n+", context or "")
+        kept = [
+            sentence
+            for sentence in sentences
+            if _ungoverned_caution(sentence) or _QUALIFY.search(sentence)
+        ]
+        return LexicalRetriever._fts_terms(" ".join(kept))
+
+    @staticmethod
     def _fts_query(query: str) -> str:
         """Keep chart-caution terms when the question already fills the term cap."""
         raw = query or ""
@@ -164,13 +177,9 @@ class LexicalRetriever:
         else:
             question, context = raw, ""
         # Legacy BM25 is an any-term scorer, so use OR rather than requiring all
-        # clinical terms to occur in one passage.
-        context_terms = LexicalRetriever._fts_terms(context)
-        question_terms = LexicalRetriever._fts_terms(question)
-        # The caution is at the front of the chart note. Keep that front, then
-        # the question, then the rest of the chart. A long note must not push
-        # the question drug past the term cap.
-        ordered = context_terms[:16] + question_terms + context_terms[16:]
+        # clinical terms to occur in one passage. History filler terms outrank
+        # the question drug, so only caution sentences join the question.
+        ordered = LexicalRetriever._caution_terms(context)[:32] + LexicalRetriever._fts_terms(question)
         chosen = []
         seen = set()
         for term in ordered:

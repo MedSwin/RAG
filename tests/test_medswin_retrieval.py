@@ -217,7 +217,7 @@ def test_a_sentence_period_does_not_hide_a_chart_drug():
 
 
 def test_a_long_chart_keeps_the_question_drug_in_the_lexical_query():
-    from app.retrieval.lexical import LexicalRetriever
+    from app.retrieval.lexical import BM25Okapi, LexicalRetriever, _matching_indexes
 
     context = "Avoid apixaban. " + " ".join(f"history{i}" for i in range(80))
     query = f"Which metformin dose?\n\nPatient retrieval context:\n{context}"
@@ -225,7 +225,15 @@ def test_a_long_chart_keeps_the_question_drug_in_the_lexical_query():
     assert '"avoid"' in terms[:8]
     assert '"apixaban"' in terms[:8]
     assert '"metformin"' in terms
+    assert '"history79"' not in terms
     assert len(terms) <= 64
+    tokens = [term.strip('"') for term in terms]
+    history = LexicalRetriever._bm25_tokens(" ".join(f"history{i} note" for i in range(40)))
+    drug = LexicalRetriever._bm25_tokens("Metformin is first-line treatment.")
+    caution = LexicalRetriever._bm25_tokens("Avoid apixaban when bleeding is present.")
+    order = _matching_indexes(BM25Okapi([history, drug, caution]), tokens, 3)
+    assert 0 not in order
+    assert order[0] == 2
 
 
 def test_a_long_question_keeps_the_chart_caution_in_the_lexical_query():
