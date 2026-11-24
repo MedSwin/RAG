@@ -718,6 +718,41 @@ def test_the_local_window_keeps_the_chart_and_the_caution():
     assert _estimate_message_tokens(fitted) + 384 <= 1980
 
 
+def test_the_local_window_keeps_a_drug_past_the_first_eighty_characters():
+    long_line = (
+        "Avoid anticoagulation immediately whenever haematology confirms "
+        "persistent gastrointestinal bleeding involving apixaban."
+    )
+    assert "apixaban" not in long_line[:80]
+    history = "history " * 1500
+    specialist = (
+        "Shared Evidence Passages:\n"
+        f"[c1|SAFETY|doc=d1]\n{long_line} {history}\n\n"
+        "Query: Which dose?\n"
+    )
+    chart = (
+        "Query: Which dose?\n\n"
+        f"Patient chart:\n{long_line} {history}\n"
+        "The patient chart is context.\n\n"
+        "Evidence:\n"
+        f"[c1] {long_line} {history}\n\n"
+        "Valid chunk_ids: c1\n"
+    )
+    for content in (specialist, chart):
+        fitted = fit_local_messages(
+            [
+                {"role": "system", "content": "Return one JSON object. " * 40},
+                {"role": "user", "content": content},
+            ],
+            384,
+        )
+        text = fitted[-1]["content"].lower()
+        assert "apixaban" in text
+        assert "avoid" in text
+        assert "history " * 40 not in text
+        assert _estimate_message_tokens(fitted) + 384 <= 1980
+
+
 def test_nist_download_sends_a_browser_user_agent(monkeypatch, tmp_path):
     seen = {}
 

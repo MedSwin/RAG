@@ -93,6 +93,33 @@ def fit_local_messages(messages: List[Dict[str, Any]], completion_tokens: int) -
     return fitted
 
 
+def _fit_block(text: str, width: int) -> str:
+    """Keep a caution span when a prefix cut would drop its drug."""
+    if width <= 0 or not text:
+        return ""
+    if len(text) <= width:
+        return text
+    header = ""
+    gap = ""
+    body = text
+    if "\n" in text:
+        first, rest = text.split("\n", 1)
+        if first.startswith("[") and first.endswith("]"):
+            header, gap, body = first, "\n", rest
+    elif text.startswith("[") and "]" in text:
+        bracket, rest = text.split("]", 1)
+        header, gap, body = f"{bracket}]", " ", rest.lstrip()
+    from app.retrieval.lexical import LexicalRetriever
+
+    spans = [span.strip() for span in LexicalRetriever._caution_sentences(body) if span.strip()]
+    kept = " ".join(spans) if spans else body
+    prefix = f"{header}{gap}" if header else ""
+    room = width - len(prefix)
+    if room < 8:
+        return text[:width]
+    return prefix + (kept if len(kept) <= room else kept[:room])
+
+
 def _chart_block(content: str, width: int) -> str:
     marker = "Patient chart:\n"
     if marker not in content:
@@ -106,7 +133,7 @@ def _chart_block(content: str, width: int) -> str:
     block = tail[:stop].strip()
     if not block:
         return ""
-    return f"{marker}{block[:width]}"
+    return f"{marker}{_fit_block(block, width)}"
 
 
 def _evidence_heads(content: str, width: int) -> str:
@@ -121,7 +148,7 @@ def _evidence_heads(content: str, width: int) -> str:
         text = block.strip()
         if not text:
             continue
-        blocks.append(text[:width])
+        blocks.append(_fit_block(text, width))
         if len(blocks) >= 12:
             break
     if not blocks:
@@ -144,7 +171,7 @@ def _passage_heads(content: str, width: int) -> str:
         text = block.strip()
         if not text:
             continue
-        blocks.append(text[:width])
+        blocks.append(_fit_block(text, width))
         if len(blocks) >= 12:
             break
     if not blocks:
