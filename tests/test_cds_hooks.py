@@ -129,7 +129,9 @@ def test_card_summary_skips_the_decision_support_boundary():
     card = cards_from_chat(response)[0]
     assert card["summary"].startswith("Amoxicillin is listed")
     assert "Clinician decision support only" not in card["summary"]
-    assert "does not establish a diagnosis" in card["detail"]
+    assert card["detail"].endswith(
+        "Clinician decision support only. This card does not establish a diagnosis or a treatment order."
+    )
 
 
 def test_accepted_decision_returns_an_info_card():
