@@ -255,13 +255,16 @@ class LexicalRetriever:
     @staticmethod
     def _with_generics(text: str) -> str:
         """Keep the brand and add the generic name the corpus uses."""
-        from app.medswin.ledger import _DRUG_ALIASES
+        from app.medswin.ledger import _DRUG_ALIASES, caution_alias_tokens
 
         extras = []
         lowered = (text or "").lower()
         for term in LexicalRetriever._bm25_tokens(text):
             generic = _DRUG_ALIASES.get(term)
             if generic and generic not in lowered and generic not in extras:
+                extras.append(generic)
+        for generic in sorted(caution_alias_tokens(text)):
+            if generic not in lowered and generic not in extras:
                 extras.append(generic)
         if not extras:
             return text
@@ -294,9 +297,11 @@ class LexicalRetriever:
             context = raw[index + len(marker):]
         else:
             question, context = raw, ""
-        from app.medswin.ledger import _DRUG_ALIASES
+        from app.medswin.ledger import _DRUG_ALIASES, _SHORT_ALIASES
 
-        ordered = LexicalRetriever._caution_terms(context)[:32] + LexicalRetriever._fts_terms(question)
+        caution_terms = LexicalRetriever._caution_terms(context)[:32]
+        ordered = caution_terms + LexicalRetriever._fts_terms(question)
+        caution_term_set = set(caution_terms)
         chosen = []
         seen = set()
         for term in ordered:
@@ -307,6 +312,8 @@ class LexicalRetriever:
             seen.add(term)
             chosen.append(term)
             generic = _DRUG_ALIASES.get(term)
+            if generic is None and term in caution_term_set:
+                generic = _SHORT_ALIASES.get(term)
             if generic and generic not in seen and generic not in _QUERY_STOP and len(chosen) < 64:
                 seen.add(generic)
                 chosen.append(generic)

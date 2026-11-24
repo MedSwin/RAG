@@ -102,6 +102,35 @@ def test_a_drug_named_after_the_claim_preview_still_conflicts():
     assert any(pair.chunk_id_a == "cpg-late" and pair.chunk_id_b == "safety-late" for pair in pairs)
 
 
+def test_an_aspirin_abbreviation_pairs_with_aspirin():
+    support = _entry(
+        "cpg-aspirin",
+        "guideline_concordance",
+        "Aspirin is recommended for secondary prevention.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    caution = _entry(
+        "safety-asa",
+        "safety_contraindications",
+        "Avoid ASA when active bleeding is present.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    meeting = _entry(
+        "note-asa",
+        "guideline_concordance",
+        "The ASA meeting reviewed the trial methods.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.90,
+    )
+    pairs = detect_contradictions([support, caution])
+    assert len(pairs) == 1
+    assert pairs[0].chunk_id_b == "safety-asa"
+    assert "aspirin" in pairs[0].reason
+    assert detect_contradictions([meeting, caution]) == []
+
+
 def test_a_brand_name_pairs_with_the_generic_drug():
     support = _entry(
         "cpg-apixaban",

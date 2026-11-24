@@ -222,6 +222,9 @@ _DRUG_WORDS = {
     "ketorolac",
     "metformin",
 }
+_SHORT_ALIASES = {
+    "asa": "aspirin",
+}
 _DRUG_ALIASES = {
     "eliquis": "apixaban",
     "pradaxa": "dabigatran",
@@ -253,9 +256,27 @@ _WORD = re.compile(r"[a-z][a-z0-9-]{3,}")
 _NOT_DRUGS = {"april"}
 
 
+def caution_alias_tokens(text: str) -> set[str]:
+    """Map a short drug abbreviation when the sentence is a caution."""
+    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+    found: set[str] = set()
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        if not (_ungoverned_caution(sentence) or _QUALIFY.search(sentence)):
+            continue
+        lowered = sentence.lower()
+        for alias, generic in _SHORT_ALIASES.items():
+            if re.search(rf"\b{re.escape(alias)}\b", lowered):
+                found.add(generic)
+    return found
+
+
 def intervention_tokens(text: str) -> set[str]:
     """Return named drugs in one passage. Class words such as anticoagulant stay out."""
-    found: set[str] = set()
+    found: set[str] = caution_alias_tokens(text)
+    token = (text or "").strip().lower().strip(".,;")
+    if token in _SHORT_ALIASES:
+        found.add(_SHORT_ALIASES[token])
     for raw in _WORD.findall((text or "").lower()):
         for word in raw.split("-"):
             if len(word) < 4 or word in _NOT_DRUGS:

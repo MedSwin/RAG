@@ -256,6 +256,24 @@ def test_a_sentence_period_does_not_hide_a_chart_drug():
     assert _matching_indexes(index, query, 2) == [0]
 
 
+def test_an_aspirin_abbreviation_also_searches_aspirin():
+    from app.medswin.orchestrator import _chart_synopsis
+    from app.retrieval.lexical import LexicalRetriever
+
+    note = "Avoid ASA " + " ".join(f"history{i}" for i in range(20))
+    synopsis = _chart_synopsis([{"text": note}])
+    query = f"Which dose?\n\nPatient retrieval context:\n{synopsis}"
+    terms = LexicalRetriever._lexical_terms(query)
+    focus = LexicalRetriever.focus_query(query)
+    assert "asa" in terms
+    assert "aspirin" in terms
+    assert "history0" not in terms
+    assert "aspirin" in focus.lower()
+    assert "history0" not in focus.lower()
+    meeting = LexicalRetriever._lexical_terms("What did the ASA meeting decide?")
+    assert "aspirin" not in meeting
+
+
 def test_a_brand_caution_also_searches_the_generic_drug():
     from app.medswin.orchestrator import _chart_synopsis
     from app.retrieval.lexical import LexicalRetriever
