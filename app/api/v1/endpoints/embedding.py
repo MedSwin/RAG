@@ -148,11 +148,17 @@ async def embed_texts_batch(request: BatchEmbeddingRequest):
 async def get_embedding_info():
     """Return active embedding identity without forcing unavailable local models."""
     if settings.CLOUD_MODE:
+        if settings.cloud_provider() == "bedrock":
+            model_path = f"bedrock://{settings.AWS_BEDROCK_REGION}"
+            device = "bedrock"
+        else:
+            model_path = settings.active_embedding_url()
+            device = "azure-foundry"
         return {
-            "model_path": settings.active_embedding_url(),
+            "model_path": model_path,
             "model_name": settings.active_embedding_model(),
             "dimension": settings.active_embedding_dimension(),
-            "device": "azure-foundry",
+            "device": device,
             "max_sequence_length": settings.MAX_SEQUENCE_LENGTH,
             "model_type": "cloud",
         }

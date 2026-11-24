@@ -1,8 +1,10 @@
+import asyncio
 import inspect
 import json
 
 import pytest
 
+from app.api.v1.endpoints.embedding import get_embedding_info
 from app.core.config import Settings, settings
 from app.models.medswin import CandidatePassage, EvidenceBundle, SourceType
 from app.services.adapters.embedding import EmbeddingClient
@@ -288,3 +290,23 @@ def test_final_answer_renderer_rejects_fabricated_citations():
 
     assert "real: guideline" in rendered
     assert "fake" not in rendered
+
+
+def test_embedding_info_names_the_active_cloud_provider(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", True)
+    monkeypatch.setattr(settings, "CLOUD_PROVIDER", "bedrock")
+    monkeypatch.setattr(settings, "AWS_BEDROCK_REGION", "ap-southeast-2")
+    monkeypatch.setattr(settings, "BEDROCK_EMBED_MODEL", "global.cohere.embed-v4:0")
+    monkeypatch.setattr(settings, "BEDROCK_EMBED_DIMENSION", 1536)
+    bedrock = asyncio.run(get_embedding_info())
+    assert bedrock["device"] == "bedrock"
+    assert bedrock["model_path"] == "bedrock://ap-southeast-2"
+    assert bedrock["model_name"] == "global.cohere.embed-v4:0"
+    assert bedrock["dimension"] == 1536
+
+    monkeypatch.setattr(settings, "CLOUD_PROVIDER", "foundry")
+    monkeypatch.setattr(settings, "AZURE_AI_FOUNDRY_ENDPOINT", "https://example.services.ai.azure.com")
+    monkeypatch.setattr(settings, "CLOUD_EMBEDDING", "embed-v-4-0")
+    foundry = asyncio.run(get_embedding_info())
+    assert foundry["device"] == "azure-foundry"
+    assert foundry["model_path"].startswith("https://example.services.ai.azure.com/")
