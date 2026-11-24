@@ -254,17 +254,24 @@ _DRUG_SUFFIXES = (
 )
 _WORD = re.compile(r"[a-z][a-z0-9-]{3,}")
 _NOT_DRUGS = {"april"}
+_DOSE_IN_SENTENCE = re.compile(
+    r"\b(?:dose|dosing|mg|tablet|tab|capsule|daily|\d+(?:\.\d+)?(?:mg|mcg|g|ml|units?))\b",
+    re.IGNORECASE,
+)
+_ALIAS_CONTEXT_STOP = re.compile(r"\b(?:meeting|conference|society)\b", re.IGNORECASE)
 
 
 def caution_alias_tokens(text: str) -> set[str]:
-    """Map a short drug abbreviation when the sentence is a caution."""
+    """Map a short drug abbreviation in a caution or a dose line."""
     from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 
     found: set[str] = set()
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
-        if not (_ungoverned_caution(sentence) or _QUALIFY.search(sentence)):
-            continue
         lowered = sentence.lower()
+        caution = _ungoverned_caution(sentence) or bool(_QUALIFY.search(sentence))
+        dose = bool(_DOSE_IN_SENTENCE.search(sentence)) and not _ALIAS_CONTEXT_STOP.search(sentence)
+        if not caution and not dose:
+            continue
         for alias, generic in _SHORT_ALIASES.items():
             if re.search(rf"\b{re.escape(alias)}\b", lowered):
                 found.add(generic)

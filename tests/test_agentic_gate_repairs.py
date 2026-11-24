@@ -102,6 +102,35 @@ def test_a_drug_named_after_the_claim_preview_still_conflicts():
     assert any(pair.chunk_id_a == "cpg-late" and pair.chunk_id_b == "safety-late" for pair in pairs)
 
 
+def test_a_chart_dose_of_asa_pairs_with_an_aspirin_caution():
+    chart = _entry(
+        "chart-asa",
+        "patient_applicability",
+        "The chart lists ASA 100mg daily.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.90,
+    )
+    caution = _entry(
+        "safety-aspirin",
+        "safety_contraindications",
+        "Avoid aspirin when active bleeding is present.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    meeting = _entry(
+        "note-meeting",
+        "guideline_concordance",
+        "The ASA meeting used a 100mg slide.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.90,
+    )
+    pairs = detect_contradictions([chart, caution])
+    assert len(pairs) == 1
+    assert pairs[0].chunk_id_a == "chart-asa"
+    assert "aspirin" in pairs[0].reason
+    assert detect_contradictions([meeting, caution]) == []
+
+
 def test_an_aspirin_abbreviation_pairs_with_aspirin():
     support = _entry(
         "cpg-aspirin",
