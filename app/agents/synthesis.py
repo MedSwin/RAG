@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Sequence
 
-from app.agents.base import prioritize_passages
+from app.agents.base import _is_prompt_caution, prioritize_passages
 from app.schemas.evidence import AnswerArtifact, AnswerProvenance, CandidatePassage, EvidenceBundle
 from app.schemas.facets import FacetCoverage
 from app.services.adapters.llm import LLMClient
@@ -30,10 +30,15 @@ def _text_items(value: Any) -> List[str]:
 
 def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> tuple[str, List[str]]:
     """Keep a 2,048-token synthesis prompt inside about 2,800 evidence characters."""
+    ordered = prioritize_passages(list(passages))
+    cautions = [passage for passage in ordered if _is_prompt_caution(passage)]
+    others = [passage for passage in ordered if passage not in cautions]
     blocks: List[str] = []
     shown: List[str] = []
-    for passage in prioritize_passages(list(passages)):
-        if len(blocks) >= 6:
+    for passage in cautions + others:
+        if len(blocks) >= 12:
+            break
+        if len(blocks) >= 6 and not _is_prompt_caution(passage):
             break
         body = lead_with_caution(redact_phi_text(passage.text or ""))[:450]
         block = f"[{passage.chunk_id}] {body}"

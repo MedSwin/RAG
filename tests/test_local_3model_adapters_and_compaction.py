@@ -521,6 +521,26 @@ def test_a_fifth_short_caution_stays_in_the_local_passage(monkeypatch):
         assert f"avoid {drug}." in lowered
 
 
+def test_a_seventh_short_caution_stays_in_the_local_answer():
+    from app.agents.synthesis import _bounded_local_evidence
+
+    drugs = ["apixaban", "warfarin", "heparin", "enoxaparin", "metformin", "aspirin", "dabigatran"]
+    passages = [
+        _passage(f"lit-{index}", SourceType.LIT, "alpha " * 40, calibrated_score=0.99 - (index * 0.01))
+        for index in range(6)
+    ]
+    passages.extend(
+        _passage(f"caution-{drug}", SourceType.EMR, f"Avoid {drug}.", calibrated_score=0.1)
+        for drug in drugs
+    )
+    evidence, shown = _bounded_local_evidence(passages)
+    lowered = evidence.lower()
+    assert len(evidence) <= 2800
+    for drug in drugs:
+        assert f"avoid {drug}." in lowered
+        assert f"caution-{drug}" in shown
+
+
 @pytest.mark.asyncio
 async def test_local_synthesis_bounds_evidence_and_reads_inline_chunk_ids():
     safety = _passage("safety-1", SourceType.SAFETY, "Contraindicated in anaphylaxis. " + ("warn " * 300), calibrated_score=0.2)
