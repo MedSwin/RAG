@@ -866,6 +866,10 @@ _ANTICOAGULATED_WITH = re.compile(
     r"\banticoagulat(?:ed|ing)\b(?:\s+\w+){0,4}\s+with\b",
     re.I,
 )
+_ANTICOAGULATION_WITH = re.compile(
+    r"\banticoagulation\b(?:\s+\w+){0,4}\s+with\b",
+    re.I,
+)
 _HAS_DRUG = re.compile(
     r"(?:^|\b(?:patients?|is|was|were|are|am|been)\s+)ha(?:s|ve)\b",
     re.I,
@@ -1083,6 +1087,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
     if _compliant_drug(sentence):
         return True
     if _anticoagulated_with_drug(sentence):
+        return True
+    if _anticoagulation_with_drug(sentence):
         return True
     if _has_current_drug(sentence):
         return True
@@ -1411,6 +1417,25 @@ def _anticoagulated_with_drug(sentence: str) -> bool:
     if not re.search(r"\bpatients?\b", text, re.I) and not started:
         return False
     for match in _ANTICOAGULATED_WITH.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        if _on_object_is_drug(text[match.end():]):
+            return True
+    return False
+
+
+def _anticoagulation_with_drug(sentence: str) -> bool:
+    """True when anticoagulation with a named drug is the current therapy."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _MED_HISTORY, _on_object_is_drug
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text) or _MED_HISTORY.search(text):
+        return False
+    started = bool(re.match(r"\s*(?:(?:on|oral|therapeutic)\s+)?anticoagulation\b", text, re.I))
+    if not re.search(r"\bpatients?\b", text, re.I) and not started:
+        return False
+    for match in _ANTICOAGULATION_WITH.finditer(text):
         window = text[max(0, match.start() - 48): match.start()]
         if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
             continue
@@ -2033,6 +2058,7 @@ def _chart_caution_text(chart: str) -> str:
         _not_tolerating_stop,
         _not_compliant_stop,
         _not_anticoagulated_stop,
+        _not_anticoagulation_stop,
         _not_have_stop,
         _not_regular_med_stop,
         _not_home_stop,
@@ -2066,6 +2092,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _not_tolerating_stop(sentence)
                 or _not_compliant_stop(sentence)
                 or _not_anticoagulated_stop(sentence)
+                or _not_anticoagulation_stop(sentence)
                 or _not_have_stop(sentence)
                 or _not_regular_med_stop(sentence)
                 or _not_home_stop(sentence)

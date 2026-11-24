@@ -445,6 +445,11 @@ _NOT_ANTICOAGULATED = re.compile(
     r"|\bnever\s+(?:been\s+)?anticoagulat(?:ed|ing)\b(?:\s+\w+){0,4}\s+with\b",
     re.I,
 )
+_NOT_ANTICOAGULATION = re.compile(
+    r"\b(?:no|not|never)\s+(?:(?:on|oral)\s+)?anticoagulation\b(?:\s+\w+){0,4}\s+with\b"
+    r"|\banticoagulation\b(?:\s+\w+){0,3}\s+without\b",
+    re.I,
+)
 _NOT_HAVE = re.compile(
     r"\bnot\s+ha(?:s|ve|d)\b"
     r"|\bha(?:s|ve)\s+no\b"
@@ -738,6 +743,19 @@ def _not_anticoagulated_stop(text: str) -> bool:
         window = raw[max(0, match.start() - 48): match.start()]
         if _LOCAL_NEGATION.search(window):
             continue
+        if _on_object_is_drug(raw[match.end():]):
+            return True
+    return False
+
+
+def _not_anticoagulation_stop(text: str) -> bool:
+    """True when anticoagulation with a named drug is absent."""
+    raw = text or ""
+    if re.search(r"\b(?:counsel|discuss|advise|update|inform|educat\w*)\b", raw, re.I):
+        return False
+    if _MED_HISTORY.search(raw):
+        return False
+    for match in _NOT_ANTICOAGULATION.finditer(raw):
         if _on_object_is_drug(raw[match.end():]):
             return True
     return False
@@ -1098,6 +1116,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _not_tolerating_stop(text)
         or _not_compliant_stop(text)
         or _not_anticoagulated_stop(text)
+        or _not_anticoagulation_stop(text)
         or _not_have_stop(text)
         or _not_regular_med_stop(text)
         or _not_home_stop(text)
