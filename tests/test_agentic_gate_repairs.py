@@ -268,6 +268,36 @@ def test_a_mixed_note_keeps_the_recommendation_and_the_warning():
     assert EvidencePolarity.SUPPORTS not in {claim.polarity for claim in history_ledger[0].claims}
 
 
+def test_a_recommendation_does_not_cover_the_safety_facet():
+    from app.schemas.enums import SourceType
+    from app.scoring.coverage import compute_facet_coverage
+
+    passage = CandidatePassage(
+        chunk_id="note",
+        doc_id="note",
+        source_type=SourceType.LIT,
+        text="Warfarin is recommended. Use apixaban with caution.",
+        calibrated_score=1.0,
+        metadata={"evidence_grade": {"label": "guideline", "score": 1.0, "source_reliability": 1.0}},
+    )
+    facets = [
+        ClinicalFacet(
+            name="safety_contraindications",
+            keywords=["caution", "apixaban"],
+            source_policy="SAFETY",
+            required=True,
+            threshold=0.70,
+        )
+    ]
+    ledger = build_retrieval_ledger([passage], facets)
+    safety_claims = [claim for claim in ledger[0].claims if claim.facet == "safety_contraindications"]
+    assert safety_claims
+    assert all(claim.polarity != EvidencePolarity.SUPPORTS for claim in safety_claims)
+    assert all("warfarin is recommended" not in claim.claim.lower() for claim in safety_claims)
+    coverage = compute_facet_coverage(facets, ledger)
+    assert coverage[0].status != "satisfied"
+
+
 def test_a_caution_qualifier_stays_low_when_the_note_recommends_another_drug():
     from app.schemas.enums import SourceType
 

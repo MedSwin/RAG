@@ -71,14 +71,21 @@ def build_retrieval_ledger(
             scored = first_present(passage.fusion_score, passage.dense_score, default=0.0)
         calibrated = clamp(scored)
         facet_scores = score_passage_facets(passage, facets)
+        scopes = _sentence_scopes(passage.text or "")
+        scope_scores = {"": facet_scores}
+        if any(scope for scope, _scope_text in scopes):
+            for scope, scope_text in scopes:
+                scoped = passage.model_copy(update={"text": scope_text})
+                scope_scores[scope] = score_passage_facets(scoped, facets)
         claims: List[EvidenceClaim] = []
         matched = []
         for facet in facets:
-            score = facet_scores.get(facet.name, 0.0)
-            if score <= 0.0:
-                continue
-            matched.append(facet.name)
-            for scope, scope_text in _sentence_scopes(passage.text or ""):
+            for scope, scope_text in scopes:
+                score = scope_scores.get(scope, facet_scores).get(facet.name, 0.0)
+                if score <= 0.0:
+                    continue
+                if facet.name not in matched:
+                    matched.append(facet.name)
                 if scope == "caution":
                     from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 
