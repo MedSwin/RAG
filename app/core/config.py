@@ -208,12 +208,26 @@ class Settings(BaseSettings):
     AWS_REGION: str = "us-east-1"
     EC2_INSTANCE_TYPE: str = "g4dn.xlarge"
 
-    def validate_fusion_weights(self) -> bool:
-        """Validate that base fusion weights are within a stable range."""
-        total = (
+    def fusion_positive_weight_sum(self) -> float:
+        """Sum every weight that can raise a fusion score."""
+        return (
             self.W_RERANK + self.W_DENSE + self.W_LEX
             + self.W_RECENCY + self.W_SECTION + self.W_SOURCE
+            + self.W_EBM + self.SAFETY_REWARD_WEIGHT
         )
+
+    def validate_fusion_weights(self) -> bool:
+        """Validate every weight that compute_fusion_scores applies."""
+        weights = (
+            self.W_RERANK, self.W_DENSE, self.W_LEX,
+            self.W_RECENCY, self.W_SECTION, self.W_SOURCE,
+            self.W_EBM, self.SAFETY_REWARD_WEIGHT, self.W_NOISE,
+        )
+        if any(value < 0.0 for value in weights):
+            return False
+        if self.W_NOISE > 2.0:
+            return False
+        total = self.fusion_positive_weight_sum()
         return 0.10 <= total <= 2.0
 
     def validate_enterprise_policy(self) -> bool:
@@ -403,7 +417,7 @@ if not settings.validate_fusion_weights():
     import warnings
 
     warnings.warn(
-        f"Fusion base weights are outside the stable range (sum={settings.W_RERANK + settings.W_DENSE + settings.W_LEX + settings.W_RECENCY + settings.W_SECTION + settings.W_SOURCE}). "
+        f"Fusion weights are outside the stable range (positive sum={settings.fusion_positive_weight_sum()}, noise={settings.W_NOISE}). "
         "This may cause unexpected scoring behavior."
     )
 
