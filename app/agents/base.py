@@ -309,8 +309,18 @@ async def call_claim_agent(
                 degraded=True,
                 error="schema_echo_only",
             )
+        raw_claims = payload.get("claims")
+        offered = [item for item in raw_claims if isinstance(item, dict)] if isinstance(raw_claims, list) else []
         batch = parse_claims(agent_id, payload, passages, facets=facets)
+        if offered and not batch.claims:
+            batch.degraded = True
+            batch.error = "uncited_claims"
         return batch
     except Exception as exc:  # noqa: BLE001
         logger.warning("%s agent failed: %s", agent_id, exc)
-        return AgentClaimBatch(agent_id=agent_id, claims=[], degraded=True, error=str(exc))
+        return AgentClaimBatch(
+            agent_id=agent_id,
+            claims=[],
+            degraded=True,
+            error=type(exc).__name__,
+        )

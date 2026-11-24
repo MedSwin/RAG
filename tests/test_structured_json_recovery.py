@@ -63,6 +63,30 @@ def test_a_schema_echo_marks_the_specialist_degraded():
     assert real.degraded is False
     assert real.claims[0].chunk_id == "c1"
 
+    unknown = asyncio.run(
+        call_claim_agent(
+            _Client('{"claims":[{"facet":"safety","claim":"Avoid","polarity":"safety","chunk_id":"missing","confidence":0.9}],"notes":[]}'),
+            "safety",
+            "Read the safety passage.",
+            "Check the allergy.",
+            [passage],
+        )
+    )
+    assert unknown.degraded is True
+    assert unknown.error == "uncited_claims"
+    assert unknown.claims == []
+
+    class _Broken(_Client):
+        async def call_llm(self, messages, json_schema=None, **kwargs):
+            raise RuntimeError("prompt text 555-234-5678")
+
+    failed = asyncio.run(
+        call_claim_agent(_Broken(""), "safety", "Read the safety passage.", "Check the allergy.", [passage])
+    )
+    assert failed.degraded is True
+    assert failed.error == "RuntimeError"
+    assert "555-234-5678" not in (failed.error or "")
+
 
 def test_schema_instruction_adds_a_concrete_claim_example():
     instruction = schema_instruction({"type": "object", "properties": {"claims": {}, "notes": {}}})
