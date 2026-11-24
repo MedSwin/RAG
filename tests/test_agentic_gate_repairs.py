@@ -1032,7 +1032,15 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
         "The morning dose of warfarin should be held.",
         "Hold the patient's morning dose of warfarin.",
         "Please hold the morning dose of warfarin.",
+        "Pause warfarin.",
+        "Halt warfarin.",
+        "Interrupt warfarin.",
+        "Warfarin should be paused.",
+        "Warfarin should be halted.",
+        "Warfarin should be interrupted.",
+        "Pause the morning dose of warfarin.",
     ):
+        assert pairs_for(note, "Avoid warfarin.") == [], note
         pairs = pairs_for(note, "Warfarin is recommended.")
         assert len(pairs) == 1, note
         assert pairs[0].severity == "high"
@@ -1072,6 +1080,9 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
         "Warfarin should not be paused.",
         "Warfarin should not be halted.",
         "Warfarin should not be interrupted.",
+        "Do not pause warfarin.",
+        "Do not halt warfarin.",
+        "Do not interrupt warfarin.",
     ):
         assert pairs_for(note, "Warfarin is recommended.") == [], note
         kept_passive = pairs_for(note, "Avoid warfarin.")

@@ -220,7 +220,8 @@ _NAMED_SAFETY = re.compile(
     re.I,
 )
 _STOP_ORDER = re.compile(
-    r"\b(?:stop(?:ped)?|withh(?:old|eld)|hold|held|discontinue[d]?|cease[d]?|suspend(?:ed)?)\b",
+    r"\b(?:stop(?:ped)?|withh(?:old|eld)|hold|held|discontinue[d]?|cease[d]?|suspend(?:ed)?|"
+    r"pause[d]?|halt(?:ed)?|interrupt(?:ed)?)\b",
     re.I,
 )
 _SAFETY_LIST = re.compile(r"^\s+list\b", re.I)
