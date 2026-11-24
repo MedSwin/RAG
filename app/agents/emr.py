@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from app.agents.base import call_claim_agent, passage_context
+from app.agents.base import call_claim_agent
 from app.prompts import claims as claim_prompts
 from app.schemas.agents import AgentClaimBatch
 from app.schemas.evidence import CandidatePassage
@@ -27,6 +27,9 @@ class EMRAgent:
         facet_names = ", ".join(f.name for f in (facets or []))
         user = (
             f"Query: {query}\nPatient ID: {patient_id or 'unknown'}\n"
-            f"Target facets: {facet_names}\n\nPassages:\n{passage_context(emr)}"
+            f"Target facets: {facet_names}\n"
+            "Prioritise source_type EMR for patient applicability, medications, labs, and allergies."
         )
-        return await call_claim_agent(self.client, "emr", claim_prompts.EMR, user, emr, facets=facets)
+        return await call_claim_agent(
+            self.client, "emr", claim_prompts.EMR, user, emr, facets=facets, shared_passages=passages
+        )

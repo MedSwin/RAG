@@ -7,12 +7,13 @@ import math
 import os
 from typing import Any, Dict, List, Optional
 
+from app.core.config import settings
 from app.schemas.agents import AgentClaimBatch
 from app.schemas.enums import EvidencePolarity
 from app.schemas.evidence import CandidatePassage, EvidenceClaim
 from app.schemas.facets import ClinicalFacet
 from app.services.adapters.llm import LLMClient
-from app.services.prompts.structured import extract_json_object
+from app.services.prompts.structured import extract_json_object, schema_instruction
 from app.scoring.calibrate import first_present
 from app.scoring.hierarchy import evidence_grade_from_metadata
 
@@ -49,6 +50,20 @@ def canonicalize_facet(name: str, facets: Optional[List[ClinicalFacet]] = None) 
 
 logger = logging.getLogger(__name__)
 
+# Identical leading system text for every specialist. Role text stays in the suffix
+# so the five sequential calls share one KV-cache prefix.
+SHARED_CLAIM_SYSTEM_PREFIX = (
+    "You are a MedSwin specialist in a shared claim workflow. "
+    "The shared evidence passages are identical for every specialist. "
+    "Apply only the specialist role, query, target facets, and valid chunk_ids that follow the passages. "
+    "Return JSON only."
+)
+SPECIALIST_SUFFIX_MARK = "\n\nSpecialist Instructions:\n"
+_LOCAL_GENERATION_BACKENDS = {"medswin_local", "local_http"}
+_COMPACT_PASSAGE_LIMIT = 6
+_COMPACT_PASSAGE_CHARS = 480
+_COMPACT_PASSAGE_BLOCK_CHARS = 2800
+
 
 CLAIM_SCHEMA = {
     "type": "object",
@@ -76,6 +91,36 @@ CLAIM_SCHEMA = {
 }
 
 
+def _local_generation_window() -> bool:
+    return settings.resolved_generation_backend() in _LOCAL_GENERATION_BACKENDS
+
+
+def passage_priority_key(passage: CandidatePassage, index: int) -> tuple:
+    """Rank contraindications and high-scoring passages ahead of filler."""
+    safety = 1 if passage.source_type.value == "SAFETY" or float(passage.safety_score or 0.0) >= 0.3 else 0
+    contradiction = float(passage.contradiction_score or 0.0)
+    score = passage.calibrated_score
+    if score is None:
+        score = passage.rerank_score
+    if score is None:
+        score = passage.fusion_score
+    if score is None:
+        score = passage.dense_score
+    if score is None:
+        score = 0.0
+    return (-int(safety), -float(contradiction), -float(score), index)
+
+
+def prioritize_passages(passages: List[CandidatePassage]) -> List[CandidatePassage]:
+    ordered = sorted(enumerate(passages), key=lambda item: passage_priority_key(item[1], item[0]))
+    return [passage for _, passage in ordered]
+
+
+def shared_claim_system_message() -> str:
+    """Return the byte-stable system prefix, including the claim JSON schema."""
+    return f"{SHARED_CLAIM_SYSTEM_PREFIX}\n{schema_instruction(CLAIM_SCHEMA)}"
+
+
 def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
     """Render bounded specialist context.
 
@@ -83,17 +128,44 @@ def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
     envelope. system-eval sets the same smaller envelope
     for *both* local MedSwin and Foundry GPT child processes so generator
     comparisons do not silently give the larger-context model more evidence.
+    A local 2,048-token generator, with no explicit envelope, uses a shorter
+    block and keeps safety passages at the front.
     """
-    configured_limit = int(os.getenv("AGENT_PASSAGE_LIMIT", str(limit)))
-    configured_chars = int(os.getenv("AGENT_PASSAGE_MAX_CHARS", "1200"))
+    limit_set = "AGENT_PASSAGE_LIMIT" in os.environ
+    chars_set = "AGENT_PASSAGE_MAX_CHARS" in os.environ
+    compact = _local_generation_window() and not limit_set and not chars_set
+    if limit_set:
+        configured_limit = int(os.environ["AGENT_PASSAGE_LIMIT"])
+    else:
+        configured_limit = min(limit, _COMPACT_PASSAGE_LIMIT) if compact else limit
+    if chars_set:
+        configured_chars = int(os.environ["AGENT_PASSAGE_MAX_CHARS"])
+    else:
+        configured_chars = _COMPACT_PASSAGE_CHARS if compact else 1200
     configured_limit = max(1, configured_limit)
     configured_chars = max(128, configured_chars)
-    blocks = []
-    for passage in passages[:configured_limit]:
-        blocks.append(
-            f"[{passage.chunk_id}|{passage.source_type.value}|doc={passage.doc_id}]\n"
-            f"{passage.text[:configured_chars]}"
-        )
+    selected = prioritize_passages(passages) if compact else list(passages)
+    total_cap = _COMPACT_PASSAGE_BLOCK_CHARS if compact else None
+    blocks: List[str] = []
+    for passage in selected:
+        if len(blocks) >= configured_limit:
+            break
+        header = f"[{passage.chunk_id}|{passage.source_type.value}|doc={passage.doc_id}]"
+        body = passage.text[:configured_chars]
+        block = f"{header}\n{body}"
+        if total_cap is not None:
+            trial = "\n\n".join(blocks + [block])
+            if len(trial) > total_cap:
+                used = len("\n\n".join(blocks))
+                separator = 2 if blocks else 0
+                room = total_cap - used - separator - len(header) - 1
+                if room <= 0:
+                    break
+                block = f"{header}\n{passage.text[:room]}"
+                trial = "\n\n".join(blocks + [block])
+                if len(trial) > total_cap:
+                    break
+        blocks.append(block)
     return "\n\n".join(blocks)
 
 
@@ -168,6 +240,24 @@ def parse_claims(
     )
 
 
+def _claim_user_message(
+    role: str,
+    task: str,
+    shared: List[CandidatePassage],
+    allowed: List[CandidatePassage],
+) -> str:
+    """Put the shared passage block first and the specialist task at the suffix."""
+    allowed_ids = ", ".join(passage.chunk_id for passage in allowed)
+    suffix = (
+        f"{role.strip()}\n\n"
+        f"{task.strip()}\n\n"
+        f"Valid chunk_ids: {allowed_ids}\n"
+        "Cite only a chunk_id from Valid chunk_ids. "
+        "Keep the safety focus and the citation rule in this suffix."
+    )
+    return f"Shared Evidence Passages:\n{passage_context(shared)}{SPECIALIST_SUFFIX_MARK}{suffix}"
+
+
 async def call_claim_agent(
     client: LLMClient,
     agent_id: str,
@@ -175,12 +265,20 @@ async def call_claim_agent(
     user: str,
     passages: List[CandidatePassage],
     facets: Optional[List[ClinicalFacet]] = None,
+    shared_passages: Optional[List[CandidatePassage]] = None,
 ) -> AgentClaimBatch:
+    """Call one specialist.
+
+    ``passages`` is the allowed citation set for ``parse_claims``.
+    ``shared_passages`` is the identical evidence prefix for every specialist.
+    The role text, query, facets, and valid chunk ids stay after that prefix.
+    """
+    shared = passages if shared_passages is None else shared_passages
     try:
         response = await client.call_llm(
             [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
+                {"role": "system", "content": shared_claim_system_message()},
+                {"role": "user", "content": _claim_user_message(system, user, shared, passages)},
             ],
             json_schema=CLAIM_SCHEMA,
         )

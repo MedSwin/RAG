@@ -1,5 +1,6 @@
 """Reranker client adapter with retries and Azure/Cohere provider support."""
 
+import asyncio
 import httpx
 import logging
 import os
@@ -9,6 +10,59 @@ from app.core.config import settings
 from app.services.adapters.limiter import request_with_model_rate_limit
 
 logger = logging.getLogger(__name__)
+
+
+def _walk_exceptions(exc: BaseException):
+    seen: set[int] = set()
+    stack = [exc]
+    while stack:
+        current = stack.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
+        stack.append(getattr(current, "__cause__", None))
+        stack.append(getattr(current, "__context__", None))
+
+
+def _connection_failure(exc: BaseException) -> bool:
+    """Return True for a dead socket, a connect timeout, or a refused connection."""
+    connect_types = (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError)
+    for current in _walk_exceptions(exc):
+        if isinstance(current, connect_types):
+            return True
+    text = str(exc).lower()
+    markers = (
+        "connection refused",
+        "connecterror",
+        "connection error",
+        "all connection attempts failed",
+        "name or service not known",
+        "nodename nor servname",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _stick_to_local(exc: BaseException) -> bool:
+    """Remember a dead reranker port. A connect timeout may still recover."""
+    for current in _walk_exceptions(exc):
+        if isinstance(current, httpx.ConnectTimeout):
+            return False
+        if isinstance(current, (httpx.ConnectError, ConnectionError)):
+            return True
+    text = str(exc).lower()
+    return "connection refused" in text or "all connection attempts failed" in text
+
+
+def _relevance_scores(reranker: Any, query: str, passages: List[str]) -> List[float]:
+    """Call the batch scorer, or score each passage when the model is older."""
+    batch = getattr(reranker, "compute_relevance_scores", None)
+    if callable(batch):
+        return [float(score) for score in batch(query, passages)]
+    single = getattr(reranker, "compute_relevance_score", None)
+    if not callable(single):
+        raise RuntimeError("Local reranker does not implement compute_relevance_scores")
+    return [float(single(query, passage)) for passage in passages]
 
 
 def _cohere_auth_headers(api_key: Optional[str]) -> dict[str, str]:
@@ -62,6 +116,18 @@ class RerankerClient:
         self.timeout = timeout or settings.RERANK_TIMEOUT_S
         self.client = httpx.AsyncClient(timeout=self.timeout)
         self.rate_limit_key = f"reranker:{self.base_url}:{self.model}"
+        self._prefer_inprocess_local = False
+
+    def _wants_inprocess_local(self) -> bool:
+        """Return True when local mode should score with the loaded bge reranker."""
+        if settings.CLOUD_MODE:
+            return False
+        if str(self.base_url).startswith("local://"):
+            return True
+        flag = os.getenv("LOCAL_INPROCESS_MODELS", "").strip().lower()
+        if flag in {"1", "true", "yes"}:
+            return True
+        return bool(getattr(self, "_prefer_inprocess_local", False))
 
     async def rerank(
         self,
@@ -75,6 +141,11 @@ class RerankerClient:
             return []
         if self.provider == "bedrock":
             return await self._rerank_bedrock(query, passages)
+        if self._wants_inprocess_local():
+            local = await self._local_rerank(query, passages)
+            if local is None:
+                raise RuntimeError("In-process local reranker is unavailable")
+            return local
 
         if self.provider == "cohere":
             payload = {
@@ -148,11 +219,19 @@ class RerankerClient:
             if {int(item.get("index", -1)) for item in results} != set(range(len(passages))):
                 raise RuntimeError("Reranker result indexes do not cover every supplied passage exactly once")
             return results
-        except httpx.HTTPError as exc:
-            logger.error("Reranker request failed: %s", exc)
-            raise
         except Exception as exc:
-            logger.error("Unexpected error in reranker call: %s", exc)
+            if not settings.CLOUD_MODE and _connection_failure(exc):
+                local = await self._local_rerank(query, passages)
+                if local is not None:
+                    if _stick_to_local(exc):
+                        self._prefer_inprocess_local = True
+                    logger.warning(
+                        "HTTP reranker at %s failed (%s); using in-process bge-reranker-v2-m3",
+                        self.base_url,
+                        exc,
+                    )
+                    return local
+            logger.error("Reranker request failed: %s", exc)
             raise
 
     async def _rerank_bedrock(self, query: str, passages: List[str]) -> List[Dict[str, Any]]:
@@ -165,6 +244,47 @@ class RerankerClient:
         loop = asyncio.get_running_loop()
         payload = await loop.run_in_executor(None, lambda: runtime.invoke_model(self.model, body))
         return parse_rerank_response(payload, len(passages))
+
+    async def _local_rerank(self, query: str, passages: List[str]) -> Optional[List[Dict[str, Any]]]:
+        """Score passages with the process-local ``bge-reranker-v2-m3`` model."""
+        try:
+            from app.core.state import get_model_manager
+
+            reranker = get_model_manager().get_reranker_model()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Local reranker model is not available: %s", exc)
+            return None
+        if reranker is None:
+            return None
+
+        loop = asyncio.get_running_loop()
+
+        def _score() -> List[float]:
+            return _relevance_scores(reranker, query, passages)
+
+        try:
+            scores = await loop.run_in_executor(None, _score)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("In-process reranker scoring failed: %s", exc)
+            return None
+        if scores is None or len(scores) != len(passages):
+            logger.warning(
+                "In-process reranker returned %s scores for %s passages",
+                None if scores is None else len(scores),
+                len(passages),
+            )
+            return None
+        results = [
+            {
+                "index": idx,
+                "score": float(score),
+                "p_hat": float(score),
+                "calibration_version": "identity:bge-reranker-v2-m3-local",
+            }
+            for idx, score in enumerate(scores)
+        ]
+        results.sort(key=lambda item: item["score"], reverse=True)
+        return results
 
     async def close(self):
         """Close the HTTP client."""

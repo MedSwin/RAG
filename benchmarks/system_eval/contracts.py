@@ -94,3 +94,53 @@ def expand_matrix(
 
 def pipeline_contract_payload() -> dict[str, dict[str, object]]:
     return {name: asdict(contract) for name, contract in PIPELINE_CONTRACTS.items()}
+
+
+LOCAL_EMBEDDING_MODEL = "MedEmbed-large-v0.1"
+LOCAL_RERANKER_MODEL = "bge-reranker-v2-m3"
+LOCAL_GENERATOR_MODEL = "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
+BEDROCK_GENERATOR_MODEL = "global.openai.gpt-6-luna"
+BEDROCK_EMBEDDING_MODEL = "global.cohere.embed-v4:0"
+BEDROCK_RERANKER_MODEL = "cohere.rerank-v3-5:0"
+
+
+def resolve_generator_contract(generator: str, *, local_retrieval: bool = False) -> GeneratorContract:
+    """Return the generator contract for the active cloud provider.
+
+    ``local_retrieval=True`` selects the full local three-model stack:
+    MedEmbed, bge-reranker-v2-m3, and MedSwin. The static
+    ``GENERATOR_CONTRACTS`` map stays on the Foundry defaults.
+    """
+    if generator not in GENERATOR_CONTRACTS:
+        raise KeyError(f"Unknown generator {generator}")
+    base = GENERATOR_CONTRACTS[generator]
+    if local_retrieval:
+        return GeneratorContract(
+            name=base.name,
+            backend="medswin_local",
+            model=LOCAL_GENERATOR_MODEL,
+            cloud_mode=False,
+            embedding_model=LOCAL_EMBEDDING_MODEL,
+            reranker_model=LOCAL_RERANKER_MODEL,
+        )
+    from app.core.config import settings
+
+    if settings.cloud_provider() == "bedrock":
+        if generator == "cloud":
+            return GeneratorContract(
+                "cloud",
+                "bedrock",
+                BEDROCK_GENERATOR_MODEL,
+                cloud_mode=True,
+                embedding_model=BEDROCK_EMBEDDING_MODEL,
+                reranker_model=BEDROCK_RERANKER_MODEL,
+            )
+        return GeneratorContract(
+            "medswin",
+            "medswin_local",
+            LOCAL_GENERATOR_MODEL,
+            cloud_mode=True,
+            embedding_model=BEDROCK_EMBEDDING_MODEL,
+            reranker_model=BEDROCK_RERANKER_MODEL,
+        )
+    return base

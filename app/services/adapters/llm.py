@@ -41,6 +41,33 @@ def _default_max_tokens() -> Optional[int]:
     return value if value > 0 else None
 
 
+def _estimate_tokens(text: str) -> int:
+    """Conservative token estimate: characters over three, or word pieces."""
+    if not text:
+        return 0
+    word_pieces = 0
+    for word in text.split():
+        word_pieces += max(1, (len(word) + 3) // 4)
+    return max(len(text) // 3, word_pieces)
+
+
+def _estimate_message_tokens(messages: List[Dict[str, Any]]) -> int:
+    return _estimate_tokens("\n".join(str(message.get("content") or "") for message in messages))
+
+
+def _clamp_local_completion_tokens(requested: int, prompt_tokens: int) -> int:
+    """Keep prompt tokens plus completion inside 1,980. Floor is 96 when it fits."""
+    room = 1980 - max(0, prompt_tokens)
+    if room >= 96:
+        capped = min(requested, room)
+        if requested >= 96:
+            return max(96, capped)
+        return max(1, capped)
+    if room > 0:
+        return room
+    return 96
+
+
 class LLMClient:
     """Client for OpenAI-compatible LLM endpoints.
 
@@ -90,20 +117,29 @@ class LLMClient:
         if not self.model.lower().startswith("gpt-5"):
             payload["temperature"] = temperature
 
-        effective_max_tokens = max_tokens or _default_max_tokens()
+        supplied_max_tokens = max_tokens if max_tokens is not None else _default_max_tokens()
+        local_budget = self.backend in {"medswin_local", "local_http"} and (
+            not settings.CLOUD_MODE or self.backend == "medswin_local"
+        )
+        if local_budget and supplied_max_tokens is None:
+            supplied_max_tokens = int(os.getenv("MEDSWIN_DEFAULT_MAX_TOKENS", "384"))
+        effective_max_tokens = supplied_max_tokens
         if not effective_max_tokens and self.backend == "bedrock":
             # Luna can emit 128000 tokens. A clinical answer stays inside this cap.
             configured = int(settings.BEDROCK_MAX_OUTPUT_TOKENS or 0)
             effective_max_tokens = configured if configured > 0 else 1024
+
+        if json_schema:
+            system_msg = {"role": "system", "content": schema_instruction(json_schema)}
+            payload["messages"] = [system_msg] + messages
+        if local_budget and effective_max_tokens:
+            prompt_tokens = _estimate_message_tokens(payload["messages"])
+            effective_max_tokens = _clamp_local_completion_tokens(effective_max_tokens, prompt_tokens)
         if effective_max_tokens:
             if self.model.lower().startswith("gpt-5"):
                 payload["max_completion_tokens"] = effective_max_tokens
             else:
                 payload["max_tokens"] = effective_max_tokens
-
-        if json_schema:
-            system_msg = {"role": "system", "content": schema_instruction(json_schema)}
-            payload["messages"] = [system_msg] + messages
 
         if self.backend == "bedrock":
             return await self._call_bedrock(

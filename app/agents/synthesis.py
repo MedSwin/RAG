@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Sequence
 
-from app.schemas.evidence import AnswerArtifact, AnswerProvenance, EvidenceBundle
+from app.agents.base import prioritize_passages
+from app.schemas.evidence import AnswerArtifact, AnswerProvenance, CandidatePassage, EvidenceBundle
 from app.schemas.facets import FacetCoverage
 from app.services.adapters.llm import LLMClient
 from app.services.medswin.governance import ensure_cds_language
 from app.services.prompts import answer as answer_prompt
 from app.services.prompts.structured import extract_json_object
+
+
+_LOCAL_BACKENDS = {"medswin_local", "local_http"}
+_INLINE_CITATION_USE = "inline cited supporting evidence"
+_CHUNK_TOKEN = re.compile(r"[A-Za-z0-9_.:\-]+")
 
 
 def _text_items(value: Any) -> List[str]:
@@ -19,6 +26,75 @@ def _text_items(value: Any) -> List[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item or "").strip()]
     return []
+
+
+def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> str:
+    """Keep a 2,048-token synthesis prompt inside about 2,800 evidence characters."""
+    blocks: List[str] = []
+    for passage in prioritize_passages(list(passages)):
+        if len(blocks) >= 6:
+            break
+        body = passage.text[:450]
+        block = f"[{passage.chunk_id}] {body}"
+        trial = "\n\n".join(blocks + [block])
+        if len(trial) > 2800:
+            used = len("\n\n".join(blocks))
+            separator = 2 if blocks else 0
+            room = 2800 - used - separator - len(f"[{passage.chunk_id}] ")
+            if room <= 0:
+                break
+            block = f"[{passage.chunk_id}] {passage.text[:room]}"
+            trial = "\n\n".join(blocks + [block])
+            if len(trial) > 2800:
+                break
+        blocks.append(block)
+    return "\n\n".join(blocks)
+
+
+def _valid_chunk_id_line(passages: Sequence[CandidatePassage], limit: int = 500) -> str:
+    shown: List[str] = []
+    text = ""
+    seen = set()
+    for passage in prioritize_passages(list(passages)):
+        chunk_id = passage.chunk_id
+        if chunk_id in seen:
+            continue
+        seen.add(chunk_id)
+        addition = (", " if shown else "") + chunk_id
+        if shown and len(text) + len(addition) > limit:
+            break
+        shown.append(chunk_id)
+        text += addition
+    return text
+
+
+def _inline_chunk_ids(answer: str, allowed: set[str]) -> List[str]:
+    """Read bracketed or bare chunk ids in appearance order. Ignore unknown ids."""
+    if not answer or not allowed:
+        return []
+    hits: List[tuple[int, str]] = []
+    for match in re.finditer(r"\[([^\[\]]+)\]", answer):
+        inner = match.group(1).strip()
+        if inner in allowed:
+            hits.append((match.start(), inner))
+            continue
+        for token in _CHUNK_TOKEN.findall(inner):
+            if token in allowed:
+                hits.append((match.start(), token))
+    for chunk_id in allowed:
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_\-]){re.escape(chunk_id)}(?![A-Za-z0-9_\-])"
+        )
+        for match in pattern.finditer(answer):
+            hits.append((match.start(), chunk_id))
+    hits.sort(key=lambda item: (item[0], item[1]))
+    ordered: List[str] = []
+    seen = set()
+    for _, chunk_id in hits:
+        if chunk_id in allowed and chunk_id not in seen:
+            seen.add(chunk_id)
+            ordered.append(chunk_id)
+    return ordered
 
 
 class SynthesisAgent:
@@ -47,6 +123,11 @@ class SynthesisAgent:
                 statements.append({"chunk_id": chunk_id, "use": use})
             elif chunk_id:
                 rejected.append(chunk_id)
+        if not cited:
+            answer = str(answer_data.get("answer") or "")
+            for chunk_id in _inline_chunk_ids(answer, allowed):
+                cited.append(chunk_id)
+                statements.append({"chunk_id": chunk_id, "use": _INLINE_CITATION_USE})
         sections = [str(answer_data.get("answer", "")).strip()]
         if statements:
             sections.append("Evidence used:\n" + "\n".join(f"- {s['chunk_id']}: {s['use']}" for s in statements))
@@ -87,24 +168,36 @@ class SynthesisAgent:
         safety_notes: Optional[List[str]] = None,
         benchmark: bool = False,
     ) -> tuple[str, AnswerProvenance, AnswerArtifact]:
-        evidence_text = "\n\n".join(f"[{p.chunk_id}] {p.text}" for p in evidence_bundle.passages)
         coverage_text = "\n".join(
             f"- {row.facet}: {row.status} (LCB={row.lower_confidence_bound:.2f})"
             for row in (facet_coverage or evidence_bundle.facet_coverage)
         )
+        backend = getattr(self.client, "backend", "")
+        if backend in _LOCAL_BACKENDS:
+            evidence_text = _bounded_local_evidence(evidence_bundle.passages)
+            notes = "; ".join(str(note) for note in (safety_notes or []) if str(note or "").strip()) or "none"
+            user_content = (
+                f"Query: {query}\n\nFacet coverage:\n{coverage_text}\n\n"
+                f"Evidence:\n{evidence_text}\n\n"
+                f"Valid chunk_ids: {_valid_chunk_id_line(evidence_bundle.passages)}\n"
+                f"Safety notes: {notes}\n\n"
+                "Provide a clinician decision-support answer with answer, evidence_used "
+                "(chunk_ids only from Valid chunk_ids), uncertainty, contraindications_risks, next_steps. "
+                "Do not present autonomous diagnosis or treatment orders."
+            )
+        else:
+            evidence_text = "\n\n".join(f"[{p.chunk_id}] {p.text}" for p in evidence_bundle.passages)
+            user_content = (
+                f"Query: {query}\n\nFacet coverage:\n{coverage_text}\n\n"
+                f"Evidence:\n{evidence_text}\n\n"
+                f"Safety notes: {safety_notes or []}\n\n"
+                "Provide a clinician decision-support answer with answer, evidence_used "
+                "(chunk_ids only from evidence), uncertainty, contraindications_risks, next_steps. "
+                "Do not present autonomous diagnosis or treatment orders."
+            )
         messages = [
             {"role": "system", "content": answer_prompt.SYSTEM},
-            {
-                "role": "user",
-                "content": (
-                    f"Query: {query}\n\nFacet coverage:\n{coverage_text}\n\n"
-                    f"Evidence:\n{evidence_text}\n\n"
-                    f"Safety notes: {safety_notes or []}\n\n"
-                    "Provide a clinician decision-support answer with answer, evidence_used "
-                    "(chunk_ids only from evidence), uncertainty, contraindications_risks, next_steps. "
-                    "Do not present autonomous diagnosis or treatment orders."
-                ),
-            },
+            {"role": "user", "content": user_content},
         ]
         schema = answer_prompt.SCHEMA
         if benchmark:

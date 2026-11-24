@@ -1,0 +1,493 @@
+"""Local three-model adapters, shared specialist prefixes, and 2048-token compaction."""
+
+import io
+import json
+import urllib.request
+
+import httpx
+import numpy as np
+import pytest
+import torch
+
+from app.agents.base import SPECIALIST_SUFFIX_MARK, passage_context, shared_claim_system_message
+from app.agents.critic import ContradictionAgent
+from app.agents.emr import EMRAgent
+from app.agents.guideline import GuidelineAgent
+from app.agents.quality import QualityAgent
+from app.agents.safety import SafetyAgent
+from app.agents.synthesis import SynthesisAgent
+from app.api.v1.endpoints.pipelines import pipelines_ready
+from app.core.config import settings
+from app.schemas.enums import SourceType
+from app.schemas.evidence import CandidatePassage, EvidenceBundle
+from app.schemas.facets import ClinicalFacet
+from app.services.adapters.embedding import EmbeddingClient
+from app.services.adapters.llm import LLMClient, _clamp_local_completion_tokens, _estimate_message_tokens
+from app.services.adapters.reranker import RerankerClient
+from benchmarks.system_eval.contracts import GENERATOR_CONTRACTS, resolve_generator_contract
+from benchmarks.system_eval.runner import _profile_environment, _retrieval_identity_matches
+from benchmarks.trec_cds2016.nist import _download_url
+from benchmarks.trec_cds2016.runtime import EXPECTED_LOCAL_MODEL
+
+
+def _passage(chunk_id, source_type, text, **scores):
+    return CandidatePassage(
+        chunk_id=chunk_id,
+        doc_id=f"doc-{chunk_id}",
+        source_type=source_type,
+        text=text,
+        **scores,
+    )
+
+
+class _RecordingLLM:
+    def __init__(self, backend="bedrock"):
+        self.backend = backend
+        self.calls = []
+
+    async def call_llm(self, messages, json_schema=None, temperature=0.7, max_tokens=None, request_id=None):
+        self.calls.append({"messages": messages, "json_schema": json_schema})
+        return {
+            "content": json.dumps(
+                {
+                    "claims": [
+                        {"facet": "safety_contraindications", "claim": "emr fact", "chunk_id": "emr-1", "polarity": "supports"},
+                        {"facet": "guideline_concordance", "claim": "cpg fact", "chunk_id": "cpg-1", "polarity": "supports"},
+                        {"facet": "safety_contraindications", "claim": "warn", "chunk_id": "safety-1", "polarity": "safety"},
+                        {"facet": "clinical_evidence", "claim": "lit fact", "chunk_id": "lit-1", "polarity": "supports"},
+                    ],
+                    "notes": [],
+                }
+            )
+        }
+
+
+def _shared_prefix(messages):
+    system = messages[0]["content"]
+    user = messages[1]["content"]
+    head, mark, _suffix = user.partition(SPECIALIST_SUFFIX_MARK)
+    assert mark == SPECIALIST_SUFFIX_MARK
+    return system, head
+
+
+def _bundle(passages):
+    return EvidenceBundle(
+        passages=passages,
+        total_tokens=10,
+        cpg_count=1,
+        emr_count=1,
+        lit_count=1,
+        safety_count=1,
+    )
+
+
+class _JsonResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
+@pytest.mark.asyncio
+async def test_reranker_uses_inprocess_bge_without_http_and_sticks_after_connect_error(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    monkeypatch.delenv("LOCAL_INPROCESS_MODELS", raising=False)
+    http_calls = {"count": 0}
+    scored = {"batches": []}
+
+    class _Reranker:
+        def compute_relevance_scores(self, query, passages):
+            scored["batches"].append((query, list(passages)))
+            return [0.2, 0.9, 0.1]
+
+    class _Manager:
+        def get_reranker_model(self):
+            return _Reranker()
+
+    monkeypatch.setattr("app.core.state.get_model_manager", lambda: _Manager())
+
+    async def _http(*args, **kwargs):
+        http_calls["count"] += 1
+        raise httpx.ConnectError("All connection attempts failed")
+
+    monkeypatch.setattr("app.services.adapters.reranker.request_with_model_rate_limit", _http)
+    client = RerankerClient("http://127.0.0.1:8004/rerank")
+    first = await client.rerank("pneumonia", ["a", "b", "c"])
+    assert http_calls["count"] == 1
+    assert client._prefer_inprocess_local is True
+    assert first[0]["index"] == 1
+    assert first[0]["score"] == pytest.approx(0.9)
+    assert first[0]["p_hat"] == pytest.approx(0.9)
+    assert first[0]["calibration_version"] == "identity:bge-reranker-v2-m3-local"
+    assert [row["index"] for row in first] == [1, 0, 2]
+
+    second = await client.rerank("pneumonia", ["a", "b", "c"])
+    assert http_calls["count"] == 1
+    assert second[0]["index"] == 1
+    assert len(scored["batches"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_reranker_local_url_and_env_skip_http_and_singular_scores_still_work(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    monkeypatch.setenv("LOCAL_INPROCESS_MODELS", "yes")
+    http_calls = {"count": 0}
+
+    class _Singular:
+        def compute_relevance_score(self, query, passage):
+            return {"low": 0.1, "high": 0.8}[passage]
+
+    class _Manager:
+        def get_reranker_model(self):
+            return _Singular()
+
+    monkeypatch.setattr("app.core.state.get_model_manager", lambda: _Manager())
+
+    async def _http(*args, **kwargs):
+        http_calls["count"] += 1
+        raise AssertionError("HTTP reranker should not be called")
+
+    monkeypatch.setattr("app.services.adapters.reranker.request_with_model_rate_limit", _http)
+    client = RerankerClient("local://bge-reranker-v2-m3")
+    ranked = await client.rerank("q", ["low", "high"])
+    assert http_calls["count"] == 0
+    assert [row["index"] for row in ranked] == [1, 0]
+    assert ranked[0]["calibration_version"] == "identity:bge-reranker-v2-m3-local"
+
+
+@pytest.mark.asyncio
+async def test_reranker_http_success_stays_on_http_and_status_errors_do_not_stick(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    monkeypatch.delenv("LOCAL_INPROCESS_MODELS", raising=False)
+    calls = {"count": 0}
+
+    async def _http(*args, **kwargs):
+        calls["count"] += 1
+        return _JsonResponse({"scores": [0.25, 0.75]})
+
+    monkeypatch.setattr("app.services.adapters.reranker.request_with_model_rate_limit", _http)
+    client = RerankerClient("http://127.0.0.1:8004/rerank")
+    ranked = await client.rerank("q", ["a", "b"])
+    assert calls["count"] == 1
+    assert ranked[0]["index"] == 1
+    assert client._prefer_inprocess_local is False
+
+    request = httpx.Request("POST", "http://127.0.0.1:8004/rerank")
+    response = httpx.Response(500, request=request)
+
+    async def _status(*args, **kwargs):
+        raise httpx.HTTPStatusError("boom", request=request, response=response)
+
+    monkeypatch.setattr("app.services.adapters.reranker.request_with_model_rate_limit", _status)
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.rerank("q", ["a", "b"])
+    assert client._prefer_inprocess_local is False
+
+
+@pytest.mark.asyncio
+async def test_embedding_connect_error_sticks_and_batches_thirty_two(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    monkeypatch.delenv("LOCAL_INPROCESS_MODELS", raising=False)
+    http_calls = {"count": 0}
+
+    async def _http(*args, **kwargs):
+        http_calls["count"] += 1
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr("app.services.adapters.embedding.request_with_model_rate_limit", _http)
+
+    class _Tokenizer:
+        def __init__(self):
+            self.batches = []
+
+        def __call__(self, texts, truncation, padding, max_length, return_tensors):
+            self.batches.append(list(texts))
+            return {"input_ids": torch.ones((len(texts), 2), dtype=torch.long)}
+
+    class _Model:
+        def __call__(self, **inputs):
+            rows = inputs["input_ids"].shape[0]
+            hidden = torch.ones((rows, 2, 4))
+
+            class _Out:
+                last_hidden_state = hidden
+
+            return _Out()
+
+    tokenizer = _Tokenizer()
+
+    class _Manager:
+        def get_embedding_model(self):
+            return tokenizer, _Model(), torch.device("cpu"), 4
+
+    monkeypatch.setattr("app.core.state.get_model_manager", lambda: _Manager())
+    client = EmbeddingClient("http://127.0.0.1:8005/embeddings")
+    texts = [f"passage {index}" for index in range(40)]
+    vectors = await client.embed(texts)
+    assert http_calls["count"] == 1
+    assert client._prefer_inprocess_local is True
+    assert tokenizer.batches == [texts[:32], texts[32:]]
+    assert len(vectors) == 40
+    assert vectors[0].shape == (4,)
+
+    await client.embed(["again"])
+    assert http_calls["count"] == 1
+    assert tokenizer.batches[-1] == ["again"]
+
+
+@pytest.mark.asyncio
+async def test_ready_reports_local_reranker_model(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    body = await pipelines_ready()
+    assert body["reranker_model"] == settings.active_reranker_model()
+    assert "bge-reranker-v2-m3" in body["reranker_model"]
+    assert body["cloud_mode"] is False
+
+
+@pytest.mark.asyncio
+async def test_specialists_share_one_prefix_and_keep_allowed_chunk_scope(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", True)
+    monkeypatch.setattr(settings, "CLOUD_PROVIDER", "bedrock")
+    monkeypatch.setenv("GENERATION_BACKEND", "bedrock")
+    monkeypatch.delenv("AGENT_PASSAGE_LIMIT", raising=False)
+    monkeypatch.delenv("AGENT_PASSAGE_MAX_CHARS", raising=False)
+    passages = [
+        _passage("emr-1", SourceType.EMR, "Patient takes metformin."),
+        _passage("cpg-1", SourceType.CPG, "Guideline recommends metformin first-line."),
+        _passage("lit-1", SourceType.LIT, "Trial supports metformin.", safety_score=0.4),
+        _passage("safety-1", SourceType.SAFETY, "Contraindicated when eGFR is below 30."),
+    ]
+    facets = [ClinicalFacet(name="safety_contraindications"), ClinicalFacet(name="guideline_concordance")]
+    agents = {
+        "emr": EMRAgent(_RecordingLLM()),
+        "guideline": GuidelineAgent(_RecordingLLM()),
+        "safety": SafetyAgent(_RecordingLLM()),
+        "quality": QualityAgent(_RecordingLLM()),
+        "critic": ContradictionAgent(_RecordingLLM()),
+    }
+    batches = {
+        "emr": await agents["emr"].explore("metformin", passages, facets, patient_id="patient-7"),
+        "guideline": await agents["guideline"].explore("metformin", passages, facets),
+        "safety": await agents["safety"].explore("metformin", passages, facets),
+        "quality": await agents["quality"].explore("metformin", passages, facets),
+        "critic": await agents["critic"].explore("metformin", passages, facets),
+    }
+    prefixes = [_shared_prefix(agent.client.calls[0]["messages"]) for agent in agents.values()]
+    assert len({prefix for prefix in prefixes}) == 1
+    system, head = prefixes[0]
+    assert system == shared_claim_system_message()
+    assert system.startswith("You are a MedSwin specialist")
+    assert "Return valid JSON matching this schema" in system
+    assert head.startswith("Shared Evidence Passages:\n")
+    for chunk_id in ("emr-1", "cpg-1", "lit-1", "safety-1"):
+        assert chunk_id in head
+    assert {claim.chunk_id for claim in batches["emr"].claims} == {"emr-1"}
+    assert {claim.chunk_id for claim in batches["guideline"].claims} == {"cpg-1", "lit-1"}
+    assert {claim.chunk_id for claim in batches["safety"].claims} == {"safety-1", "lit-1"}
+    assert {claim.chunk_id for claim in batches["quality"].claims} == {"emr-1", "cpg-1", "lit-1", "safety-1"}
+    emr_suffix = agents["emr"].client.calls[0]["messages"][1]["content"].split(SPECIALIST_SUFFIX_MARK, 1)[1]
+    assert "Query: metformin" in emr_suffix
+    assert "Patient ID: patient-7" in emr_suffix
+    assert "Valid chunk_ids: emr-1" in emr_suffix
+    assert "cpg-1" not in emr_suffix.split("Valid chunk_ids:", 1)[1]
+    assert "source_type EMR" in emr_suffix
+
+
+def test_local_passage_context_keeps_safety_inside_2048_envelope(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    monkeypatch.setattr(settings, "GENERATION_BACKEND", None)
+    monkeypatch.delenv("GENERATION_BACKEND", raising=False)
+    monkeypatch.delenv("AGENT_PASSAGE_LIMIT", raising=False)
+    monkeypatch.delenv("AGENT_PASSAGE_MAX_CHARS", raising=False)
+    filler = "alpha " * 400
+    passages = [
+        _passage(f"lit-{index}", SourceType.LIT, filler, calibrated_score=0.99 - (index * 0.01))
+        for index in range(8)
+    ]
+    passages.append(
+        _passage(
+            "safety-keep",
+            SourceType.SAFETY,
+            "Contraindicated. Do not use this drug. " + filler,
+            calibrated_score=0.01,
+            contradiction_score=0.2,
+        )
+    )
+    rendered = passage_context(passages)
+    assert len(rendered) <= 2800
+    assert rendered.count("[") <= 6
+    assert "[safety-keep|SAFETY|doc=doc-safety-keep]" in rendered
+    assert rendered.index("safety-keep") < rendered.index("lit-0")
+
+    monkeypatch.setenv("AGENT_PASSAGE_LIMIT", "2")
+    explicit = passage_context(passages)
+    assert "[lit-0|LIT|doc=doc-lit-0]" in explicit
+    assert "[lit-1|LIT|doc=doc-lit-1]" in explicit
+    assert "safety-keep" not in explicit
+
+
+@pytest.mark.asyncio
+async def test_local_synthesis_bounds_evidence_and_reads_inline_chunk_ids():
+    safety = _passage("safety-1", SourceType.SAFETY, "Contraindicated in anaphylaxis. " + ("warn " * 300), calibrated_score=0.2)
+    cpg = _passage("cpg-1", SourceType.CPG, "First-line therapy. " + ("guide " * 300), calibrated_score=0.95)
+    extra = [
+        _passage(f"extra-{index}", SourceType.LIT, "noise " * 300, calibrated_score=0.5)
+        for index in range(8)
+    ]
+    bundle = _bundle([cpg, safety, *extra])
+
+    class _Client:
+        backend = "medswin_local"
+        calls = []
+
+        async def call_llm(self, messages, json_schema=None, **kwargs):
+            self.calls.append(messages)
+            return {"content": json.dumps({"answer": "See the note.", "evidence_used": [], "insufficient_evidence": False})}
+
+    client = _Client()
+    agent = SynthesisAgent(client)
+    await agent.synthesize_with_artifact("pneumonia", bundle, safety_notes=["Confirm the allergy record."])
+    user = client.calls[0][1]["content"]
+    evidence = user.split("Evidence:\n", 1)[1].split("\n\nValid chunk_ids:", 1)[0]
+    assert len(evidence) <= 2800
+    assert "safety-1" in evidence
+    assert "Valid chunk_ids:" in user
+    assert user.index("Safety notes:") > user.index("Evidence:")
+    assert "Confirm the allergy record." in user
+    assert user.index("Valid chunk_ids:") > user.index("Evidence:")
+
+    rendered, provenance = SynthesisAgent(None)._render(
+        {"answer": "Use [safety-1] before cpg-1. Never cite missing-9.", "evidence_used": []},
+        bundle,
+    )
+    assert provenance.cited_chunk_ids == ["safety-1", "cpg-1"]
+    assert provenance.statements[0]["use"] == "inline cited supporting evidence"
+    assert "missing-9" not in provenance.cited_chunk_ids
+    assert "safety-1" in rendered
+
+    explicit, explicit_provenance = SynthesisAgent(None)._render(
+        {"answer": "Also see [cpg-1].", "evidence_used": ["safety-1", "fake"]},
+        bundle,
+    )
+    assert explicit_provenance.cited_chunk_ids == ["safety-1"]
+    assert explicit_provenance.rejected_chunk_ids == ["fake"]
+    assert "cpg-1" not in explicit_provenance.cited_chunk_ids
+
+    holder = []
+
+    class _Cloud:
+        backend = "bedrock"
+
+        async def call_llm(self, messages, json_schema=None, **kwargs):
+            holder.append(messages)
+            return {"content": json.dumps({"answer": "Cloud answer.", "evidence_used": ["cpg-1"]})}
+
+    await SynthesisAgent(_Cloud()).synthesize_with_artifact("pneumonia", _bundle([cpg]), safety_notes=[])
+    cloud_user = holder[0][1]["content"]
+    assert "Valid chunk_ids:" not in cloud_user
+    assert "Safety notes: []" in cloud_user
+    assert cpg.text in cloud_user
+
+
+@pytest.mark.asyncio
+async def test_local_llm_defaults_and_clamps_completion_inside_2048(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    monkeypatch.setenv("GENERATION_BACKEND", "medswin_local")
+    monkeypatch.delenv("LLM_DEFAULT_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("MEDSWIN_DEFAULT_MAX_TOKENS", raising=False)
+    seen = {}
+
+    async def _http(*args, **kwargs):
+        seen["json"] = kwargs["json"]
+        return _JsonResponse({"choices": [{"message": {"content": "{\"ok\": true}"}}]})
+
+    monkeypatch.setattr("app.services.adapters.llm.request_with_model_rate_limit", _http)
+    client = LLMClient("http://127.0.0.1:8000/v1/chat/completions")
+    assert client.backend == "medswin_local"
+    await client.call_llm([{"role": "user", "content": "short question"}])
+    assert seen["json"]["max_tokens"] == 384
+
+    await client.call_llm([{"role": "user", "content": "short question"}], max_tokens=32)
+    assert seen["json"]["max_tokens"] == 32
+
+    huge = "token " * 4000
+    await client.call_llm([{"role": "user", "content": huge}])
+    prompt_tokens = _estimate_message_tokens([{"role": "user", "content": huge}])
+    assert seen["json"]["max_tokens"] == _clamp_local_completion_tokens(384, prompt_tokens)
+    assert prompt_tokens + seen["json"]["max_tokens"] <= 1980 or seen["json"]["max_tokens"] == 96
+
+    monkeypatch.setattr(settings, "CLOUD_MODE", True)
+    monkeypatch.setenv("GENERATION_BACKEND", "foundry")
+    monkeypatch.setenv("FOUNDRY_MODEL", "gpt-5.4")
+    monkeypatch.setattr(settings, "CLOUD_PROVIDER", "foundry")
+    foundry = LLMClient("https://example.test/v1/chat/completions", model="gpt-5.4", api_key="key")
+    await foundry.call_llm([{"role": "user", "content": huge}], max_tokens=32)
+    assert seen["json"]["max_completion_tokens"] == 32
+    assert "max_tokens" not in seen["json"]
+
+
+def test_nist_download_sends_a_browser_user_agent(monkeypatch, tmp_path):
+    seen = {}
+
+    class _Body(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def _urlopen(request, timeout=None):
+        seen["agent"] = request.get_header("User-agent")
+        seen["url"] = request.full_url
+        return _Body(b"nist-bytes")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    dest = tmp_path / "topics2016.xml"
+    _download_url("https://trec.nist.gov/data/clinical/topics2016.xml", dest)
+    assert seen["agent"] == "Mozilla/5.0 (compatible; MedSwin-Eval/2.0)"
+    assert seen["url"] == "https://trec.nist.gov/data/clinical/topics2016.xml"
+    assert dest.read_bytes() == b"nist-bytes"
+
+
+def test_generator_contract_resolves_bedrock_and_full_local_stack(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_PROVIDER", "bedrock")
+    cloud = resolve_generator_contract("cloud")
+    assert cloud.backend == "bedrock"
+    assert cloud.model == "global.openai.gpt-6-luna"
+    assert cloud.embedding_model == "global.cohere.embed-v4:0"
+    assert cloud.reranker_model == "cohere.rerank-v3-5:0"
+    assert cloud.cloud_mode is True
+
+    medswin = resolve_generator_contract("medswin")
+    assert medswin.backend == "medswin_local"
+    assert medswin.model == EXPECTED_LOCAL_MODEL
+    assert medswin.embedding_model == "global.cohere.embed-v4:0"
+    assert medswin.cloud_mode is True
+
+    local = resolve_generator_contract("medswin", local_retrieval=True)
+    assert local.cloud_mode is False
+    assert local.backend == "medswin_local"
+    assert local.model == "MedSwin/MedSwin-DaRE-TIES-KD-0.7"
+    assert local.embedding_model == "MedEmbed-large-v0.1"
+    assert local.reranker_model == "bge-reranker-v2-m3"
+
+    environment = _profile_environment(cloud, "trec")
+    assert environment["CLOUD_PROVIDER"] == "bedrock"
+    assert environment["GENERATION_BACKEND"] == "bedrock"
+    assert environment["BEDROCK_CHAT_MODEL"] == "global.openai.gpt-6-luna"
+    assert environment["BEDROCK_EMBED_MODEL"] == "global.cohere.embed-v4:0"
+    assert environment["BEDROCK_RERANK_MODEL"] == "cohere.rerank-v3-5:0"
+    assert _retrieval_identity_matches("loaded", local.embedding_model, local.cloud_mode) is True
+    assert _retrieval_identity_matches("embed-v-4-0", cloud.embedding_model, True) is False
+
+    monkeypatch.setattr(settings, "CLOUD_PROVIDER", "foundry")
+    assert resolve_generator_contract("cloud") == GENERATOR_CONTRACTS["cloud"]
+    foundry_env = _profile_environment(GENERATOR_CONTRACTS["cloud"], "bioasq")
+    assert foundry_env["CLOUD_PROVIDER"] == "foundry"
+    assert foundry_env["FOUNDRY_MODEL"] == "gpt-5.4"
+    assert foundry_env["CLOUD_EMBEDDING"] == "embed-v-4-0"
+    assert foundry_env["CLOUD_RERANKER"] == "Cohere-rerank-v4.0-fast"

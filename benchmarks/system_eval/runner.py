@@ -17,7 +17,18 @@ from typing import Any, Iterable
 import httpx
 
 from .artifacts import atomic_json, digest, read_json
-from .contracts import CONTRACT_VERSION, GENERATOR_CONTRACTS, PIPELINE_CONTRACTS, MatrixCell, expand_matrix, parse_generators, parse_pipelines
+from .contracts import (
+    CONTRACT_VERSION,
+    GENERATOR_CONTRACTS,
+    PIPELINE_CONTRACTS,
+    GeneratorContract,
+    MatrixCell,
+    expand_matrix,
+    parse_generators,
+    parse_pipelines,
+    resolve_generator_contract,
+)
+from benchmarks.trec_cds2016.runtime import validate_local_health
 from .metrics import (
     binary_scores,
     factoid_scores,
@@ -60,6 +71,59 @@ def _truthy(value: str | None) -> bool:
     return str(value or "").lower() in {"1", "true", "yes", "on"}
 
 
+def _profile_environment(contract: GeneratorContract, dataset: str) -> dict[str, str]:
+    """Build the child-process identity for one generator profile."""
+    environment = {
+        "CLOUD_MODE": "true" if contract.cloud_mode else "false",
+        "SYSTEM_EVAL_MODE": "true",
+        "GENERATION_BACKEND": contract.backend,
+        "DISABLE_DATASET_PRELOAD": "true",
+        "SYSTEM_EVAL_DATASET": dataset,
+    }
+    if not contract.cloud_mode:
+        environment["LOCAL_INPROCESS_MODELS"] = "true"
+        environment["MEDSWIN_LLM_MODEL"] = contract.model
+        return environment
+    if contract.backend == "bedrock":
+        environment["CLOUD_PROVIDER"] = "bedrock"
+        environment["BEDROCK_CHAT_MODEL"] = contract.model
+        environment["BEDROCK_EMBED_MODEL"] = contract.embedding_model
+        environment["BEDROCK_RERANK_MODEL"] = contract.reranker_model
+        return environment
+    if contract.backend == "medswin_local":
+        environment["MEDSWIN_LLM_MODEL"] = contract.model
+        bedrock_retrieval = contract.embedding_model.startswith("global.") or contract.reranker_model.startswith("cohere.")
+        if bedrock_retrieval:
+            environment["CLOUD_PROVIDER"] = "bedrock"
+            environment["BEDROCK_EMBED_MODEL"] = contract.embedding_model
+            environment["BEDROCK_RERANK_MODEL"] = contract.reranker_model
+        else:
+            environment["CLOUD_PROVIDER"] = "foundry"
+            environment["FOUNDRY_MODEL"] = "gpt-5.4"
+            environment["CLOUD_MODEL"] = "gpt-5.4"
+            environment["CLOUD_EMBEDDING"] = contract.embedding_model
+            environment["CLOUD_RERANKER"] = contract.reranker_model
+        return environment
+    environment["CLOUD_PROVIDER"] = "foundry"
+    environment["FOUNDRY_MODEL"] = contract.model
+    environment["CLOUD_MODEL"] = contract.model
+    environment["CLOUD_EMBEDDING"] = contract.embedding_model
+    environment["CLOUD_RERANKER"] = contract.reranker_model
+    return environment
+
+
+def _retrieval_identity_matches(reported: Any, expected: str, cloud_mode: bool) -> bool:
+    """Match a cloud model id, or the local health load flag."""
+    text = str(reported or "")
+    if text == expected:
+        return True
+    if cloud_mode:
+        return False
+    if text in {"loaded", "not_loaded"}:
+        return True
+    return expected in text or Path(text).name == expected
+
+
 class ProfileLifecycle:
     """Starts a fresh API for each generator profile and validates /health."""
 
@@ -69,33 +133,28 @@ class ProfileLifecycle:
         self.process: subprocess.Popen[str] | None = None
 
     def start(self, generator: str, dataset: str) -> dict[str, Any]:
-        contract = GENERATOR_CONTRACTS[generator]
+        local_retrieval = _truthy(os.getenv("SYSTEM_EVAL_LOCAL_RETRIEVAL"))
+        contract = resolve_generator_contract(generator, local_retrieval=local_retrieval)
+        self._active_contract = contract
         environment = os.environ.copy()
-        environment.update({
-            "CLOUD_MODE": "true",
-            "SYSTEM_EVAL_MODE": "true",
-            "GENERATION_BACKEND": contract.backend,
-            "FOUNDRY_MODEL": "gpt-5.4",
-            "CLOUD_EMBEDDING": "embed-v-4-0",
-            "CLOUD_RERANKER": "Cohere-rerank-v4.0-fast",
-            "DISABLE_DATASET_PRELOAD": "true",
-            "SYSTEM_EVAL_DATASET": dataset,
-        })
+        environment.update(_profile_environment(contract, dataset))
         dataset_root = Path(environment.get("SYSTEM_EVAL_DATA_DIR", "data/system-eval")) / dataset
         environment.update({
             "HNSW_INDEX_PATH": str(dataset_root / "hnsw_index.bin"),
             "HNSW_MAPPING_PATH": str(dataset_root / "hnsw_mapping.sqlite"),
             "LEXICAL_FTS_PATH": str(dataset_root / "bm25.sqlite"),
         })
-        if generator == "medswin":
+        if contract.backend == "medswin_local":
             local_health_url = (environment.get("MEDSWIN_LLM_URL") or "http://127.0.0.1:8000/v1/chat/completions").rsplit("/v1/", 1)[0] + "/health"
             local = httpx.get(local_health_url, timeout=10).json()
-            if local.get("model") != contract.model or not str(local.get("model_revision") or "").strip():
+            revision = str(local.get("model_revision") or "").strip()
+            if local.get("model") != contract.model or not revision:
                 raise RuntimeError("local MedSwin server model/revision does not match the benchmark contract")
+            validate_local_health(local, revision)
             configured_revision = environment.get("MEDSWIN_MODEL_REVISION")
             if configured_revision and configured_revision != local.get("model_revision"):
                 raise RuntimeError("local MedSwin server revision does not match MEDSWIN_MODEL_REVISION")
-            environment["MEDSWIN_MODEL_REVISION"] = str(local["model_revision"])
+            environment["MEDSWIN_MODEL_REVISION"] = revision
         if self.managed:
             try:
                 existing = httpx.get(f"{self.base_url}/health", timeout=1)
@@ -127,19 +186,27 @@ class ProfileLifecycle:
         raise RuntimeError(f"API profile {generator} did not become ready: {last_error}")
 
     def _validate(self, health: dict[str, Any], generator: str) -> None:
-        contract = GENERATOR_CONTRACTS[generator]
+        contract = getattr(self, "_active_contract", None) or resolve_generator_contract(generator)
         expected = {
             "contract_version": CONTRACT_VERSION,
-            "cloud_mode": True,
+            "cloud_mode": contract.cloud_mode,
             "generation_backend": contract.backend,
             "generation_model": contract.model,
-            "embedding_model": contract.embedding_model,
-            "reranker_model": contract.reranker_model,
             "system_eval_mode": True,
         }
         for key, value in expected.items():
             if health.get(key) != value:
                 raise RuntimeError(f"profile mismatch for {generator}: {key}={health.get(key)!r}, expected {value!r}")
+        if not _retrieval_identity_matches(health.get("embedding_model"), contract.embedding_model, contract.cloud_mode):
+            raise RuntimeError(
+                f"profile mismatch for {generator}: embedding_model={health.get('embedding_model')!r}, "
+                f"expected {contract.embedding_model!r}"
+            )
+        if not _retrieval_identity_matches(health.get("reranker_model"), contract.reranker_model, contract.cloud_mode):
+            raise RuntimeError(
+                f"profile mismatch for {generator}: reranker_model={health.get('reranker_model')!r}, "
+                f"expected {contract.reranker_model!r}"
+            )
         if generator == "medswin" and not str(health.get("resolved_local_model_revision") or "").strip():
             raise RuntimeError("local MedSwin API health does not expose its resolved model revision")
         if sorted(health.get("supported_pipelines") or []) != ["full", "naive", "two-stage"]:
@@ -484,6 +551,9 @@ class SystemEvalRunner:
         current["platform"] = platform.platform()
         current["pipeline_contracts"] = {name: asdict(value) for name, value in PIPELINE_CONTRACTS.items()}
         current["generator_contracts"] = {name: asdict(value) for name, value in GENERATOR_CONTRACTS.items()}
+        current["resolved_generator_contracts"] = {
+            name: asdict(resolve_generator_contract(name)) for name in GENERATOR_CONTRACTS
+        }
         current.setdefault("git", self._git_metadata())
         current.setdefault("runtime", {"python": sys.version, "platform": platform.platform()})
         current.setdefault("retry_policy", {"attempts": 4, "degraded_excluded_from_quality": True})

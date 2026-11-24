@@ -105,6 +105,18 @@ class EmbeddingClient:
         self.timeout = timeout or settings.EMBED_TIMEOUT_S
         self.client = httpx.AsyncClient(timeout=self.timeout)
         self.rate_limit_key = f"embedding:{self.protocol}:{self.base_url}:{self.model}"
+        self._prefer_inprocess_local = False
+
+    def _wants_inprocess_local(self) -> bool:
+        """Return True when local mode should embed with the loaded MedEmbed model."""
+        if settings.CLOUD_MODE:
+            return False
+        if str(self.base_url).startswith("local://"):
+            return True
+        flag = os.getenv("LOCAL_INPROCESS_MODELS", "").strip().lower()
+        if flag in {"1", "true", "yes"}:
+            return True
+        return bool(getattr(self, "_prefer_inprocess_local", False))
 
     def _payload(self, texts: List[str], input_type: Optional[str]) -> dict:
         if self.protocol == "cohere_native":
@@ -157,6 +169,11 @@ class EmbeddingClient:
             input_type = configured_default or "query"
         if input_type not in {None, "query", "document", "text"}:
             raise ValueError("input_type must be query, document, text, or None")
+        if self._wants_inprocess_local():
+            local = await self._local_embed(texts)
+            if local is None:
+                raise RuntimeError("In-process local embedding model is unavailable")
+            return local
 
         payload = self._payload(texts, input_type)
         headers = _auth_headers(self.protocol, self.api_key)
@@ -198,6 +215,8 @@ class EmbeddingClient:
                 raise
             local = await self._local_embed(texts)
             if local is not None:
+                if _stick_to_local_embed(exc):
+                    self._prefer_inprocess_local = True
                 logger.warning(
                     "HTTP embedding at %s failed (%s); using locally loaded ModelManager",
                     self.base_url,
@@ -248,23 +267,50 @@ class EmbeddingClient:
         loop = asyncio.get_running_loop()
 
         def _encode() -> List[np.ndarray]:
-            inputs = tokenizer(
-                texts,
-                truncation=True,
-                padding=True,
-                max_length=settings.MAX_SEQUENCE_LENGTH,
-                return_tensors="pt",
-            )
-            inputs = {key: value.to(device) for key, value in inputs.items()}
+            # Keep each forward pass inside a 32-text slice so a 200-passage
+            # ingestion batch does not allocate one giant MPS activation.
+            batch_size = 32
+            vectors: List[np.ndarray] = []
             with torch.no_grad():
-                outputs = embed_model(**inputs)
-                pooled = _cls_pool(outputs.last_hidden_state)
-            return [row.astype(np.float32) for row in pooled.cpu().numpy()]
+                for start in range(0, len(texts), batch_size):
+                    batch = texts[start : start + batch_size]
+                    inputs = tokenizer(
+                        batch,
+                        truncation=True,
+                        padding=True,
+                        max_length=settings.MAX_SEQUENCE_LENGTH,
+                        return_tensors="pt",
+                    )
+                    inputs = {key: value.to(device) for key, value in inputs.items()}
+                    outputs = embed_model(**inputs)
+                    pooled = _cls_pool(outputs.last_hidden_state)
+                    vectors.extend(row.astype(np.float32) for row in pooled.cpu().numpy())
+                    del inputs, outputs, pooled
+            return vectors
 
         return await loop.run_in_executor(None, _encode)
 
     async def close(self):
         await self.client.aclose()
+
+
+def _stick_to_local_embed(exc: BaseException) -> bool:
+    """Remember a refused embedding port so the next batch skips the handshake."""
+    seen = set()
+    stack = [exc]
+    while stack:
+        current = stack.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, httpx.ConnectTimeout):
+            return False
+        if isinstance(current, (httpx.ConnectError, ConnectionError)):
+            return True
+        stack.append(getattr(current, "__cause__", None))
+        stack.append(getattr(current, "__context__", None))
+    text = str(exc).lower()
+    return "connection refused" in text or "all connection attempts failed" in text
 
 
 def _parse_embedding_response(data) -> List[np.ndarray]:

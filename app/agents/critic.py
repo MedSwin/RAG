@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from app.agents.base import call_claim_agent, passage_context
+from app.agents.base import call_claim_agent
 from app.prompts import claims as claim_prompts
 from app.schemas.agents import AgentClaimBatch
 from app.schemas.evidence import CandidatePassage
@@ -25,6 +25,9 @@ class ContradictionAgent:
         facet_names = ", ".join(f.name for f in (facets or []))
         user = (
             f"Query: {query}\nTarget facets: {facet_names}\n"
-            f"Identify unresolved conflicts across these passages.\n\n{passage_context(passages)}"
+            "Identify unresolved conflicts across these passages. "
+            "Distinguish genuine disagreement from outdated evidence or a population mismatch."
         )
-        return await call_claim_agent(self.client, "critic", claim_prompts.CRITIC, user, passages, facets=facets)
+        return await call_claim_agent(
+            self.client, "critic", claim_prompts.CRITIC, user, passages, facets=facets, shared_passages=passages
+        )

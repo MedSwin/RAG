@@ -196,7 +196,7 @@ async def pipelines_ready():
         "pipelines": [item.value for item in PipelineId],
         "cloud_mode": settings.CLOUD_MODE,
         "embedding_model": settings.active_embedding_model(),
-        "reranker_model": settings.active_reranker_model() if settings.CLOUD_MODE else None,
+        "reranker_model": settings.active_reranker_model(),
         "generation_backend": settings.resolved_generation_backend(),
         "generation_model": settings.active_generation_model(),
         "system_eval_mode": settings.SYSTEM_EVAL_MODE,

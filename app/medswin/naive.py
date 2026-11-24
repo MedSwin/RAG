@@ -309,18 +309,23 @@ class NaiveRAGOrchestrator:
                     abstained=True,
                 )
 
+            local_2k = getattr(self.llm, "backend", "") in {"medswin_local", "local_http"}
+            effective_char_ceiling = (
+                min(settings.NAIVE_MAX_CONTEXT_CHARS, 2800) if local_2k else settings.NAIVE_MAX_CONTEXT_CHARS
+            )
+            effective_token_budget = min(settings.TOKEN_BUDGET_B, 950) if local_2k else settings.TOKEN_BUDGET_B
             packed = _truncate_context(
                 passages[:k],
-                settings.NAIVE_MAX_CONTEXT_CHARS,
-                settings.TOKEN_BUDGET_B,
+                effective_char_ceiling,
+                effective_token_budget,
             )
             packed_tokens = sum(token_count(passage) for passage in packed)
             trace.tool_calls.append(
                 ToolCall(
                     tool_name="packing.naive",
                     parameters={
-                        "token_budget": settings.TOKEN_BUDGET_B,
-                        "char_ceiling": settings.NAIVE_MAX_CONTEXT_CHARS,
+                        "token_budget": effective_token_budget,
+                        "char_ceiling": effective_char_ceiling,
                     },
                     result={
                         "retrieved_passages": len(passages),
@@ -462,8 +467,11 @@ class NaiveRAGOrchestrator:
     ) -> tuple[str, Optional[AnswerArtifact]]:
         if not passages:
             raise RuntimeError("Naive RAG cannot generate without retrieved passages")
+        local_2k = getattr(self.llm, "backend", "") in {"medswin_local", "local_http"}
+        per_passage_cap = 2600 if local_2k else None
         context = "\n\n".join(
-            f"[{idx}] chunk_id={passage.chunk_id} doc_id={passage.doc_id}\n{passage.text}"
+            f"[{idx}] chunk_id={passage.chunk_id} doc_id={passage.doc_id}\n"
+            f"{(passage.text or '')[:per_passage_cap] if per_passage_cap else (passage.text or '')}"
             for idx, passage in enumerate(passages, start=1)
         )
         instruction = (

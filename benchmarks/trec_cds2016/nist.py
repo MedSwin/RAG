@@ -65,6 +65,20 @@ def verify_nist(directory: Path | None = None) -> dict[str, str]:
     return verified
 
 
+def _download_url(url: str, dest: Path) -> None:
+    """Download one NIST or trec_eval file.
+
+    Python's default urllib User-Agent receives HTTP 403 from trec.nist.gov.
+    """
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; MedSwin-Eval/2.0)"},
+    )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(request) as response, dest.open("wb") as handle:
+        shutil.copyfileobj(response, handle)
+
+
 def download_nist(directory: Path | None = None, force: bool = False) -> dict[str, str]:
     root = directory or NIST_DIR
     root.mkdir(parents=True, exist_ok=True)
@@ -73,7 +87,7 @@ def download_nist(directory: Path | None = None, force: bool = False) -> dict[st
         if path.exists() and not force:
             continue
         tmp = path.with_suffix(path.suffix + ".tmp")
-        urllib.request.urlretrieve(spec["url"], tmp)
+        _download_url(spec["url"], tmp)
         tmp.replace(path)
     return verify_nist(root)
 
@@ -112,7 +126,7 @@ def ensure_trec_eval() -> Path:
     if not extracted:
         archive = BIN_DIR / "trec_eval-v9.0.8.tar.gz"
         if not archive.is_file():
-            urllib.request.urlretrieve(TREC_EVAL_RELEASE, archive)
+            _download_url(TREC_EVAL_RELEASE, archive)
         subprocess.run(
             ["tar", "-xzf", str(archive), "-C", str(BIN_DIR)],
             check=True,

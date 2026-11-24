@@ -60,6 +60,8 @@ benchmarks/expert/packs/
 
 .claude*
 .codex*
+graphify-out/
+research_notes/
 
 __pycache__*
 .pytest_cache*
