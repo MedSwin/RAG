@@ -2094,6 +2094,41 @@ def test_a_named_allergy_conflicts_with_the_same_drug_order():
     assert all("apixaban" not in pair.reason for pair in blocked)
 
 
+def test_a_different_drug_does_not_raise_an_interaction():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("Which dose?", QuerySpec(canonical_terms=["dose"]))
+
+    def passage(chunk_id: str, text: str, source: SourceType = SourceType.SAFETY) -> CandidatePassage:
+        return CandidatePassage(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=source,
+            text=text,
+            section="Safety",
+            calibrated_score=0.90,
+            evidence_grade_score=0.95,
+        )
+
+    def pairs_for(note: str, other: str):
+        return detect_contradictions(
+            build_retrieval_ledger(
+                [passage("note", note), passage("other", other, SourceType.CPG)],
+                facets,
+            )
+        )
+
+    assert pairs_for("Avoid aspirin.", "Start warfarin.") == []
+    assert pairs_for("The patient takes aspirin.", "Start warfarin.") == []
+    assert pairs_for("Allergic to penicillin.", "Start amoxicillin.") == []
+    warning = build_retrieval_ledger([passage("war", "Avoid warfarin.")], facets)
+    assert chart_contradictions("Takes aspirin.", warning) == []
+    assert chart_contradictions("Allergic to penicillin.", warning) == []
+    same = pairs_for("Allergic to warfarin.", "Start warfarin.")
+    assert len(same) == 1
+    assert "warfarin" in same[0].reason
+
+
 def test_an_order_after_a_contraindication_keeps_that_order():
     from app.medswin.normalize import QueryNormalizer
 
