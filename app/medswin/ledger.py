@@ -822,6 +822,10 @@ _TAKING = re.compile(
     r"(?:^|\b(?:is|was|were|are|am|been|being|patient)\s+)taking\b",
     re.I,
 )
+_RECEIVING = re.compile(
+    r"(?:^|\b(?:is|was|were|are|am|been|being|patient)\s+)receiv(?:e|es|ed|ing)\b",
+    re.I,
+)
 _ARRIVAL_ON = re.compile(
     r"\b(?:came|come|comes|coming|admitted|admission|discharg(?:e|ed|ing)|"
     r"presents?|presented|presenting|brought|went|goes|going|gone|sent|sends|sending)\b"
@@ -996,6 +1000,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
         return True
     if _taking_drug(sentence):
         return True
+    if _receiving_drug(sentence):
+        return True
     if _arrival_on_drug(sentence):
         return True
     if _dependent_on_drug(sentence):
@@ -1103,6 +1109,30 @@ def _taking_drug(sentence: str) -> bool:
             continue
         if _object_is_drug(text[match.end():]):
             return True
+    return False
+
+
+def _receiving_drug(sentence: str) -> bool:
+    """True when the patient is receiving a named drug."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _ON_TOPIC
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text):
+        return False
+    if not re.search(r"\bpatients?\b", text, re.I) and not re.match(r"\s*receiv", text, re.I):
+        return False
+    for match in _RECEIVING.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        tail = text[match.end():]
+        if not _direct_drug_object(tail):
+            continue
+        content = _content_words(tail)
+        nxt = content[1] if len(content) >= 2 else ""
+        if nxt and _ON_TOPIC.match(nxt):
+            continue
+        return True
     return False
 
 
@@ -1468,6 +1498,7 @@ def _chart_caution_text(chart: str) -> str:
         _off_drug_stop,
         _not_for_stop,
         _not_on_stop,
+        _not_receiving_stop,
         _med_list_stop,
         _refused_stop,
         _negated_away_split,
@@ -1488,6 +1519,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _off_drug_stop(sentence)
                 or _not_for_stop(sentence)
                 or _not_on_stop(sentence)
+                or _not_receiving_stop(sentence)
                 or _med_list_stop(sentence)
                 or _refused_stop(sentence)
             ):
