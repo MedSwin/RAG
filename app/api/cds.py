@@ -36,6 +36,7 @@ async def default_cds_chat(
     user_id: str,
     org_id: str,
     patient_id: Optional[str],
+    hook_instance: Optional[str] = None,
 ):
     """Run the two-stage gate. Tests replace this dependency."""
     from app.api.v1.endpoints.pipelines import get_two_stage
@@ -46,6 +47,7 @@ async def default_cds_chat(
         org_id=org_id,
         patient_id=patient_id,
         constraints={},
+        hook_instance=hook_instance,
     )
 
 
@@ -139,6 +141,7 @@ async def cds_service(
         user_id=user_id,
         org_id=org_id,
         patient_id=patient_id,
+        hook_instance=body.hookInstance,
     )
     return {"cards": cards_from_chat(response, hook_instance=body.hookInstance, patient_id=patient_id)}
 

@@ -44,6 +44,7 @@ _TRACE_IDENTITY_KEYS = {
     "org_id",
     "user_id",
     "patient_id",
+    "hook_instance",
 }
 
 

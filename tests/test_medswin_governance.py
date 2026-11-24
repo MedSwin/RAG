@@ -52,11 +52,15 @@ def test_a_stored_trace_redacts_free_text_and_keeps_ids(monkeypatch):
         user_id="dr-chen",
         org_id="org-a",
         patient_id="pt-1",
+        hook_instance="555-234-5678",
+        generator_profile="medswin",
         query="Call the ward at 555-234-5678 about MRN: ABCD99",
     )
     asyncio.run(repo.create(trace, "org-a"))
     assert store.saved["trace_id"] == "trace-1"
     assert store.saved["patient_id"] == "pt-1"
+    assert store.saved["hook_instance"] == "555-234-5678"
+    assert store.saved["generator_profile"] == "medswin"
     assert "555-234-5678" not in store.saved["query"]
     assert "ABCD99" not in store.saved["query"]
     assert "[REDACTED_PHONE]" in store.saved["query"]

@@ -515,12 +515,16 @@ def test_failed_request_does_not_leak_previous_ranked_evidence():
 
     embedder.empty = False
     normalizer.fail = True
-    third = asyncio.run(orchestrator.chat(query="q3", user_id="u3", org_id="org-c"))
+    third = asyncio.run(
+        orchestrator.chat(query="q3", user_id="u3", org_id="org-c", hook_instance="hook-9")
+    )
     assert third.ranked_evidence == []
     assert third.degraded_mode.get("error") is True
     assert third.policy_decision is not None
     assert third.policy_decision.passed is False
     assert third.answer_artifact.abstained is True
     assert stored[-1].error_type == "RuntimeError"
+    assert stored[-1].generator_profile == third.generator_profile
+    assert stored[-1].hook_instance == "hook-9"
     assert "normalizer failed" not in (stored[-1].final_answer or "")
 

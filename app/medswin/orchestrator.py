@@ -266,6 +266,7 @@ class MedSwinOrchestrator:
         patient_id: Optional[str] = None,
         constraints: Optional[Dict[str, Any]] = None,
         benchmark: Optional[Dict[str, Any]] = None,
+        hook_instance: Optional[str] = None,
     ) -> ChatResponse:
         started = time.perf_counter()
         trace_id = str(uuid.uuid4())
@@ -282,6 +283,8 @@ class MedSwinOrchestrator:
             query=query,
             patient_id=patient_id,
             pipeline=self.pipeline,
+            generator_profile=_generator_profile(self.supervisor),
+            hook_instance=(hook_instance or "").strip() or None,
         )
         ranked_evidence: List[RankedEvidenceItem] = []
 

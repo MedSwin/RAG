@@ -214,6 +214,7 @@ def test_cds_service_accepts_a_fhir_user_reference(monkeypatch):
     assert seen["user_id"] == "dr-chen"
     assert seen["patient_id"] == "pt-1"
     assert seen["question"] == "Which anticoagulant is safer?"
+    assert seen["hook_instance"] == "hook-1"
 
 
 def test_cds_service_requires_a_token_when_auth_is_on(monkeypatch):

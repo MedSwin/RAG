@@ -223,6 +223,7 @@ class NaiveRAGOrchestrator:
         constraints: Optional[Dict[str, Any]] = None,
         top_k: Optional[int] = None,
         benchmark: Optional[Dict[str, Any]] = None,
+        hook_instance: Optional[str] = None,
     ) -> ChatResponse:
         started = time.perf_counter()
         constraints = constraints or {}
@@ -243,6 +244,14 @@ class NaiveRAGOrchestrator:
             query=query,
             patient_id=patient_id,
             pipeline=PIPELINE_ID,
+            generator_profile=(
+                "cloud"
+                if getattr(self.llm, "backend", "") == "foundry"
+                else "medswin"
+                if getattr(self.llm, "backend", "") == "medswin_local"
+                else getattr(self.llm, "backend", "test")
+            ),
+            hook_instance=(hook_instance or "").strip() or None,
         )
         trace.degraded_mode.update(session_state)
 
