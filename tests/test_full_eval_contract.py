@@ -61,6 +61,46 @@ def test_local_generator_health_requires_exact_pinned_revision():
         validate_local_health(health, "different")
 
 
+def test_a_labelled_hit_from_another_organisation_is_dropped():
+    import numpy as np
+
+    from app.indexes.hybrid import HybridIndex
+    from app.indexes.labels import encode_label
+
+    stage = type("Stage", (), {})()
+    stage.mapping = {
+        "0": encode_label("shared", "org-a"),
+        "1": encode_label("shared", "org-b"),
+    }
+
+    def _query(embedding, k):
+        return np.array([0, 1]), np.array([0.1, 0.9])
+
+    stage.query = _query
+    index = HybridIndex()
+    index._load = lambda embedding_dim: None
+    index._hnsw = stage
+    index._faiss = None
+    chunk_ids, scores = index.query(np.zeros(4, dtype=np.float32), 2, org_id="org-b")
+    assert chunk_ids == ["shared"]
+    assert abs(scores["shared"] - 0.1) < 1e-9
+
+
+def test_sqlite_label_mapping_keeps_the_organisation(tmp_path):
+    path = tmp_path / "mapping.sqlite"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE mapping(label INTEGER PRIMARY KEY, chunk_id TEXT NOT NULL, org_id TEXT)")
+    conn.execute("INSERT INTO mapping(label, chunk_id, org_id) VALUES (0, 'shared', 'org-a')")
+    conn.commit()
+    conn.close()
+    mapping = SQLiteLabelMapping(str(path))
+    try:
+        assert mapping.resolve("0") == ("org-a", "shared")
+        assert mapping.get("0") == "shared"
+    finally:
+        mapping.close()
+
+
 def test_sqlite_hnsw_label_mapping_is_lazy_and_exact(tmp_path):
     path = tmp_path / "mapping.sqlite"
     conn = sqlite3.connect(path)

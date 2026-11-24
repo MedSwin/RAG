@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from app.core.config import settings
+from app.indexes.labels import resolve_label
 
 logger = logging.getLogger(__name__)
 
@@ -125,11 +126,13 @@ class HybridIndex:
         self,
         query_embedding: np.ndarray,
         k: int,
+        org_id: Optional[str] = None,
     ) -> Tuple[List[str], Dict[str, float]]:
-        """Return chunk_ids and dense similarity scores."""
+        """Return chunk_ids and dense similarity scores for one organisation."""
         embedding_dim = int(query_embedding.shape[-1])
         self._load(embedding_dim)
         scores: Dict[str, float] = {}
+        requested_org = str(org_id or "").strip() or None
 
         def _ingest(index: Any, label: str) -> None:
             if index is None:
@@ -139,8 +142,10 @@ class HybridIndex:
                 labels = np.asarray(labels).reshape(-1)
                 distances = np.asarray(distances).reshape(-1)
                 for i, lab in enumerate(labels):
-                    chunk_id = index.mapping.get(str(int(lab)))
+                    owner, chunk_id = resolve_label(index.mapping, lab)
                     if not chunk_id:
+                        continue
+                    if requested_org and owner and owner != requested_org:
                         continue
                     sim = ann_similarity(float(distances[i]), label) if i < len(distances) else 0.0
                     prev = scores.get(chunk_id)

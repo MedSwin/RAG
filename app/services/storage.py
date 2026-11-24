@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from app.core.config import settings
+from app.indexes.labels import encode_label
 from app.core.database import get_sync_database, get_database
 from app.services.adapters.embedding import EmbeddingClient
 try:
@@ -394,7 +395,7 @@ class StorageService:
 
             chunks = list(coll.find(
                 active_filter,
-                {"chunk_id": 1, "doc_id": 1, "source_type": 1, "embedding": 1, "embedding_dim": 1, "metadata": 1},
+                {"chunk_id": 1, "org_id": 1, "doc_id": 1, "source_type": 1, "embedding": 1, "embedding_dim": 1, "metadata": 1},
             ))
             if not chunks:
                 return {
@@ -419,7 +420,7 @@ class StorageService:
                     )
                     continue
                 embeddings.append(chunk["embedding"])
-                chunk_ids.append(chunk["chunk_id"])
+                chunk_ids.append(encode_label(str(chunk["chunk_id"]), chunk.get("org_id")))
             if not embeddings:
                 return {
                     "success": False,

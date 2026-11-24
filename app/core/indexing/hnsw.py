@@ -2,6 +2,8 @@
 
 import logging
 import sqlite3
+
+from app.indexes.labels import decode_label
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -31,8 +33,35 @@ class SQLiteLabelMapping:
             label = int(key)
         except (TypeError, ValueError):
             return default
+        org_id, chunk_id = self.resolve(label)
+        return chunk_id if chunk_id else default
+
+    def resolve(self, key: str):
+        """Return the organisation and the chunk id. A legacy row has no organisation."""
+        try:
+            label = int(key)
+        except (TypeError, ValueError):
+            return None, None
+        if self._has_org_column():
+            row = self._conn.execute(
+                "SELECT chunk_id, org_id FROM mapping WHERE label = ?",
+                (label,),
+            ).fetchone()
+            if not row:
+                return None, None
+            return (row[1] or None), row[0]
         row = self._conn.execute("SELECT chunk_id FROM mapping WHERE label = ?", (label,)).fetchone()
-        return row[0] if row else default
+        if not row:
+            return None, None
+        return decode_label(row[0])
+
+    def _has_org_column(self) -> bool:
+        cached = getattr(self, "_org_column", None)
+        if cached is not None:
+            return cached
+        rows = self._conn.execute("PRAGMA table_info(mapping)").fetchall()
+        self._org_column = any(row[1] == "org_id" for row in rows)
+        return self._org_column
 
     def close(self) -> None:
         try:

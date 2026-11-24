@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # and necessary: otherwise a shared top-k can be dominated by another tenant or
 # by the 1.25M literature corpus before Mongo metadata filtering occurs.
 EXACT_FILTER_SCAN_MAX = 5_000
+WIDE_ANN_K = 2_000
 
 
 def _cosine(query: np.ndarray, vector: List[float]) -> float:
@@ -115,7 +116,7 @@ class DenseRetriever:
             # resolution. Oversample the shared index even without an explicit
             # source filter, then use bounded exact recovery for small scopes.
             ann_k = max(k, min(k * 4, 500))
-            chunk_ids, score_map = self.index.query(query_embedding, ann_k)
+            chunk_ids, score_map = self.index.query(query_embedding, ann_k, org_id=org_id)
             filter_dict = retrieval_filter(org_id, source_type_filter, patient_id, constraints)
             candidates: List[CandidatePassage] = []
             if chunk_ids:
@@ -140,6 +141,23 @@ class DenseRetriever:
                     if existing is None or (candidate.dense_score or 0.0) > (existing.dense_score or 0.0):
                         by_id[candidate.chunk_id] = candidate
                 candidates = list(by_id.values())
+            if len(candidates) < k and ann_k < WIDE_ANN_K:
+                try:
+                    db = get_database()
+                    scoped_count = await db.chunks.count_documents(filter_dict, limit=EXACT_FILTER_SCAN_MAX + 1)
+                    if scoped_count > EXACT_FILTER_SCAN_MAX:
+                        wide_ids, wide_scores = self.index.query(query_embedding, WIDE_ANN_K, org_id=org_id)
+                        missing = [chunk_id for chunk_id in wide_ids if chunk_id not in {item.chunk_id for item in candidates}]
+                        if missing:
+                            wide_filter = dict(filter_dict)
+                            wide_filter["chunk_id"] = {"$in": missing}
+                            wide_chunks = await db.chunks.find(wide_filter).to_list(length=len(missing))
+                            candidates.extend(
+                                _passage(chunk, wide_scores.get(chunk["chunk_id"], 0.0), "dense")
+                                for chunk in wide_chunks
+                            )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Wide ANN recovery failed: %s", exc)
 
             candidates.sort(key=lambda item: item.dense_score or 0.0, reverse=True)
             return candidates[:k]
