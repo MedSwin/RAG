@@ -796,6 +796,69 @@ def test_an_empty_accept_is_stored_as_insufficient():
     assert stored[-1].policy_decisions[-1].action == PolicyAction.INSUFFICIENT_EVIDENCE
 
 
+def test_a_synthesis_abstain_is_the_last_stored_decision():
+    import asyncio
+
+    from app.schemas.evidence import AnswerArtifact, AnswerProvenance, EvidenceBundle, PolicyDecision
+
+    stored = []
+
+    class Traces:
+        async def create(self, trace, org_id):
+            stored.append(trace)
+            return {}
+
+    class Sessions:
+        async def create(self, session, org_id):
+            return {}
+
+    class Normalizer:
+        async def normalize(self, query, trace):
+            return QuerySpec(canonical_terms=["treatment"])
+
+        def build_facets(self, query, query_spec, constraints, patient_id):
+            return [ClinicalFacet(name="treatment", required=True, threshold=0.7)]
+
+    passage = CandidatePassage(
+        chunk_id="c1",
+        doc_id="d1",
+        source_type=SourceType.CPG,
+        text="Guideline text.",
+        calibrated_score=0.9,
+    )
+    accept = PolicyDecision(passed=True, action=PolicyAction.ACCEPT, reason="gate passed")
+    bundle = EvidenceBundle(
+        passages=[passage],
+        total_tokens=12,
+        cpg_count=1,
+        emr_count=0,
+        lit_count=0,
+        policy_decision=accept,
+    )
+
+    async def _retrieve(**kwargs):
+        kwargs["trace"].policy_decisions.append(accept)
+        return bundle, type("Check", (), {"iteration": 0, "policy_decision": accept})()
+
+    async def _abstain(*args, **kwargs):
+        return "", AnswerProvenance(), AnswerArtifact(content="", rendered_text="", abstained=True)
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.session_repo = Sessions()
+    orchestrator.trace_repo = Traces()
+    orchestrator.normalizer = Normalizer()
+    orchestrator._retrieve_with_sufficiency = _retrieve
+    orchestrator.synthesis_agent.synthesize_with_artifact = _abstain
+    response = asyncio.run(orchestrator.chat(query="q", user_id="u1", org_id="org1"))
+    actions = [item.action for item in stored[-1].policy_decisions]
+    assert actions[0] == PolicyAction.ACCEPT
+    assert actions[-1] == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert response.policy_decision.passed is False
+
+
 def test_trace_failure_keeps_the_gated_answer():
     import asyncio
 
