@@ -651,6 +651,45 @@ def test_a_low_caution_is_named_when_the_gate_abstains():
     assert "qualifies apixaban" not in mixed_text.lower()
 
 
+def test_a_caution_qualifier_does_not_conflict_with_an_avoid():
+    qualifier = _entry(
+        "qual",
+        "guideline_concordance",
+        "Use apixaban with caution.",
+        EvidencePolarity.QUALIFIES,
+        grade=0.95,
+    )
+    avoid = _entry(
+        "avoid",
+        "guideline_concordance",
+        "Avoid apixaban when bleeding is active.",
+        EvidencePolarity.CONTRADICTS,
+        grade=0.95,
+    )
+    other = _entry(
+        "other",
+        "guideline_concordance",
+        "Metformin is first-line.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    pairs = detect_contradictions([qualifier, avoid, other])
+    assert pairs == []
+
+    recommendation = _entry(
+        "apix",
+        "guideline_concordance",
+        "Apixaban is recommended.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    named = detect_contradictions([qualifier, avoid, recommendation])
+    assert [pair.chunk_id_a for pair in named] == ["apix", "apix"]
+    assert {pair.severity for pair in named} == {"high", "low"}
+    assert any(pair.chunk_id_b == "avoid" and pair.severity == "high" for pair in named)
+    assert any(pair.chunk_id_b == "qual" and pair.severity == "low" for pair in named)
+
+
 def test_same_drug_caution_qualifies_the_recommendation():
     support = _entry(
         "cpg-apixaban",

@@ -318,7 +318,6 @@ def _supports_facet(claim: EvidenceClaim, facet: str) -> bool:
         return False
     return claim.polarity in {
         EvidencePolarity.SUPPORTS,
-        EvidencePolarity.QUALIFIES,
         EvidencePolarity.SAFETY,
     }
 
