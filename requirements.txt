@@ -17,6 +17,8 @@ torch==2.8.0
 torchvision==0.23.0
 torchaudio==2.8.0
 transformers==4.56.1
+sentencepiece==0.2.1
+protobuf==6.33.1
 sentence-transformers==3.1.1
 scikit-learn==1.5.2
 
