@@ -97,6 +97,7 @@ def test_a_drug_named_after_the_claim_preview_still_conflicts():
     ]
     ledger = build_retrieval_ledger([support, warning], facets)
     assert "apixaban" not in ledger[0].claims[0].claim.lower()
+    assert ledger[1].claims[0].claim.lower().startswith("avoid apixaban.")
     pairs = detect_contradictions(ledger)
     assert any(pair.chunk_id_a == "cpg-late" and pair.chunk_id_b == "safety-late" for pair in pairs)
 

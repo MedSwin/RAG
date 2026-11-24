@@ -15,6 +15,7 @@ from app.schemas.evidence import (
 )
 from app.schemas.facets import ClinicalFacet
 from app.scoring.coverage import infer_polarity, score_passage_facets
+from app.services.medswin.governance import lead_with_caution
 from app.scoring.calibrate import clamp, first_present
 from app.scoring.hierarchy import evidence_grade_from_metadata
 
@@ -56,7 +57,7 @@ def build_retrieval_ledger(
             claims.append(
                 EvidenceClaim(
                     facet=facet.name,
-                    claim=" ".join(passage.text.split())[:280],
+                    claim=" ".join(lead_with_caution(passage.text).split())[:280],
                     polarity=infer_polarity(passage, facet),
                     chunk_id=passage.chunk_id,
                     confidence=clamp(score),
