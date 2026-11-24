@@ -1059,6 +1059,7 @@ def _is_continuation_sentence(sentence: str) -> bool:
         _negated_off_keep,
         _negated_source_keep,
         _on_object_is_drug,
+        _ON_TOPIC,
         _ungoverned_caution,
     )
 
@@ -1127,6 +1128,20 @@ def _is_continuation_sentence(sentence: str) -> bool:
         if match.group(0).lower() == "continued" and continued:
             continue
         if _object_is_drug(sentence[match.end():]):
+            return True
+        if match.group(0).lower() != "continued":
+            continue
+        window = sentence[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        prefix = sentence[: match.start()]
+        tail = sentence[match.end():]
+        tail_words = re.findall(r"[A-Za-z0-9'-]+", tail)
+        if any(_ON_TOPIC.match(word) for word in tail_words) or _MONITOR_WORD.search(tail or ""):
+            continue
+        if intervention_tokens(tail):
+            continue
+        if _home_subject_is_drug(prefix):
             return True
     for match in _KEEP_VERB.finditer(sentence or ""):
         window = sentence[max(0, match.start() - 48): match.start()]

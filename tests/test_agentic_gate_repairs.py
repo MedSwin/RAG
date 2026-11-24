@@ -129,6 +129,8 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
     for chart in (
         "Warfarin should be continued.",
         "Warfarin was continued.",
+        "Warfarin continued.",
+        "The warfarin continued.",
         "The patient continued warfarin.",
         "Remain on warfarin.",
         "Stays on warfarin.",
@@ -317,6 +319,9 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "Continue to monitor warfarin.",
         "Continue warfarin monitoring.",
         "Warfarin monitoring should be continued.",
+        "Warfarin continued monitoring.",
+        "Warfarin monitoring continued.",
+        "The note about warfarin continued.",
         "Monitoring of warfarin should be continued.",
         "Continue INR checks for warfarin.",
         "Do not continue warfarin.",
