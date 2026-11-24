@@ -238,6 +238,30 @@ def test_unresolved_conflict_returns_a_critical_card():
     assert cards[0]["indicator"] == "critical"
 
 
+def test_a_chart_caution_is_on_the_critical_card():
+    from app.medswin.ledger import PATIENT_CHART_ID
+    from app.schemas.evidence import ContradictionPair
+
+    response = _response(accepted=True, unresolved=True)
+    response.contradictions = [
+        ContradictionPair(
+            facet="guideline_concordance",
+            chunk_id_a="chunk-1",
+            chunk_id_b=PATIENT_CHART_ID,
+            severity="high",
+            reason=(
+                "Chart caution: Avoid apixaban. | "
+                "Same-drug safety warning conflicts with this recommendation for apixaban."
+            ),
+        )
+    ]
+    card = cards_from_chat(response)[0]
+    assert card["indicator"] == "critical"
+    assert card["summary"] == "Unresolved evidence conflicts for apixaban need clinician review."
+    assert "Chart caution: Avoid apixaban." in card["detail"]
+    assert "patient-chart" not in card["summary"]
+
+
 def test_a_critical_card_names_the_conflict_drug():
     from app.schemas.evidence import ContradictionPair
 

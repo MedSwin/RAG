@@ -291,6 +291,28 @@ def test_a_low_caution_is_named_when_the_gate_abstains():
     )
     assert "high-severity" in high_text.lower()
     assert "apixaban" in high_text.lower()
+    from app.medswin.ledger import PATIENT_CHART_ID
+
+    chart_decision = PolicyDecision(
+        passed=False,
+        action=PolicyAction.INSUFFICIENT_EVIDENCE,
+        reason="Unresolved evidence conflicts for apixaban need clinician review.",
+        unresolved_critical_conflicts=True,
+        contradictions=[
+            ContradictionPair(
+                facet="guideline_concordance",
+                chunk_id_a="cpg",
+                chunk_id_b=PATIENT_CHART_ID,
+                severity="high",
+                reason=(
+                    "Chart caution: Avoid apixaban. | "
+                    "Same-drug safety warning conflicts with this recommendation for apixaban."
+                ),
+            )
+        ],
+    )
+    chart_text = insufficient_answer("Which dose?", chart_decision)
+    assert "Chart caution: Avoid apixaban." in chart_text
 
 
 def test_same_drug_caution_qualifies_the_recommendation():
@@ -1518,7 +1540,10 @@ def test_a_chart_caution_conflicts_with_the_same_drug():
     )
     metformin.text = "Metformin is recommended."
     assert chart_contradictions("Avoid apixaban. Metformin is continued.", [metformin]) == []
-    assert chart_contradictions("Avoid apixaban. Metformin is continued.", [support])
+    mixed = chart_contradictions("Avoid apixaban. Metformin is continued.", [support])
+    assert mixed
+    assert mixed[0].reason.startswith("Chart caution: Avoid apixaban")
+    assert "Metformin is continued" not in mixed[0].reason
     from app.schemas.enums import ClinicalScope
 
     gate = EvidenceGate()

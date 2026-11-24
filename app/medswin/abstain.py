@@ -79,6 +79,12 @@ def insufficient_answer(
             _caution_drug_name(passages or [], decision, decision.contradictions)
         )
         conflict += f" {caution} Review the paired evidence before a therapy change."
+    from app.medswin.cds import _chart_caution_line
+
+    chart_line = _chart_caution_line(decision, decision.contradictions)
+    if chart_line and chart_line.lower() not in conflict.lower():
+        sentence = chart_line if chart_line.endswith(".") else f"{chart_line}."
+        conflict += f" {sentence}"
     body = (
         f"The available evidence is insufficient to provide a grounded clinician decision-support "
         f"answer for the query: {redact_phi_text(query)}. "

@@ -110,6 +110,7 @@ def cards_from_chat(
         qualifying=_has_unresolved_caution(decision, contradictions),
         caution_name=_caution_drug_name(passages, decision, contradictions),
         conflict_drug=_caution_drug_name(passages, decision, contradictions, severity="high"),
+        chart_caution=_chart_caution_line(decision, contradictions),
     )
     card: Dict[str, Any] = {
         "uuid": response.trace_id or str(uuid.uuid4()),
@@ -181,6 +182,25 @@ def _clip(text: str) -> str:
     if len(compact) <= _SUMMARY_LIMIT:
         return compact
     return compact[: _SUMMARY_LIMIT - 1].rstrip() + "…"
+
+
+def _chart_caution_line(decision: Any, contradictions: List[Any]) -> str:
+    """Return the chart caution sentence stored on a chart conflict."""
+    from app.medswin.ledger import PATIENT_CHART_ID
+
+    pairs = list(contradictions or [])
+    if decision is not None:
+        pairs.extend(list(getattr(decision, "contradictions", []) or []))
+    for item in pairs:
+        if getattr(item, "resolved", False):
+            continue
+        if PATIENT_CHART_ID not in {item.chunk_id_a, item.chunk_id_b}:
+            continue
+        reason = item.reason or ""
+        if " | " not in reason or not reason.startswith("Chart caution:"):
+            continue
+        return reason.split(" | ", 1)[0].strip()
+    return ""
 
 
 def _caution_summary(drug_name: str) -> str:
@@ -258,6 +278,7 @@ def _detail(
     qualifying: bool = False,
     caution_name: str = "",
     conflict_drug: str = "",
+    chart_caution: str = "",
 ) -> str:
     missing_text = ", ".join(missing) if missing else "none"
     passage_text = ", ".join(passage_ids) if passage_ids else "none"
@@ -275,6 +296,9 @@ def _detail(
         lead = f"{lead} {_caution_summary(caution_name)}"
     if conflict_drug and conflict_drug.lower() not in reason.lower():
         lead = f"{lead} Unresolved evidence conflicts for {conflict_drug} need clinician review."
+    if chart_caution and chart_caution.lower() not in lead.lower():
+        sentence = chart_caution if chart_caution.endswith(".") else f"{chart_caution}."
+        lead = f"{lead} {sentence}"
     return (
         f"{lead} "
         f"Missing facets: {missing_text}. "

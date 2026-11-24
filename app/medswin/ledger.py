@@ -440,13 +440,17 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
             else:
                 reason = "Same-drug caution qualifies this recommendation."
                 severity = "low"
+            span = " ".join(text.split())
             pairs.append(
                 ContradictionPair(
                     facet=claim.facet,
                     chunk_id_a=entry.chunk_id,
                     chunk_id_b=PATIENT_CHART_ID,
                     severity=severity,
-                    reason=_reason_with_drug(reason, support_text, text),
+                    reason=(
+                        f"Chart caution: {span} | "
+                        f"{_reason_with_drug(reason, support_text, text)}"
+                    ),
                     grade_a=entry.evidence_grade.score,
                     grade_b=0.0,
                 )
