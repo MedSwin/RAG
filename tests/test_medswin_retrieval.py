@@ -409,6 +409,57 @@ def test_a_drug_past_twelve_words_stays_in_the_same_caution_sentence():
     assert "metformin" not in pairs[0].reason.lower()
 
 
+def test_a_second_drug_in_the_same_caution_sentence_still_blocks():
+    from app.medswin.ledger import chart_contradictions
+    from app.medswin.orchestrator import _chart_synopsis
+    from app.retrieval.lexical import LexicalRetriever
+    from app.schemas.enums import EvidencePolarity, SourceType
+    from app.schemas.evidence import EvidenceClaim, EvidenceGrade, EvidenceLedgerEntry
+
+    gap = (
+        "after the prolonged bleeding risk that applies during a recent admission "
+        "and the later clinic review also names"
+    )
+    assert len(gap.split()) > 4
+    note = (
+        f"Avoid warfarin {gap} apixaban. Metformin is continued. "
+        + " ".join(f"history{i}" for i in range(20))
+    )
+    synopsis = _chart_synopsis([{"text": note}])
+    terms = LexicalRetriever._lexical_terms(
+        f"Which dose?\n\nPatient retrieval context:\n{synopsis}"
+    )
+    assert "warfarin" in terms
+    assert "apixaban" in terms
+    assert "history0" not in terms
+    assert "metformin" not in terms
+
+    def support(chunk_id: str, text: str) -> EvidenceLedgerEntry:
+        return EvidenceLedgerEntry(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=SourceType.CPG,
+            text=text,
+            evidence_grade=EvidenceGrade(score=0.90),
+            claims=[
+                EvidenceClaim(
+                    facet="guideline_concordance",
+                    claim=text,
+                    polarity=EvidencePolarity.SUPPORTS,
+                    chunk_id=chunk_id,
+                    confidence=0.9,
+                )
+            ],
+        )
+
+    apixaban_pairs = chart_contradictions(synopsis, [support("apix", "Apixaban is recommended.")])
+    warfarin_pairs = chart_contradictions(synopsis, [support("warf", "Warfarin is recommended.")])
+    metformin_pairs = chart_contradictions(synopsis, [support("met", "Metformin is recommended.")])
+    assert apixaban_pairs and "apixaban" in apixaban_pairs[0].reason
+    assert warfarin_pairs and "warfarin" in warfarin_pairs[0].reason
+    assert metformin_pairs == []
+
+
 def test_a_drug_several_words_after_the_caution_stays_in_the_search():
     from app.medswin.orchestrator import _chart_synopsis
     from app.retrieval.lexical import LexicalRetriever
