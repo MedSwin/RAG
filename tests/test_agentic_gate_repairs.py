@@ -137,11 +137,15 @@ def test_monitoring_does_not_qualify_the_same_drug():
     support = _passage("cpg", "Metformin is recommended for type 2 diabetes.")
     monitor = _passage("lab", "Laboratory monitoring is recommended during metformin treatment.")
     caution = _passage("ckd", "Use metformin with caution in CKD.")
+    precaution = _passage("safe", "Take precautions with metformin when the eGFR is low.")
+    exceptional = _passage("trial", "Metformin has an exceptional effect in this trial.")
     support.calibrated_score = 0.9
     monitor.calibrated_score = 0.9
     ledger = build_retrieval_ledger([support, monitor], [facet])
     assert infer_polarity(monitor, facet) == EvidencePolarity.SUPPORTS
+    assert infer_polarity(exceptional, facet) == EvidencePolarity.SUPPORTS
     assert infer_polarity(caution, facet) == EvidencePolarity.QUALIFIES
+    assert infer_polarity(precaution, facet) == EvidencePolarity.QUALIFIES
     assert detect_contradictions(ledger) == []
 
 

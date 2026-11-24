@@ -205,7 +205,7 @@ _LOCAL_NEGATION = re.compile(
     re.I,
 )
 _BENIGN_DO_NOT = re.compile(r"^\s+(?:delay|withhold|wait|hesitate)\b", re.I)
-_QUALIFY = re.compile(r"\b(?:unless|except|caution|monitor)\b", re.I)
+_QUALIFY = re.compile(r"\b(?:unless|except|cautions?|precautions?|monitor)\b", re.I)
 
 
 def _ungoverned_caution(text: str) -> bool:
