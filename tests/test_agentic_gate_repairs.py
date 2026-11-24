@@ -432,8 +432,23 @@ def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():
 
     warfarin_only = chart_contradictions(mixed_dose, [warning])
     assert _caution_drug_name([], None, warfarin_only, severity="high") == "warfarin"
+    assert "apixaban" not in warfarin_only[0].reason.split("|", 1)[0]
     apixaban_only = chart_contradictions(mixed_dose, [other])
     assert _caution_drug_name([], None, apixaban_only, severity="high") == "apixaban"
+    assert "warfarin" not in apixaban_only[0].reason.split("|", 1)[0]
+    active = "Reduce warfarin and start apixaban."
+    assert "apixaban" not in chart_contradictions(active, [warning])[0].reason.split("|", 1)[0]
+    assert "warfarin" not in chart_contradictions(active, [other])[0].reason.split("|", 1)[0]
+    separate = "The dose of apixaban was reduced. Start warfarin."
+    assert "warfarin" not in chart_contradictions(separate, [other])[0].reason.split("|", 1)[0]
+    assert "apixaban" not in chart_contradictions(separate, [warning])[0].reason.split("|", 1)[0]
+    stopped = chart_contradictions(
+        "Warfarin was increased and apixaban was stopped.",
+        [warning, other],
+    )
+    order_line = next(pair for pair in stopped if pair.reason.startswith("Chart recommendation:"))
+    assert "apixaban" not in order_line.reason.split("|", 1)[0]
+    assert "warfarin" in order_line.reason
     both = chart_contradictions(mixed_dose, [warning, other])
     assert set(_caution_drug_name([], None, both, severity="high").split(", ")) == {
         "apixaban",

@@ -1054,6 +1054,101 @@ def _recommendation_sentence(sentence: str) -> str:
     return " ".join(kept.split())
 
 
+def _order_verb_spans(sentence: str) -> list[tuple[int, int]]:
+    """Return each verb that orders a drug in this sentence."""
+    from app.scoring.coverage import _LOCAL_NEGATION
+
+    text = sentence or ""
+    found: list[tuple[int, int]] = []
+    for pattern in (_DOSE_CHANGE, _DOSE_REDUCTION, _RECOMMEND_VERB, _START_VERB, _SWITCH_TO):
+        for match in pattern.finditer(text):
+            window = text[max(0, match.start() - 48): match.start()]
+            if _LOCAL_NEGATION.search(window):
+                continue
+            tail = text[match.end():]
+            if pattern in {_DOSE_CHANGE, _DOSE_REDUCTION}:
+                if _RECORD_NOT_ORDER.search(tail):
+                    continue
+                if not (_dose_order_object(tail) or _dose_before_verb(text, match.start())):
+                    continue
+            elif not (
+                _object_is_drug(tail)
+                or _subject_is_drug(text[: match.start()])
+            ):
+                continue
+            found.append((match.start(), match.end()))
+    found.sort()
+    kept: list[tuple[int, int]] = []
+    for start, end in found:
+        if kept and start < kept[-1][1]:
+            continue
+        kept.append((start, end))
+    return kept
+
+
+_NEXT_AUXILIARY = re.compile(
+    r"^(?:was|is|were|been|be|being|should|will|can|may|must)\b",
+    re.I,
+)
+
+
+def _split_order_clauses(sentence: str) -> list[str]:
+    """Split two orders in one sentence when each order names a different drug."""
+    text = " ".join((sentence or "").split())
+    verbs = _order_verb_spans(text)
+    if len(verbs) < 2:
+        return [text] if text else []
+    cuts = [0]
+    for index in range(1, len(verbs)):
+        previous_end = verbs[index - 1][1]
+        verb_at = verbs[index][0]
+        between = text[previous_end:verb_at]
+        cut = verb_at
+        cursor = previous_end
+        for word in between.split():
+            at = text.find(word, cursor)
+            if at < 0:
+                continue
+            cursor = at + len(word)
+            if not intervention_tokens(word.strip(".,;:")):
+                continue
+            rest = text[cursor:verb_at].lstrip(" ,;")
+            if rest.lower().startswith("and "):
+                rest = rest[4:].lstrip()
+            if _NEXT_AUXILIARY.match(rest):
+                cut = at
+                break
+        cuts.append(cut)
+    cuts.append(len(text))
+    clauses = []
+    for start, end in zip(cuts, cuts[1:]):
+        piece = text[start:end].strip(" ,;.")
+        piece = re.sub(r"^(?:and)\s+", "", piece, count=1, flags=re.I)
+        piece = re.sub(r"\s+\band$", "", piece, count=1, flags=re.I).strip()
+        if piece and intervention_tokens(piece):
+            clauses.append(piece)
+    if len(clauses) < 2:
+        return [text]
+    drugs = [intervention_tokens(clause) for clause in clauses]
+    if any(left & right for left, right in zip(drugs, drugs[1:])):
+        return [text]
+    return clauses
+
+
+def _shared_order_span(order_text: str, conflict_text: str) -> str:
+    """Quote only the order that names the warning drug."""
+    shared = intervention_tokens(conflict_text)
+    kept = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", order_text or ""):
+        for clause in _split_order_clauses(sentence):
+            if intervention_tokens(clause) & shared:
+                kept.append(clause)
+    span = " ".join(kept).strip()
+    if span:
+        return span
+    return " ".join((order_text or "").split())
+
+
 def _chart_recommendation_text(chart: str) -> str:
     """Keep chart sentences that recommend a drug."""
     kept = []
@@ -1269,14 +1364,14 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
                 if key in seen:
                     continue
                 seen.add(key)
-                span = " ".join(order_text.split())
+                span = _shared_order_span(order_text, conflict_text)
                 pairs.append(
                     ContradictionPair(
                         facet=claim.facet,
                         chunk_id_a=PATIENT_CHART_ID,
                         chunk_id_b=entry.chunk_id,
                         severity=severity,
-                        reason=f"{label} {span} | {_reason_with_drug(base, order_text, conflict_text)}",
+                        reason=f"{label} {span} | {_reason_with_drug(base, span, conflict_text)}",
                         grade_a=0.0,
                         grade_b=entry.evidence_grade.score,
                     )
@@ -1297,14 +1392,14 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
             if key in seen:
                 continue
             seen.add(key)
-            span = " ".join(order_text.split())
+            span = _shared_order_span(order_text, conflict_text)
             pairs.append(
                 ContradictionPair(
                     facet="safety_contraindications",
                     chunk_id_a=PATIENT_CHART_ID,
                     chunk_id_b=entry.chunk_id,
                     severity=severity,
-                    reason=f"{label} {span} | {_reason_with_drug(base, order_text, conflict_text)}",
+                    reason=f"{label} {span} | {_reason_with_drug(base, span, conflict_text)}",
                     grade_a=0.0,
                     grade_b=entry.evidence_grade.score,
                 )
