@@ -546,6 +546,33 @@ def test_retrieval_packs_with_the_policy_token_budget(monkeypatch):
     assert seen["token_budget"] == 222
 
 
+def test_a_dropped_caution_stays_on_the_rejected_list():
+    from app.medswin.orchestrator import rejected_chunk_ids
+
+    fillers = [
+        CandidatePassage(
+            chunk_id=f"filler-{index}",
+            doc_id=f"doc-{index}",
+            source_type=SourceType.LIT,
+            text="A general note.",
+            calibrated_score=0.90,
+        )
+        for index in range(50)
+    ]
+    caution = CandidatePassage(
+        chunk_id="caution",
+        doc_id="doc-caution",
+        source_type=SourceType.SAFETY,
+        text="Avoid apixaban.",
+        calibrated_score=0.80,
+        safety_score=0.80,
+    )
+    dropped = rejected_chunk_ids([*fillers, caution], {"kept"})
+    assert dropped[0] == "caution"
+    assert "filler-49" not in dropped
+    assert len(dropped) == 50
+
+
 def test_supplied_session_id_is_created_when_it_is_missing():
     import asyncio
 

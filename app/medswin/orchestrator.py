@@ -295,6 +295,12 @@ def _specialist_candidates(ranked: List, limit: int = 40) -> List:
     return prioritize_passages(list(ranked))[:limit]
 
 
+def rejected_chunk_ids(candidates: List, selected_ids: set, limit: int = 50) -> List[str]:
+    """List dropped passages. Put a caution ahead of filler."""
+    rejected = [item for item in candidates if item.chunk_id not in selected_ids]
+    return [item.chunk_id for item in prioritize_passages(rejected)][:limit]
+
+
 def _chart_synopsis(chunks: List, budget: int = 140) -> str:
     """Keep a share of each recent chart row inside the word budget."""
     rows = []
@@ -987,9 +993,10 @@ class MedSwinOrchestrator:
             selected = prioritize_passages(list(selected))
             for trace_row in trace.rerank_traces[-1:]:
                 trace_row.selected_chunk_ids = [p.chunk_id for p in selected]
-                trace_row.rejected_chunk_ids = [
-                    c.chunk_id for c in all_candidates if c.chunk_id not in {p.chunk_id for p in selected}
-                ][:50]
+                trace_row.rejected_chunk_ids = rejected_chunk_ids(
+                    all_candidates,
+                    {p.chunk_id for p in selected},
+                )
 
         bundle = self.retriever.build_bundle(
             selected,
