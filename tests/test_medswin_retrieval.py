@@ -301,6 +301,22 @@ def test_the_embedding_window_keeps_a_warning_at_the_end_of_a_long_question():
     assert "apixaban" in window.lower()
 
 
+def test_the_embedding_window_keeps_a_later_drug_when_repeated_warnings_fill_it():
+    from app.core.config import settings
+    from app.retrieval.lexical import LexicalRetriever
+    from app.scoring.utility import _TOKENIZER
+
+    note = " ".join(["Avoid warfarin now please today."] * 200) + " Avoid apixaban."
+    marked = LexicalRetriever.focus_query(f"Which dose?\n\nPatient retrieval context:\n{note}")
+    plain = LexicalRetriever.focus_query("Which dose? " + note)
+    for focus in (marked, plain):
+        tokens = _TOKENIZER.encode(focus)
+        window = _TOKENIZER.decode(tokens[: settings.MAX_SEQUENCE_LENGTH]).lower()
+        assert len(tokens) <= settings.MAX_SEQUENCE_LENGTH
+        assert "apixaban" in window
+        assert "warfarin" in window
+
+
 def test_the_embedding_window_keeps_a_chart_drug_after_a_long_question():
     from app.core.config import settings
     from app.retrieval.lexical import LexicalRetriever

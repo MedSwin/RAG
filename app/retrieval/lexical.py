@@ -314,6 +314,35 @@ class LexicalRetriever:
         )
 
     @staticmethod
+    def _compact_caution_text(caution: str, limit: int) -> str:
+        """Keep one warning for each drug when the caution block is too long."""
+        from app.medswin.ledger import intervention_tokens
+        from app.scoring.utility import _TOKENIZER
+
+        spans = [span.strip() for span in LexicalRetriever._caution_sentences(caution) if span.strip()]
+        if not spans:
+            return caution
+        kept: List[str] = []
+        seen: set = set()
+
+        def fits(parts: List[str]) -> bool:
+            return len(_TOKENIZER.encode(" ".join(parts))) <= limit
+
+        for span in spans:
+            drugs = set(intervention_tokens(span))
+            if drugs and drugs <= seen:
+                continue
+            if fits(kept + [span]):
+                kept.append(span)
+                seen |= drugs
+                continue
+            missing = [drug for drug in sorted(drugs - seen) if drug]
+            if missing and fits(kept + missing):
+                kept.extend(missing)
+                seen.update(missing)
+        return " ".join(kept) if kept else caution
+
+    @staticmethod
     def _fit_embed_query(text: str) -> str:
         """Keep the chart caution inside the embedding window."""
         from app.core.config import settings
@@ -333,7 +362,10 @@ class LexicalRetriever:
                 return head
             caution_tokens = _TOKENIZER.encode(caution)
             if len(caution_tokens) >= limit:
-                return _TOKENIZER.decode(caution_tokens[:limit])
+                caution = LexicalRetriever._compact_caution_text(caution, limit)
+                caution_tokens = _TOKENIZER.encode(caution)
+                if len(caution_tokens) >= limit:
+                    return _TOKENIZER.decode(caution_tokens[:limit])
             room = max(0, limit - len(caution_tokens))
             question_tokens = list(tokens)
             trimmed = _TOKENIZER.decode(question_tokens[:room]).rstrip()
@@ -350,7 +382,10 @@ class LexicalRetriever:
         caution = text[index:]
         caution_tokens = _TOKENIZER.encode(caution)
         if len(caution_tokens) >= limit:
-            return _TOKENIZER.decode(caution_tokens[:limit])
+            caution = LexicalRetriever._compact_caution_text(caution, limit)
+            caution_tokens = _TOKENIZER.encode(caution)
+            if len(caution_tokens) >= limit:
+                return _TOKENIZER.decode(caution_tokens[:limit])
         question_tokens = _TOKENIZER.encode(text[:index].rstrip())
         room = max(0, limit - len(caution_tokens))
         trimmed = _TOKENIZER.decode(question_tokens[:room]).rstrip()
