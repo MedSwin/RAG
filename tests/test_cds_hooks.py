@@ -74,6 +74,22 @@ def test_a_card_is_a_cds_hooks_card():
     assert hits == []
 
 
+def test_the_card_uuid_is_the_trace_id():
+    response = _response(accepted=True)
+    card = cards_from_chat(response, hook_instance="hook-1", patient_id="pt-1")[0]
+    assert card["uuid"] == response.trace_id
+    assert card["extension"]["trace_id"] == response.trace_id
+    assert card["extension"]["hookInstance"] == "hook-1"
+    assert card["extension"]["patientId"] == "pt-1"
+
+
+def test_a_blank_trace_id_does_not_claim_a_stored_trace():
+    response = _response(accepted=True).model_copy(update={"trace_id": ""})
+    card = cards_from_chat(response, hook_instance="hook-1", patient_id="pt-1")[0]
+    assert card["uuid"]
+    assert "trace_id" not in card["extension"]
+
+
 def test_discovery_names_the_evidence_service():
     response = _app(None).get("/cds-services")
     assert response.status_code == 200
