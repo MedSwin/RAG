@@ -45,6 +45,8 @@ _TRACE_IDENTITY_KEYS = {
     "user_id",
     "patient_id",
     "hook_instance",
+    "generator_profile",
+    "generator_model",
 }
 
 

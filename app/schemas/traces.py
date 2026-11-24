@@ -141,6 +141,7 @@ class AuditTrace(BaseModel):
     retrieval_backend: Optional[str] = None
     retrieval_query: Optional[str] = None
     generator_profile: Optional[str] = None
+    generator_model: Optional[str] = None
     hook_instance: Optional[str] = None
     error_type: Optional[str] = None
     timing_ms: Dict[str, float] = Field(default_factory=dict)

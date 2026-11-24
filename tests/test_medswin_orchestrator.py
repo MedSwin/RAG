@@ -544,6 +544,8 @@ def test_failed_request_does_not_leak_previous_ranked_evidence():
     assert third.answer_artifact.abstained is True
     assert stored[-1].error_type == "RuntimeError"
     assert stored[-1].generator_profile == third.generator_profile
+    assert stored[-1].generator_model == orchestrator.supervisor.model
+    assert stored[-1].generator_model
     assert stored[-1].hook_instance == "hook-9"
     assert stored[0].retrieval_query == "q1"
     assert stored[0].retrieval_traces[0].query == "q1"

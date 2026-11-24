@@ -299,6 +299,7 @@ class MedSwinOrchestrator:
             patient_id=patient_id,
             pipeline=self.pipeline,
             generator_profile=_generator_profile(self.supervisor),
+            generator_model=getattr(self.supervisor, "model", None) or None,
             hook_instance=(hook_instance or "").strip() or None,
         )
         ranked_evidence: List[RankedEvidenceItem] = []

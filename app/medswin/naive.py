@@ -251,6 +251,7 @@ class NaiveRAGOrchestrator:
                 if getattr(self.llm, "backend", "") == "medswin_local"
                 else getattr(self.llm, "backend", "test")
             ),
+            generator_model=getattr(self.llm, "model", None) or None,
             hook_instance=(hook_instance or "").strip() or None,
         )
         trace.degraded_mode.update(session_state)
