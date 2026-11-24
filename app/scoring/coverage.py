@@ -152,6 +152,8 @@ def compute_facet_coverage(
             for claim in entry.claims:
                 if claim.facet != facet.name:
                     continue
+                if claim.polarity == EvidencePolarity.IRRELEVANT:
+                    continue
                 if claim.polarity in {EvidencePolarity.CONTRADICTS, EvidencePolarity.QUALIFIES}:
                     contradicting.append(entry.chunk_id)
                     continue
@@ -222,15 +224,15 @@ def _ungoverned_caution(text: str) -> bool:
 
 
 def infer_polarity(passage: CandidatePassage, facet: ClinicalFacet) -> EvidencePolarity:
-    explicit = passage.metadata.get("polarity")
+    text = passage.text or ""
+    if _ungoverned_caution(text):
+        return EvidencePolarity.CONTRADICTS if facet.name != "safety_contraindications" else EvidencePolarity.SAFETY
+    if _QUALIFY.search(text):
+        return EvidencePolarity.QUALIFIES
+    explicit = (passage.metadata or {}).get("polarity")
     if explicit:
         try:
             return EvidencePolarity(explicit)
         except ValueError:
             pass
-    text = passage.text.lower()
-    if _ungoverned_caution(text):
-        return EvidencePolarity.CONTRADICTS if facet.name != "safety_contraindications" else EvidencePolarity.SAFETY
-    if _QUALIFY.search(text):
-        return EvidencePolarity.QUALIFIES
     return EvidencePolarity.SUPPORTS

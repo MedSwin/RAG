@@ -179,6 +179,26 @@ def test_same_drug_caution_qualifies_the_recommendation():
     assert different == []
 
 
+def test_a_stored_support_label_does_not_hide_an_avoid_sentence():
+    facet = ClinicalFacet(name="guideline_concordance", keywords=["apixaban"], required=True, threshold=0.70)
+    caution = _passage("caut", "Avoid apixaban. Apixaban is contraindicated.")
+    caution.metadata = {"polarity": "supports"}
+    caution.calibrated_score = 0.95
+    caution.evidence_grade_score = 0.95
+    labelled = _passage("note", "Apixaban is discussed in this background note.")
+    labelled.metadata = {"polarity": "irrelevant"}
+    labelled.calibrated_score = 0.95
+    labelled.evidence_grade_score = 0.95
+    assert infer_polarity(caution, facet) == EvidencePolarity.CONTRADICTS
+    assert infer_polarity(labelled, facet) == EvidencePolarity.IRRELEVANT
+    caution_row = compute_facet_coverage([facet], build_retrieval_ledger([caution], [facet]))[0]
+    labelled_row = compute_facet_coverage([facet], build_retrieval_ledger([labelled], [facet]))[0]
+    assert caution_row.coverage_probability == 0.0
+    assert caution_row.supporting_chunk_ids == []
+    assert labelled_row.coverage_probability == 0.0
+    assert labelled_row.supporting_chunk_ids == []
+
+
 def test_a_precaution_alone_does_not_cover_the_facet():
     facet = ClinicalFacet(
         name="guideline_concordance",
