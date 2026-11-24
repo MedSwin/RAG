@@ -520,6 +520,19 @@ def test_source_counts_do_not_accept_or_reject(monkeypatch):
     }
 
 
+def test_the_sufficiency_defaults_stay_on_the_class():
+    from app.core.config import Settings
+
+    fields = Settings.model_fields
+    assert fields["SUFF_T_INCLUSION"].default == 0.55
+    assert fields["SUFF_T_MEAN_CONF"].default == 0.60
+    assert fields["SUFF_LCB_MARGIN"].default == 0.08
+    assert fields["SUFF_MAX_ENTROPY"].default == 0.88
+    assert fields["SUFF_MAX_CONTRADICTIONS"].default == 0
+    assert fields["SUFF_T_CPG"].default == 2
+    assert fields["SUFF_T_EMR"].default == 2
+
+
 def test_reported_mean_keeps_a_zero_calibrated_score():
     from app.medswin.gate import EvidenceGate
     from app.schemas.enums import SourceType as SchemaSource
