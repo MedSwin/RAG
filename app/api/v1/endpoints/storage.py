@@ -99,6 +99,12 @@ def _is_chart(chunk: Dict[str, Any]) -> bool:
     return str(chunk.get("source_type") or "").upper() == "EMR"
 
 
+def _requests_chart(request: StoreChunksRequest) -> bool:
+    if request.source_type == SourceType.EMR:
+        return True
+    return any(str(raw.get("source_type") or "").upper() == SourceType.EMR.value for raw in request.chunks)
+
+
 def _schedule_shared_index_rebuild(
     background_tasks: BackgroundTasks,
     http_request: Request,
@@ -280,6 +286,8 @@ async def store_chunks(
 ):
     """Normalize, document-embed, persist, then rebuild the shared ANN."""
     request = bind_body_org(http_request, request)
+    if _requests_chart(request) and not _is_operator(http_request):
+        raise HTTPException(status_code=403, detail="An operator role is required to store a chart")
     try:
         normalized = [_normalize_chunk(raw, request.org_id, request.source_type) for raw in request.chunks]
         await _attach_missing_embeddings(normalized, request.batch_size)

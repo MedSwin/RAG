@@ -302,6 +302,35 @@ def test_clinician_store_does_not_rebuild_the_shared_index(monkeypatch):
     assert built == []
 
 
+def test_clinician_cannot_store_a_chart(monkeypatch):
+    token = _auth(monkeypatch)
+    stored = []
+
+    class Storage:
+        async def store_chunks(self, **kwargs):
+            stored.append(kwargs)
+            return {"success_count": 1, "skipped_count": 0, "failed_count": 0}
+
+    async def _attach(chunks, batch_size):
+        raise AssertionError("embed should not run")
+
+    monkeypatch.setattr(storage, "_attach_missing_embeddings", _attach)
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(storage.router, prefix="/api/v1/storage")
+    app.dependency_overrides[storage.get_storage_service] = lambda: Storage()
+    response = TestClient(app).post(
+        "/api/v1/storage/chunks",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "org_id": "org-a",
+            "chunks": [{"chunk_id": "c1", "doc_id": "d1", "text": "Patient chart.", "source_type": "EMR"}],
+        },
+    )
+    assert response.status_code == 403
+    assert stored == []
+
+
 def test_operator_refresh_schedules_the_shared_index(monkeypatch):
     secret = "clinical-secret-value"
     monkeypatch.setattr(settings, "ENABLE_AUTH", True)
