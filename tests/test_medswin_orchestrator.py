@@ -95,6 +95,28 @@ def test_the_retrieval_query_stores_the_redacted_patient_synopsis():
     assert "[REDACTED_PHONE]" in asked
 
 
+def test_a_long_chart_note_keeps_the_next_caution():
+    import asyncio
+
+    filler = " ".join(["history"] * 200)
+
+    class Charts:
+        async def get_by_patient_id(self, patient_id, org_id, **_kwargs):
+            return [
+                {"source_type": "EMR", "text": filler},
+                {"source_type": "EMR", "text": "Avoid apixaban."},
+            ]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.chunk_repo = Charts()
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
+    returned = asyncio.run(orchestrator._patient_query("Which dose?", "org", "pt-1", {}, trace))
+    assert "Avoid apixaban." in returned
+    assert returned.split().count("history") < 140
+
+
 def test_the_model_question_drops_the_phone():
     import asyncio
 

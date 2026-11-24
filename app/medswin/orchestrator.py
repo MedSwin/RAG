@@ -192,6 +192,28 @@ def _source_filter_for_hints(
     return pinned
 
 
+def _chart_synopsis(chunks: List, budget: int = 140) -> str:
+    """Keep a share of each recent chart row inside the word budget."""
+    rows = []
+    for chunk in chunks[:3]:
+        words = " ".join(str(chunk.get("text") or chunk.get("content") or "").split()).split()
+        if words:
+            rows.append(words)
+    if not rows:
+        return ""
+    share = max(1, budget // len(rows))
+    leftover = budget
+    parts: List[str] = []
+    for index, words in enumerate(rows):
+        reserved = share * (len(rows) - index - 1)
+        allowance = max(0, leftover - reserved)
+        taken = words[:allowance]
+        leftover -= len(taken)
+        if taken:
+            parts.append(" ".join(taken))
+    return " ".join(parts)
+
+
 class MedSwinOrchestrator:
     """Centralized orchestrator-mediated multi-agent CDSS runtime."""
 
@@ -522,8 +544,7 @@ class MedSwinOrchestrator:
         ]
         if not emr_chunks:
             return remember(query)
-        text = " ".join(" ".join(str(c.get("text") or c.get("content") or "").split()) for c in emr_chunks[:3])
-        synopsis = " ".join(text.split()[:140])
+        synopsis = _chart_synopsis(emr_chunks)
         if not synopsis:
             return remember(query)
         trace.messages.append(
