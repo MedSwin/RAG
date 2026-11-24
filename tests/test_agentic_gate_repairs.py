@@ -1102,6 +1102,41 @@ def test_a_specialist_confidence_does_not_satisfy_a_weak_sentence():
     assert all(claim.confidence <= text_score + 1e-9 for claim in merged[0].claims)
 
 
+def test_a_recommendation_heading_does_not_clear_a_one_keyword_sentence():
+    facet = ClinicalFacet(
+        name="guideline_concordance",
+        keywords=["apixaban"],
+        required=True,
+        threshold=0.70,
+    )
+    weak = _passage("weak", "See apixaban in the appendix.")
+    weak.section = "Recommendations"
+    weak.section_score = 1.0
+    weak.calibrated_score = 0.95
+    weak.evidence_grade_score = 0.95
+    score_passage_facets(weak, [facet])
+    ledger = build_retrieval_ledger([weak], [facet])
+    batch = AgentClaimBatch(
+        agent_id="guideline",
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Apixaban is indicated.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="weak",
+                confidence=1.0,
+                calibrated_relevance=1.0,
+                evidence_grade=EvidenceGrade(score=1.0),
+            )
+        ],
+    )
+    merged = merge_agent_claims(ledger, [batch], [weak])
+    row = compute_facet_coverage([facet], merged)[0]
+    assert weak.facet_scores["guideline_concordance"] < 0.50
+    assert row.coverage_probability < facet.threshold
+    assert row.status != "satisfied"
+
+
 def test_a_specialist_confidence_cannot_cover_a_facet_the_passage_does_not_support():
     passage = _passage("cpg-1", "Metformin is first-line for type 2 diabetes.")
     passage.calibrated_score = 1.0

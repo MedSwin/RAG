@@ -83,14 +83,14 @@ def score_passage_facets(
         source_bonus = _source_policy_score(passage.source_type, facet.source_policy)
         matched = [keyword for keyword in facet.keywords if keyword_in_text(keyword, text)]
         keyword_score = min(0.65, len(matched) * 0.18)
-        section_score = passage.section_score if passage.section_score is not None else 0.5
         safety_bonus = 0.25 if facet.name == "safety_contraindications" and _safety_score(passage) > 0 else 0.0
         if not matched and safety_bonus == 0.0 and source_bonus <= 0.45:
             # Source-policy affinity alone must not mark an unrelated facet as covered.
             # An exact source match is 0.45. It still needs a keyword or a safety hit.
             text_score = 0.0
         else:
-            text_score = clamp(0.20 + source_bonus + keyword_score + 0.15 * section_score + safety_bonus)
+            # The section heading stays in the fusion rank. It does not raise facet certainty.
+            text_score = clamp(0.20 + source_bonus + keyword_score + safety_bonus)
         scores[facet.name] = text_score
     passage.facet_scores = scores
     return scores
