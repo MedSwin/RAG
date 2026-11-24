@@ -24,6 +24,8 @@ from app.services.adapters.reranker import RerankerClient
 
 logger = logging.getLogger(__name__)
 
+SOURCE_BALANCE_PROBES = (SourceType.CPG, SourceType.LIT, SourceType.EMR, SourceType.SAFETY)
+
 
 class HybridRetriever:
     """Two-stage hybrid retriever with calibrated reranking."""
@@ -86,7 +88,7 @@ class HybridRetriever:
 
         # Source-balanced probes for mixed-source CDS
         if effective_source is None and str((constraints or {}).get("source_policy") or "ANY").upper() == "ANY":
-            for source_type in (SourceType.LIT, SourceType.EMR, SourceType.SAFETY):
+            for source_type in SOURCE_BALANCE_PROBES:
                 source_constraints = dict(constraints or {})
                 source_constraints["source_policy"] = f"{source_type.value}_ONLY"
                 d = await self.dense.retrieve(

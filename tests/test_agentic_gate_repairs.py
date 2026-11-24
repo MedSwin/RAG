@@ -246,6 +246,56 @@ def test_a_passage_below_inclusion_is_not_packed():
     assert [item.chunk_id for item in selected] == ["strong"]
 
 
+def test_a_rerank_miss_keeps_facet_relevance_and_still_fails_inclusion():
+    from app.medswin.ledger import build_retrieval_ledger
+    from app.scoring.fusion import compute_fusion_scores
+
+    passage = CandidatePassage(
+        chunk_id="cpg-dense",
+        doc_id="doc-dense",
+        source_type=SourceType.CPG,
+        text="Guideline recommendation for apixaban.",
+        dense_score=0.82,
+        lexical_score=0.40,
+    )
+    compute_fusion_scores([passage])
+    facets = [
+        ClinicalFacet(
+            name="guideline_concordance",
+            required=True,
+            threshold=0.55,
+            keywords=["guideline", "recommendation"],
+            source_policy="CPG",
+        )
+    ]
+    ledger = build_retrieval_ledger([passage], facets)
+    assert ledger[0].calibrated_relevance > 0
+    assert passage.calibrated_score is None
+    check = EvidenceGate().check(ledger, facets, [passage], iteration=2)
+    assert check.passed is False
+
+
+def test_mixed_retrieval_probes_the_guideline_source():
+    import asyncio
+
+    import numpy as np
+
+    from app.retrieval.hybrid import SOURCE_BALANCE_PROBES, HybridRetriever
+
+    assert SourceType.CPG in SOURCE_BALANCE_PROBES
+    seen = []
+
+    async def _retrieve(*args, **kwargs):
+        seen.append(args[3] if len(args) > 3 else kwargs.get("source_type"))
+        return []
+
+    retriever = HybridRetriever(reranker_client=None)
+    retriever.dense.retrieve = _retrieve
+    retriever.lexical.retrieve = _retrieve
+    asyncio.run(retriever.retrieve(query="apixaban dose", query_embedding=np.zeros(4), org_id="org-1"))
+    assert SourceType.CPG in seen
+
+
 def test_outpatient_does_not_force_the_chart_facet():
     from app.medswin.normalize import QueryNormalizer
 

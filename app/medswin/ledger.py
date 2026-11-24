@@ -40,14 +40,11 @@ def build_retrieval_ledger(
     ledger: List[EvidenceLedgerEntry] = []
     for passage in passages:
         grade = evidence_grade_from_metadata(passage)
-        calibrated = clamp(
-            first_present(
-                passage.calibrated_score,
-                passage.rerank_score,
-                passage.fusion_score,
-                default=0.0,
-            )
-        )
+        scored = first_present(passage.calibrated_score, passage.rerank_score)
+        if scored is None:
+            # A rerank miss must not wipe facet coverage. Inclusion still requires calibrated_score.
+            scored = first_present(passage.fusion_score, passage.dense_score, default=0.0)
+        calibrated = clamp(scored)
         facet_scores = score_passage_facets(passage, facets)
         claims: List[EvidenceClaim] = []
         matched = []

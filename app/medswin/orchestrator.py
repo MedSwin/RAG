@@ -654,12 +654,12 @@ class MedSwinOrchestrator:
                 trace=trace,
             )
 
-            ledger = build_retrieval_ledger(all_candidates, facets)
-            if self.policy.enable_mac:
-                ledger = merge_agent_claims(ledger, batches, all_candidates)
-                apply_claim_alignment(all_candidates, batches, facets)
-            budget = self.policy.generation_token_budget
             ranked_candidates = self.retriever.rank(all_candidates, facets=facets)
+            ledger = build_retrieval_ledger(ranked_candidates, facets)
+            if self.policy.enable_mac:
+                ledger = merge_agent_claims(ledger, batches, ranked_candidates)
+                apply_claim_alignment(ranked_candidates, batches, facets)
+            budget = self.policy.generation_token_budget
             selected = self.retriever.select(
                 ranked_candidates,
                 facets=facets,
