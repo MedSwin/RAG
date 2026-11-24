@@ -12,7 +12,6 @@ import hashlib
 import json
 import logging
 import os
-import pickle
 import re
 import sqlite3
 from pathlib import Path
@@ -45,6 +44,17 @@ logger = logging.getLogger(__name__)
 CACHE_DIR = Path(settings.DATA_DIR) / "bm25"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+/-]*")
+_SAFE_ORG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_MEMORY_CACHE_MAX = 32
+
+
+def _safe_org_segment(org_id: str) -> Optional[str]:
+    cleaned = str(org_id or "").strip()
+    if not cleaned or cleaned in {".", ".."} or ".." in cleaned:
+        return None
+    if not _SAFE_ORG_RE.match(cleaned):
+        return None
+    return cleaned
 
 
 class LexicalRetriever:
@@ -65,15 +75,26 @@ class LexicalRetriever:
             "constraints": constraints or {},
             "space": settings.active_embedding_space() if settings.CLOUD_MODE else "local",
         }
-        digest = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
-        return f"{org_id}_{digest}"
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
     @staticmethod
-    def _fts_path(org_id: str) -> Path:
+    def _fts_path(org_id: str) -> Optional[Path]:
         explicit = (os.getenv("LEXICAL_FTS_PATH") or "").strip()
         if explicit:
-            return Path(explicit.format(org_id=org_id))
-        return CACHE_DIR / f"{org_id}_fts.sqlite"
+            if "{org_id}" in explicit:
+                safe = _safe_org_segment(org_id)
+                if not safe:
+                    return None
+                return Path(explicit.format(org_id=safe))
+            return Path(explicit)
+        safe = _safe_org_segment(org_id)
+        if not safe:
+            return None
+        candidate = (CACHE_DIR / f"{safe}_fts.sqlite").resolve()
+        cache_root = CACHE_DIR.resolve()
+        if candidate.parent != cache_root:
+            return None
+        return candidate
 
     @staticmethod
     def _fts_query(query: str) -> str:
@@ -98,7 +119,7 @@ class LexicalRetriever:
         constraints: Optional[Dict[str, Any]],
     ) -> Optional[List[CandidatePassage]]:
         path = self._fts_path(org_id)
-        if not path.exists():
+        if path is None or not path.exists():
             return None
         match_query = self._fts_query(query)
         if not match_query:
@@ -188,14 +209,6 @@ class LexicalRetriever:
         key = self._cache_key(org_id, source_type_filter, patient_id, constraints)
         if key in self._memory:
             return self._memory[key]
-        disk_path = CACHE_DIR / f"{key}.pkl"
-        if disk_path.exists():
-            try:
-                bundle = pickle.loads(disk_path.read_bytes())
-                self._memory[key] = bundle
-                return bundle
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("BM25 disk cache read failed: %s", exc)
 
         db = get_database()
         filter_dict = retrieval_filter(org_id, source_type_filter, patient_id, constraints)
@@ -228,11 +241,9 @@ class LexicalRetriever:
                 tokenized.append(text.lower().split())
         bm25 = BM25Okapi(tokenized)
         bundle = {"bm25": bm25, "chunk_ids": chunk_ids}
+        if len(self._memory) >= _MEMORY_CACHE_MAX:
+            self._memory.pop(next(iter(self._memory)))
         self._memory[key] = bundle
-        try:
-            disk_path.write_bytes(pickle.dumps(bundle))
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("BM25 disk cache write failed: %s", exc)
         return bundle
 
     async def retrieve(
