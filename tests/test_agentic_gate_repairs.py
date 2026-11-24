@@ -402,6 +402,38 @@ def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():
         assert chart_contradictions(chart, [warning, other]) == [], chart
 
 
+def test_a_chart_order_qualifies_against_an_unscored_caution():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("Which dose?", QuerySpec(canonical_terms=["dose"]))
+
+    def passage(chunk_id: str, text: str) -> CandidatePassage:
+        return CandidatePassage(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=SourceType.CPG,
+            text=text,
+            section="Recommendations",
+            calibrated_score=0.90,
+            evidence_grade_score=0.95,
+        )
+
+    ledger = build_retrieval_ledger(
+        [
+            passage("q", "Use warfarin with caution."),
+            passage("aq", "Use apixaban with caution."),
+            passage("m", "Monitor warfarin."),
+        ],
+        facets,
+    )
+    assert all(not entry.claims for entry in ledger)
+    pairs = chart_contradictions("Warfarin is recommended.", ledger)
+    assert {pair.chunk_id_b for pair in pairs} == {"q", "m"}
+    assert {pair.severity for pair in pairs} == {"low"}
+    assert all("warfarin" in pair.reason and "apixaban" not in pair.reason for pair in pairs)
+    assert chart_contradictions("Continue warfarin.", [ledger[1]]) == []
+
+
 def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning():
     warning = _entry(
         "war",

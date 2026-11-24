@@ -878,6 +878,33 @@ def _chart_caution_text(chart: str) -> str:
     return " ".join(kept).strip()
 
 
+def _unscored_caution(entry: EvidenceLedgerEntry) -> Optional[tuple[str, str]]:
+    """Return a caution sentence when the passage has no caution claim."""
+    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+    if any(
+        claim.polarity
+        in {
+            EvidencePolarity.QUALIFIES,
+            EvidencePolarity.SAFETY,
+            EvidencePolarity.CONTRADICTS,
+        }
+        for claim in entry.claims
+    ):
+        return None
+    text = entry.text or ""
+    if _ungoverned_caution(text):
+        kind = "warning"
+    elif _QUALIFY.search(text):
+        kind = "qualify"
+    else:
+        return None
+    conflict = named_caution_text(text)
+    if not intervention_tokens(conflict):
+        return None
+    return kind, conflict
+
+
 def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[ContradictionPair]:
     """Pair a chart caution with a selected recommendation for the same drug.
 
@@ -970,6 +997,34 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
                         grade_b=entry.evidence_grade.score,
                     )
                 )
+            extra = _unscored_caution(entry)
+            if not extra:
+                continue
+            kind, conflict_text = extra
+            if not same_intervention(order_text, conflict_text):
+                continue
+            if kind == "qualify":
+                severity = "low"
+                base = "Same-drug caution qualifies this recommendation."
+            else:
+                severity = "high" if entry.evidence_grade.score >= 0.80 else "medium"
+                base = "Same-drug safety warning conflicts with this recommendation."
+            key = ("passage-text", entry.chunk_id, severity)
+            if key in seen:
+                continue
+            seen.add(key)
+            span = " ".join(order_text.split())
+            pairs.append(
+                ContradictionPair(
+                    facet="safety_contraindications",
+                    chunk_id_a=PATIENT_CHART_ID,
+                    chunk_id_b=entry.chunk_id,
+                    severity=severity,
+                    reason=f"{label} {span} | {_reason_with_drug(base, order_text, conflict_text)}",
+                    grade_a=0.0,
+                    grade_b=entry.evidence_grade.score,
+                )
+            )
     return pairs
 
 
