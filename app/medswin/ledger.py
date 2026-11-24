@@ -524,6 +524,7 @@ def named_caution_text(text: str) -> str:
         _not_brought_stop,
         _not_home_stop,
         _not_own_stop,
+        _not_current_stop,
         _not_regular_med_stop,
         _ungoverned_caution,
     )
@@ -538,6 +539,7 @@ def named_caution_text(text: str) -> str:
                 or _not_home_stop(sentence)
                 or _not_brought_stop(sentence)
                 or _not_own_stop(sentence)
+                or _not_current_stop(sentence)
             ):
                 spans.append(sentence.strip())
                 continue
@@ -894,7 +896,7 @@ _ESTABLISHED_ON = re.compile(
 )
 _DURATION_DRUG = re.compile(
     r"(?:^|\b(?:is|was|were|are|am|been)\s+)"
-    r"(?:long-?term|regular|chronic|maintenance)\s+",
+    r"(?:long-?term|regular|chronic|maintenance|current(?:ly)?)\s+",
     re.I,
 )
 _IS_REGULAR_MED = re.compile(
@@ -1553,7 +1555,7 @@ def _established_on_drug(sentence: str) -> bool:
 
 def _duration_drug(sentence: str) -> bool:
     """True when a duration word names the current drug."""
-    from app.scoring.coverage import _LOCAL_NEGATION, _on_object_is_drug
+    from app.scoring.coverage import _LOCAL_NEGATION, _MED_HISTORY, _on_object_is_drug
 
     text = sentence or ""
     if _COUNSEL_ON.search(text):
@@ -1561,6 +1563,8 @@ def _duration_drug(sentence: str) -> bool:
     for match in _DURATION_DRUG.finditer(text):
         window = text[max(0, match.start() - 48): match.start()]
         if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        if re.search(r"\bcurrent", match.group(0), re.I) and _MED_HISTORY.search(text[: match.start()]):
             continue
         if _on_object_is_drug(text[match.end():]):
             return True
@@ -2006,6 +2010,7 @@ def _chart_caution_text(chart: str) -> str:
         _not_home_stop,
         _not_brought_stop,
         _not_own_stop,
+        _not_current_stop,
         _med_list_stop,
         _refused_stop,
         _negated_away_split,
@@ -2037,6 +2042,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _not_home_stop(sentence)
                 or _not_brought_stop(sentence)
                 or _not_own_stop(sentence)
+                or _not_current_stop(sentence)
                 or _med_list_stop(sentence)
                 or _refused_stop(sentence)
             ):
