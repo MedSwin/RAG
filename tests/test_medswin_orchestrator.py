@@ -157,6 +157,7 @@ def test_a_retrieval_failure_abstains_once():
     assert final_check.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
     assert bundle.policy_decision.reason == "Retrieval failed."
     assert bundle.passages == []
+    assert trace.retrieval_backend == "error"
 
 
 def test_retrieve_with_sufficiency_returns_policy_artifacts_for_insufficient_bundle():
@@ -468,8 +469,11 @@ def test_failed_request_does_not_leak_previous_ranked_evidence():
         async def create(self, session, org_id):
             return {}
 
+    stored = []
+
     class Traces:
         async def create(self, trace, org_id):
+            stored.append(trace)
             return {}
 
     class Embedder:
@@ -517,4 +521,6 @@ def test_failed_request_does_not_leak_previous_ranked_evidence():
     assert third.policy_decision is not None
     assert third.policy_decision.passed is False
     assert third.answer_artifact.abstained is True
+    assert stored[-1].error_type == "RuntimeError"
+    assert "normalizer failed" not in (stored[-1].final_answer or "")
 

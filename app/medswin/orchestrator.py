@@ -153,6 +153,19 @@ def retrieve_stall_action(
     return "abstain"
 
 
+def _name_retrieval_backend(retrieval_trace) -> str:
+    """Name the retriever that produced this loop. The name is not a score."""
+    if retrieval_trace.error:
+        return "error"
+    if retrieval_trace.dense_count and retrieval_trace.lexical_count:
+        return "hybrid"
+    if retrieval_trace.dense_count:
+        return "dense"
+    if retrieval_trace.lexical_count:
+        return "lexical"
+    return "empty"
+
+
 def _source_filter_for_hints(
     pinned: Optional[SourceType],
     hints: Optional[Dict[str, Any]],
@@ -358,6 +371,7 @@ class MedSwinOrchestrator:
                     pipeline=self.pipeline,
                     generator_profile=_generator_profile(self.supervisor),
                     ranked_evidence=ranked_evidence,
+                    retrieval_backend=trace.retrieval_backend,
                     timing_ms=trace.timing_ms,
                 )
 
@@ -399,6 +413,7 @@ class MedSwinOrchestrator:
                 pipeline=self.pipeline,
                 generator_profile=_generator_profile(self.supervisor),
                 ranked_evidence=ranked_evidence,
+                retrieval_backend=trace.retrieval_backend,
                 timing_ms=trace.timing_ms,
             )
         except Exception as exc:  # noqa: BLE001
@@ -413,6 +428,7 @@ class MedSwinOrchestrator:
             )
             trace.policy_decisions.append(decision)
             trace.final_answer = failure
+            trace.error_type = type(exc).__name__
             trace.completed_at = datetime.utcnow()
             trace.degraded_mode = degraded
             trace.timing_ms["total"] = round((time.perf_counter() - started) * 1000.0, 2)
@@ -435,6 +451,7 @@ class MedSwinOrchestrator:
                 pipeline=self.pipeline,
                 generator_profile=_generator_profile(self.supervisor),
                 ranked_evidence=ranked_evidence,
+                retrieval_backend=trace.retrieval_backend,
                 timing_ms=trace.timing_ms,
             )
 
@@ -598,6 +615,7 @@ class MedSwinOrchestrator:
             )
             retrieval_trace.iteration = iteration
             trace.retrieval_traces.append(retrieval_trace)
+            trace.retrieval_backend = _name_retrieval_backend(retrieval_trace)
             if retrieval_trace.error:
                 check = self.gate.check(
                     [],
