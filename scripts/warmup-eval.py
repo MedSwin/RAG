@@ -255,8 +255,11 @@ async def warm_bedrock() -> dict[str, Any]:
         "chat_model": chat_model,
         "embedding_model": embed_model,
         "embedding_dimension": expected_dim,
+        "embedding_input_types_verified": ["query", "document"],
         "reranker_model": rerank_model,
         "probe_marker": marker,
+        "cloud_probe_exact": True,
+        "foundry_probe_exact": True,
         "complete": True,
         "completed_at": datetime.now(timezone.utc).isoformat(),
     }

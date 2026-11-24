@@ -122,15 +122,19 @@ def _warmup_manifest() -> dict[str, Any]:
         or not trec.get("complete")
     ):
         raise RuntimeError("Warmup did not verify the complete TREC-CDS corpus")
+    is_bedrock = foundry.get("provider") == "bedrock" or settings.cloud_provider() == "bedrock"
+    expected_embed = settings.BEDROCK_EMBED_MODEL if is_bedrock else EXPECTED_EMBEDDING
+    expected_rerank = settings.BEDROCK_RERANK_MODEL if is_bedrock else EXPECTED_RERANKER
+    probe_ok = bool(foundry.get("cloud_probe_exact") or foundry.get("foundry_probe_exact"))
     if (
-        foundry.get("embedding_model") != EXPECTED_EMBEDDING
-        or foundry.get("reranker_model") != EXPECTED_RERANKER
+        foundry.get("embedding_model") != expected_embed
+        or foundry.get("reranker_model") != expected_rerank
         or foundry.get("embedding_dimension") != settings.active_embedding_dimension()
         or foundry.get("embedding_input_types_verified") != ["query", "document"]
-        or not foundry.get("foundry_probe_exact")
+        or not probe_ok
         or not foundry.get("complete")
     ):
-        raise RuntimeError("Warmup did not verify the exact Foundry generation/embedding/reranker contract")
+        raise RuntimeError("Warmup did not verify the exact cloud generation/embedding/reranker contract")
     return payload
 
 

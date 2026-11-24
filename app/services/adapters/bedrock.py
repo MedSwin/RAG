@@ -1,14 +1,17 @@
 """AWS Bedrock Runtime for chat, Cohere embed, and Cohere rerank.
 
 The model IDs match the Kollab catalog. Chat uses Converse. Embed and rerank
-use InvokeModel. Credentials come from the default AWS chain. This module does
-not read a static provider key.
+use InvokeModel. Credentials come from the default AWS chain. When that chain
+is empty, one `aws configure export-credentials --format process` call supplies
+the current AWS CLI login. This module does not read a static provider key.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import shutil
+import subprocess
 import time
 from typing import Any, Optional
 
@@ -173,6 +176,43 @@ def _status_of(exc: Exception) -> Optional[int]:
     return None
 
 
+def cli_process_credentials() -> dict[str, str] | None:
+    """Read the current AWS CLI login. Return None when the CLI is absent."""
+    if shutil.which("aws") is None:
+        return None
+    try:
+        proc = subprocess.run(
+            ["aws", "configure", "export-credentials", "--format", "process"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    key = str(data.get("AccessKeyId") or "").strip()
+    secret = str(data.get("SecretAccessKey") or "").strip()
+    if not key or not secret:
+        return None
+    creds = {"aws_access_key_id": key, "aws_secret_access_key": secret}
+    token = str(data.get("SessionToken") or "").strip()
+    if token:
+        creds["aws_session_token"] = token
+    return creds
+
+
+def _import_boto3():
+    import boto3
+
+    return boto3
+
+
 class BedrockRuntime:
     """Thin IAM client. Tests pass a fake client and do not open a socket."""
 
@@ -183,18 +223,21 @@ class BedrockRuntime:
 
     def client(self) -> Any:
         if self._client is None:
-            import boto3
+            boto3 = _import_boto3()
             from botocore.config import Config
 
-            self._client = boto3.client(
-                "bedrock-runtime",
-                region_name=self.region,
-                config=Config(
+            kwargs: dict[str, Any] = {
+                "region_name": self.region,
+                "config": Config(
                     connect_timeout=5,
                     read_timeout=60,
                     retries={"total_max_attempts": 1, "mode": "standard"},
                 ),
-            )
+            }
+            resolved = boto3.Session().get_credentials()
+            if resolved is None:
+                kwargs.update(cli_process_credentials() or {})
+            self._client = boto3.client("bedrock-runtime", **kwargs)
         return self._client
 
     def _call(self, fn):

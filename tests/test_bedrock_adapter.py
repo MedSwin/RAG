@@ -149,6 +149,53 @@ def test_download_catalog_uses_the_named_local_models():
     assert service.models["reranker"]["repo_id"] == "BAAI/bge-reranker-v2-m3"
 
 
+def test_cli_process_credentials_reads_a_login_payload(monkeypatch):
+    class Proc:
+        returncode = 0
+        stdout = (
+            '{"Version":1,"AccessKeyId":"AKIATEST","SecretAccessKey":"secret-value",'
+            '"SessionToken":"session-token"}'
+        )
+        stderr = ""
+
+    monkeypatch.setattr("app.services.adapters.bedrock.shutil.which", lambda name: "/usr/bin/aws")
+    monkeypatch.setattr("app.services.adapters.bedrock.subprocess.run", lambda *args, **kwargs: Proc())
+    from app.services.adapters.bedrock import cli_process_credentials
+
+    creds = cli_process_credentials()
+    assert creds["aws_access_key_id"] == "AKIATEST"
+    assert creds["aws_session_token"] == "session-token"
+    assert "Secret" not in creds
+
+
+def test_runtime_uses_cli_login_when_the_default_chain_is_empty(monkeypatch):
+    created = {}
+
+    class Session:
+        def get_credentials(self):
+            return None
+
+    class Boto:
+        def Session(self):
+            return Session()
+
+        def client(self, name, **kwargs):
+            created["name"] = name
+            created["region"] = kwargs.get("region_name")
+            created["has_key"] = bool(kwargs.get("aws_access_key_id"))
+            return object()
+
+    monkeypatch.setattr("app.services.adapters.bedrock._import_boto3", lambda: Boto())
+    monkeypatch.setattr(
+        "app.services.adapters.bedrock.cli_process_credentials",
+        lambda: {"aws_access_key_id": "AKIATEST", "aws_secret_access_key": "secret-value"},
+    )
+    from app.services.adapters.bedrock import BedrockRuntime
+
+    BedrockRuntime("ap-southeast-2").client()
+    assert created == {"name": "bedrock-runtime", "region": "ap-southeast-2", "has_key": True}
+
+
 def test_foundry_backend_follows_the_bedrock_provider():
     config = Settings(_env_file=None, CLOUD_MODE=True, CLOUD_PROVIDER="bedrock", GENERATION_BACKEND="foundry")
     assert config.resolved_generation_backend() == "bedrock"
