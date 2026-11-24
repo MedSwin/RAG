@@ -645,25 +645,79 @@ def _support_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
 PATIENT_CHART_ID = "patient-chart"
 
 
-_CHART_CONTINUE = re.compile(
-    r"\b(?:continue|continuing|remains on|stay on)\b",
+_CONTINUE_VERB = re.compile(r"\b(?:continue|continuing|continued)\b", re.I)
+_BE_CONTINUED = re.compile(r"\b(?:be|was|is|were|been)\s+continued\b", re.I)
+_REMAIN_ON = re.compile(r"\b(?:remain|remains|stay|stays)\s+on\b", re.I)
+_MONITOR_NEXT = re.compile(
+    r"^(?:to\s+)?(?:monitor(?:ing|ed)?|checks?|checking|observ(?:e|ing|ation)|follow-?up|surveillance|inr|labs?)\b",
     re.I,
 )
+_MONITOR_NOUN = re.compile(
+    r"^(?:monitoring|checks|checking|observation|follow-?up|surveillance|inr|labs?)$",
+    re.I,
+)
+_MONITOR_WORD = re.compile(
+    r"\b(?:monitor(?:ing|ed)?|checks?|checking|observ(?:e|ing|ation)|follow-?up|surveillance|inr|labs?)\b",
+    re.I,
+)
+_LEADING_FUNCTION = re.compile(r"^(?:to|the|a|an|his|her|their|this|that|daily|oral)$", re.I)
+
+
+def _content_words(text: str) -> list[str]:
+    words = re.findall(r"[A-Za-z0-9'-]+", text or "")
+    content: list[str] = []
+    skipping = True
+    for word in words:
+        if skipping and _LEADING_FUNCTION.match(word):
+            continue
+        skipping = False
+        content.append(word)
+        if len(content) >= 4:
+            break
+    return content
+
+
+def _object_is_drug(text: str) -> bool:
+    """True when the verb object is a drug, not a monitoring phrase."""
+    content = _content_words(text)
+    if not content or _MONITOR_NEXT.match(" ".join(content)):
+        return False
+    if len(content) >= 2 and intervention_tokens(content[0]) and _MONITOR_NOUN.match(content[1]):
+        return False
+    return bool(intervention_tokens(" ".join(content[:3])))
+
+
+def _subject_is_drug(text: str) -> bool:
+    """True when a continued action has a drug as its subject."""
+    if _MONITOR_WORD.search(text or ""):
+        return False
+    return bool(intervention_tokens(text))
 
 
 def _is_continuation_sentence(sentence: str) -> bool:
     """True when the sentence says to keep a drug."""
-    from app.scoring.coverage import _BENIGN_DO_NOT, _CAUTION, _QUALIFY, _ungoverned_caution
+    from app.scoring.coverage import _BENIGN_DO_NOT, _CAUTION, _ungoverned_caution
 
     if not intervention_tokens(sentence):
         return False
-    if _ungoverned_caution(sentence) or _QUALIFY.search(sentence or ""):
+    if _ungoverned_caution(sentence):
         return False
     for match in _CAUTION.finditer(sentence or ""):
         phrase = match.group(0).lower()
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(sentence[match.end():]):
             return True
-    return bool(_CHART_CONTINUE.search(sentence or ""))
+    for match in _REMAIN_ON.finditer(sentence or ""):
+        if _object_is_drug(sentence[match.end():]):
+            return True
+    continued = _BE_CONTINUED.search(sentence or "")
+    if continued and _subject_is_drug(sentence[: continued.start()]):
+        return True
+    for match in _CONTINUE_VERB.finditer(sentence or ""):
+        if match.group(0).lower() == "continued" and continued:
+            continue
+        if _object_is_drug(sentence[match.end():]):
+            return True
+    return False
 
 
 def _chart_continuation_text(chart: str) -> str:

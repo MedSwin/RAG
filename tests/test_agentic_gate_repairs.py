@@ -109,6 +109,62 @@ def test_a_chart_continuation_conflicts_with_an_avoid_warning():
     assert "warfarin" in kept[0].reason
 
 
+def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
+    from app.medswin.cds import _chart_caution_line
+
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    other = _entry(
+        "aw",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    for chart in (
+        "Warfarin should be continued.",
+        "Warfarin was continued.",
+        "The patient continued warfarin.",
+        "Remain on warfarin.",
+        "Stays on warfarin.",
+        "Continue warfarin and monitor the INR.",
+        "Apixaban is recommended. Warfarin should be continued.",
+    ):
+        pairs = chart_contradictions(chart, [warning, other])
+        assert len(pairs) == 1, chart
+        assert pairs[0].chunk_id_b == "war"
+        assert pairs[0].severity == "high"
+        assert "warfarin" in pairs[0].reason
+        assert "apixaban" not in pairs[0].reason
+        assert _chart_caution_line(None, pairs).startswith("Chart continuation:")
+    for chart in (
+        "Continue monitoring warfarin.",
+        "Continue to monitor warfarin.",
+        "Continue warfarin monitoring.",
+        "Warfarin monitoring should be continued.",
+        "Monitoring of warfarin should be continued.",
+        "Continue INR checks for warfarin.",
+        "Do not continue warfarin.",
+    ):
+        assert chart_contradictions(chart, [warning, other]) == [], chart
+    recommendation = _entry(
+        "rec",
+        "guideline_concordance",
+        "Warfarin is recommended.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    caution = chart_contradictions("Do not continue warfarin.", [recommendation, warning])
+    assert len(caution) == 1
+    assert caution[0].chunk_id_a == "rec"
+    assert caution[0].chunk_id_b == PATIENT_CHART_ID
+
+
 def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning():
     warning = _entry(
         "war",
