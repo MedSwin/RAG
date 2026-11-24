@@ -212,7 +212,7 @@ _BENIGN_DO_NOT = re.compile(
     r"^\s+(?:(?:be|being)\s+)?"
     r"(?:delay|withhold|withheld|wait|hesitate|stop(?:ped)?|discontinue[d]?|cease[d]?|"
     r"interrupt(?:ed)?|hold|held|suspend(?:ed)?|pause[d]?|halt(?:ed)?|"
-    r"tapers?|tapered|tapering|weans?|weaned|weaning)\b",
+    r"tapers?|tapered|tapering|weans?|weaned|weaning|withdraw(?:ing|n|s)?)\b",
     re.I,
 )
 _QUALIFY = re.compile(r"\b(?:unless|except|cautions?|precautions?|monitor)\b", re.I)
@@ -222,7 +222,7 @@ _NAMED_SAFETY = re.compile(
 )
 _STOP_ORDER = re.compile(
     r"\b(?:stop(?:ped)?|withh(?:old|eld)|hold|held|discontinue[d]?|cease[d]?|suspend(?:ed)?|"
-    r"pause[d]?|halt(?:ed)?|interrupt(?:ed)?)\b",
+    r"pause[d]?|halt(?:ed)?|interrupt(?:ed)?|withdraw(?:ing|n|s)?)\b",
     re.I,
 )
 _SAFETY_LIST = re.compile(r"^\s+list\b", re.I)
@@ -385,7 +385,9 @@ def _negated_source_keep(text: str) -> bool:
 
 _COME_OFF = re.compile(
     r"\b(?:tapers?|tapered|tapering|weans?|weaned|weaning)\b(?:\s+\w+){0,4}\s+off\b"
-    r"|\b(?:weans?|weaned|weaning)\b",
+    r"|\b(?:weans?|weaned|weaning)\b"
+    r"|\b(?:takes?|taken|taking|comes?|came|coming)\b(?:\s+\w+){0,4}\s+off\b"
+    r"|\b(?:tapers?|tapered|tapering)\b(?:\s+\w+){0,4}\s+from\s+[A-Za-z][A-Za-z0-9-]{3,}",
     re.I,
 )
 
@@ -406,6 +408,49 @@ def _come_off_stop(text: str) -> bool:
         window = raw[max(0, match.start() - 48):match.start()]
         if _LOCAL_NEGATION.search(window):
             continue
+        anchor = 0
+        for index, begin in enumerate(spans):
+            if begin <= match.start() < begin + len(words[index]):
+                anchor = index
+                break
+        from_drug = re.search(
+            r"\bfrom\s+([A-Za-z][A-Za-z0-9-]{3,})",
+            match.group(0),
+            re.I,
+        )
+        if from_drug is not None:
+            if _token_names_drug(from_drug.group(1)):
+                return True
+            continue
+        near = words[max(0, anchor - 4): min(len(words), anchor + 9)]
+        if any(_token_names_drug(word) for word in near):
+            return True
+    return False
+
+
+def _negated_off_keep(text: str) -> bool:
+    """True when a negation keeps the drug that a come-off line would stop."""
+    raw = text or ""
+    for match in _COME_OFF.finditer(raw):
+        window = raw[max(0, match.start() - 48):match.start()]
+        if not _LOCAL_NEGATION.search(window):
+            continue
+        from_drug = re.search(
+            r"\bfrom\s+([A-Za-z][A-Za-z0-9-]{3,})",
+            match.group(0),
+            re.I,
+        )
+        if from_drug is not None:
+            if _token_names_drug(from_drug.group(1)):
+                return True
+            continue
+        words = raw.split()
+        spans = []
+        cursor = 0
+        for word in words:
+            at = raw.find(word, cursor)
+            spans.append(at)
+            cursor = at + len(word)
         anchor = 0
         for index, begin in enumerate(spans):
             if begin <= match.start() < begin + len(words[index]):
@@ -444,7 +489,9 @@ def _ungoverned_caution(text: str) -> bool:
         phrase = match.group(0).lower()
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(text[match.end():]):
             continue
-        if phrase in {"do not", "should not"} and _negated_source_keep(text):
+        if phrase in {"do not", "should not"} and (
+            _negated_source_keep(text) or _negated_off_keep(text)
+        ):
             continue
         return True
     return _named_safety_caution(text) or _source_stop(text) or _come_off_stop(text)

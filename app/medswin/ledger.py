@@ -913,6 +913,7 @@ def _is_continuation_sentence(sentence: str) -> bool:
     from app.scoring.coverage import (
         _BENIGN_DO_NOT,
         _CAUTION,
+        _negated_off_keep,
         _negated_source_keep,
         _ungoverned_caution,
     )
@@ -921,7 +922,7 @@ def _is_continuation_sentence(sentence: str) -> bool:
         return False
     if _ungoverned_caution(sentence):
         return False
-    if _negated_source_keep(sentence):
+    if _negated_source_keep(sentence) or _negated_off_keep(sentence):
         return True
     for match in _CAUTION.finditer(sentence or ""):
         phrase = match.group(0).lower()
