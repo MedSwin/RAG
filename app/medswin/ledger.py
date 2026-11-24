@@ -982,9 +982,10 @@ _ORDER_VERB = re.compile(
     re.I,
 )
 _START_VERB = re.compile(
-    r"\b(?:commence|commenced|commencing|begin|begins|began|beginning|offer|offered|offering)\b",
+    r"\b(?:commence|commenced|commencing|begin|begins|began|begun|beginning|offer|offered|offering)\b",
     re.I,
 )
+_ADMIN_VERB = re.compile(r"\b(?:given|gave|used)\b", re.I)
 _SWITCH_TO = re.compile(
     r"\b(?:switch|change)\b(?:\s+\w+){0,6}\s+to\b|\breplace\b(?:\s+\w+){0,4}\s+with\b",
     re.I,
@@ -1019,6 +1020,22 @@ def _rejected_drugs(text: str) -> set[str]:
     return found
 
 
+def _verb_orders_named_drug(text: str, start: int, end: int) -> bool:
+    """True when this verb orders the drug before it or the drug after it."""
+    tail = text[end:]
+    prefix = text[:start]
+    prefix_drugs = intervention_tokens(prefix)
+    tail_drugs = intervention_tokens(tail)
+    if _object_is_drug(tail) and (not prefix_drugs or not prefix_drugs.isdisjoint(tail_drugs)):
+        return True
+    return bool(
+        prefix_drugs
+        and not tail_drugs
+        and _subject_is_drug(prefix)
+        and not _MONITOR_WORD.search(tail or "")
+    )
+
+
 def _has_recommendation_verb(text: str) -> bool:
     from app.scoring.coverage import _LOCAL_NEGATION, _QUALIFY
 
@@ -1027,11 +1044,11 @@ def _has_recommendation_verb(text: str) -> bool:
         if _LOCAL_NEGATION.search(window):
             continue
         return True
-    for match in _START_VERB.finditer(text or ""):
+    for match in list(_START_VERB.finditer(text or "")) + list(_ADMIN_VERB.finditer(text or "")):
         window = text[max(0, match.start() - 48): match.start()]
         if _LOCAL_NEGATION.search(window):
             continue
-        if _object_is_drug(text[match.end():]):
+        if _verb_orders_named_drug(text, match.start(), match.end()):
             return True
     for match in _SWITCH_TO.finditer(text or ""):
         if _object_is_drug(text[match.end():]):
