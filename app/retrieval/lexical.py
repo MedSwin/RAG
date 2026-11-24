@@ -253,18 +253,35 @@ class LexicalRetriever:
         return LexicalRetriever._fts_terms(" ".join(LexicalRetriever._caution_sentences(context)))
 
     @staticmethod
+    def _with_generics(text: str) -> str:
+        """Keep the brand and add the generic name the corpus uses."""
+        from app.medswin.ledger import _DRUG_ALIASES
+
+        extras = []
+        lowered = (text or "").lower()
+        for term in LexicalRetriever._bm25_tokens(text):
+            generic = _DRUG_ALIASES.get(term)
+            if generic and generic not in lowered and generic not in extras:
+                extras.append(generic)
+        if not extras:
+            return text
+        return f"{(text or '').rstrip()} {' '.join(extras)}".strip()
+
+    @staticmethod
     def focus_query(query: str) -> str:
         """Question plus caution sentences. History filler stays out of the embedding."""
         raw = query or ""
         marker = "patient retrieval context:"
         index = raw.lower().find(marker)
         if index < 0:
-            return raw.strip()
+            return LexicalRetriever._with_generics(raw.strip())
         question = raw[:index].strip()
         kept = LexicalRetriever._caution_sentences(raw[index + len(marker):])
         if not kept:
-            return question
-        return f"{question}\n\nPatient retrieval context:\n{' '.join(kept)}"
+            return LexicalRetriever._with_generics(question)
+        return LexicalRetriever._with_generics(
+            f"{question}\n\nPatient retrieval context:\n{' '.join(kept)}"
+        )
 
     @staticmethod
     def _lexical_terms(query: str) -> List[str]:
@@ -277,6 +294,8 @@ class LexicalRetriever:
             context = raw[index + len(marker):]
         else:
             question, context = raw, ""
+        from app.medswin.ledger import _DRUG_ALIASES
+
         ordered = LexicalRetriever._caution_terms(context)[:32] + LexicalRetriever._fts_terms(question)
         chosen = []
         seen = set()
@@ -287,6 +306,10 @@ class LexicalRetriever:
                 continue
             seen.add(term)
             chosen.append(term)
+            generic = _DRUG_ALIASES.get(term)
+            if generic and generic not in seen and generic not in _QUERY_STOP and len(chosen) < 64:
+                seen.add(generic)
+                chosen.append(generic)
             if len(chosen) >= 64:
                 break
         return chosen
