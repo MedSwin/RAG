@@ -199,17 +199,19 @@ class LexicalRetriever:
         words = (sentence or "").split()
         if len(words) <= 6:
             return " ".join(words)
-        anchor = 0
-        for index in range(len(words)):
+        caution_at = []
+        drug_at = []
+        for index, word in enumerate(words):
             window = " ".join(words[max(0, index - 5):index + 1])
             if _ungoverned_caution(window) or _QUALIFY.search(window):
-                anchor = index
-                break
-        begin = max(0, anchor - 4)
-        end = anchor + 1
-        limit = min(len(words), anchor + 6)
-        while end < limit and not intervention_tokens(" ".join(words[begin:end])):
-            end += 1
+                caution_at.append(index)
+            if intervention_tokens(word):
+                drug_at.append(index)
+        if not caution_at:
+            return " ".join(words[:6])
+        begin = max(0, caution_at[0] - 4)
+        later_drugs = [index for index in drug_at if index >= begin]
+        end = later_drugs[-1] + 1 if later_drugs else min(len(words), caution_at[0] + 6)
         return " ".join(words[begin:end])
 
     @staticmethod
