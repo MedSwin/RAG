@@ -3102,6 +3102,63 @@ def test_critic_must_cite_both_chunks_before_a_medium_conflict_clears():
     assert high_result[0].resolved is False
 
 
+def test_a_repeated_draft_does_not_clear_the_conflict():
+    pair = ContradictionPair(
+        facet="guideline_concordance",
+        chunk_id_a="cpg-1",
+        chunk_id_b="lit-1",
+        severity="medium",
+        reason="test",
+        grade_a=0.70,
+        grade_b=0.38,
+    )
+    repeated = adjudicate_contradictions(
+        [pair.model_copy(deep=True)],
+        [
+            AgentClaimBatch(
+                agent_id="guideline",
+                claims=[
+                    EvidenceClaim(
+                        facet="guideline_concordance",
+                        claim="Apixaban is recommended.",
+                        polarity=EvidencePolarity.SUPPORTS,
+                        chunk_id="cpg-1",
+                    )
+                ],
+            ),
+            AgentClaimBatch(
+                agent_id="critic",
+                claims=[
+                    EvidenceClaim(
+                        facet="guideline_concordance",
+                        claim="Apixaban is recommended.",
+                        polarity=EvidencePolarity.SUPPORTS,
+                        chunk_id="cpg-1",
+                    )
+                ],
+            ),
+        ],
+    )
+    one_side = adjudicate_contradictions(
+        [pair.model_copy(deep=True)],
+        [
+            AgentClaimBatch(
+                agent_id="critic",
+                claims=[
+                    EvidenceClaim(
+                        facet="guideline_concordance",
+                        claim="cpg-1 is outdated",
+                        polarity=EvidencePolarity.CONTRADICTS,
+                        chunk_id="cpg-1",
+                    )
+                ],
+            )
+        ],
+    )
+    assert repeated[0].resolved is False
+    assert one_side[0].resolved is False
+
+
 def test_exact_source_match_without_a_keyword_does_not_cover_the_facet():
     facet = ClinicalFacet(name="guideline_concordance", source_policy="CPG", keywords=["apixaban"])
     bare = _passage("cpg-bare", "Older adults with atrial fibrillation were observed in clinic.")
