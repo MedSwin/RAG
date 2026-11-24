@@ -26,7 +26,10 @@ jobs:
           MONGO_ROOT_PASSWORD: ci-contract-placeholder
       - name: Assert v2 evaluator surface
         run: |
-          ! rg 'disable_mac|disable_gate' app/api/v1 benchmarks/system_eval
-          rg 'system-eval' scripts/start-local.sh
-          rg 'combination-september' benchmarks/system_eval scripts/start-local.sh
-          rg '/api/v1/pipelines' web/src web/public/index.html
+          if grep -R -E -n 'disable_mac|disable_gate' app/api/v1 benchmarks/system_eval; then
+            echo "forbidden evaluator flags are present"
+            exit 1
+          fi
+          grep -R -F -q 'system-eval' scripts/start-local.sh
+          grep -R -F -q 'combination-september' benchmarks/system_eval scripts/start-local.sh
+          grep -R -F -q '/api/v1/pipelines' web/src web/public/index.html
