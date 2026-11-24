@@ -224,7 +224,15 @@ def _chart_caution_line(decision: Any, contradictions: List[Any]) -> str:
         return ""
     rank = {"high": 0, "medium": 1, "low": 2}
     chosen = sorted(matches, key=lambda item: rank.get(getattr(item, "severity", ""), 3))
-    return (chosen[0].reason or "").split(" | ", 1)[0].strip()
+    best = rank.get(getattr(chosen[0], "severity", ""), 3)
+    lines = []
+    for item in chosen:
+        if rank.get(getattr(item, "severity", ""), 3) != best:
+            break
+        line = (item.reason or "").split(" | ", 1)[0].strip()
+        if line and line not in lines:
+            lines.append(line)
+    return " ".join(lines)
 
 
 def _evidence_caution_line(passages: List[Any], decision: Any, contradictions: List[Any]) -> str:
@@ -324,7 +332,7 @@ def _caution_drug_name(
     severity: str = "low",
 ) -> str:
     """Return the drugs named by an unresolved caution passage."""
-    from app.medswin.ledger import intervention_tokens, named_caution_text
+    from app.medswin.ledger import PATIENT_CHART_ID, intervention_tokens, named_caution_text
     from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 
     ids = set()
@@ -370,9 +378,15 @@ def _caution_drug_name(
         for drug in sorted(chosen):
             if drug not in found:
                 found.append(drug)
+    for item in pairs:
+        if getattr(item, "resolved", False) or not _pair_matches_severity(item, severity):
+            continue
+        if PATIENT_CHART_ID not in {item.chunk_id_a, item.chunk_id_b}:
+            continue
+        for drug in sorted(intervention_tokens(getattr(item, "reason", "") or "")):
+            if drug not in found:
+                found.append(drug)
     if not found:
-        from app.medswin.ledger import PATIENT_CHART_ID
-
         known = {getattr(passage, "chunk_id", None) for passage in passages or []}
         for item in pairs:
             if item.resolved or not _pair_matches_severity(item, severity):
