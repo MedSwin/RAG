@@ -31,6 +31,40 @@ def test_a_named_patient_keeps_that_chart_and_shared_evidence():
     assert {"patient_id": "other-patient"} not in clause
 
 
+def test_the_patient_lookup_reads_three_chart_rows():
+    import asyncio
+
+    from app.repositories.chunks import ChunkRepository
+
+    seen = {}
+
+    class _Cursor:
+        def __init__(self, query):
+            self.query = query
+            self.bounded = None
+
+        def limit(self, count):
+            self.bounded = count
+            return self
+
+        async def to_list(self, length=None):
+            seen["query"] = self.query
+            seen["limit"] = self.bounded
+            seen["length"] = length
+            return []
+
+    class _Store:
+        def find(self, query):
+            return _Cursor(query)
+
+    repo = ChunkRepository()
+    repo._db = {"chunks": _Store()}
+    asyncio.run(repo.get_by_patient_id("pt-1", "org-a", source_type="EMR", limit=3))
+    assert seen["query"] == {"patient_id": "pt-1", "org_id": "org-a", "source_type": "EMR"}
+    assert seen["limit"] == 3
+    assert seen["length"] == 3
+
+
 def test_a_chart_row_is_visible_only_for_its_patient():
     named_sql, named_params = chart_scope_sql("patient-1")
     open_sql, open_params = chart_scope_sql(None)

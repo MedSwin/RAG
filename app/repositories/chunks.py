@@ -130,9 +130,22 @@ class ChunkRepository(BaseRepository):
             cursor = cursor.limit(limit)
         return await cursor.to_list(length=None)
 
-    async def get_by_patient_id(self, patient_id: str, org_id: str) -> List[Dict[str, Any]]:
-        cursor = self.collection.find({"patient_id": patient_id, "org_id": org_id})
-        return await cursor.to_list(length=None)
+    async def get_by_patient_id(
+        self,
+        patient_id: str,
+        org_id: str,
+        *,
+        source_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        query: Dict[str, Any] = {"patient_id": patient_id, "org_id": org_id}
+        if source_type:
+            query["source_type"] = source_type
+        cursor = self.collection.find(query)
+        bounded = max(1, int(limit)) if limit else None
+        if bounded:
+            cursor = cursor.limit(bounded)
+        return await cursor.to_list(length=bounded)
 
     async def update(self, chunk_id: str, org_id: str, updates: Dict[str, Any]) -> bool:
         """Update a chunk without moving its identity or its patient."""

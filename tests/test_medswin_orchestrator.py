@@ -58,7 +58,7 @@ class FakeRetriever:
 
 
 class EmptyRepo:
-    async def get_by_patient_id(self, patient_id, org_id):
+    async def get_by_patient_id(self, patient_id, org_id, **_kwargs):
         return []
 
 
@@ -69,8 +69,11 @@ async def _noop_agents(*args, **kwargs):
 def test_the_retrieval_query_stores_the_redacted_patient_synopsis():
     import asyncio
 
+    seen = []
+
     class Charts:
-        async def get_by_patient_id(self, patient_id, org_id):
+        async def get_by_patient_id(self, patient_id, org_id, **kwargs):
+            seen.append(kwargs)
             return [{"source_type": "EMR", "text": "Call 555-234-5678. Creatinine is 1.4."}]
 
     orchestrator = MedSwinOrchestrator(
@@ -84,6 +87,7 @@ def test_the_retrieval_query_stores_the_redacted_patient_synopsis():
     assert "Creatinine is 1.4." in returned
     assert "[REDACTED_PHONE]" in returned
     assert trace.messages[-1].content.startswith("Built retrieval-only patient synopsis")
+    assert seen == [{"source_type": "EMR", "limit": 3}]
     asked = asyncio.run(
         orchestrator._patient_query("Call 555-234-5678 about the dose", "org", None, {}, trace)
     )

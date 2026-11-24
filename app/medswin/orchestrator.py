@@ -506,7 +506,12 @@ class MedSwinOrchestrator:
         if not patient_id or constraints.get("disable_patient_retrieval_context"):
             return remember(query)
         try:
-            chunks = await self.chunk_repo.get_by_patient_id(patient_id, org_id)
+            chunks = await self.chunk_repo.get_by_patient_id(
+                patient_id,
+                org_id,
+                source_type=SourceType.EMR.value,
+                limit=3,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Patient retrieval-context lookup failed: %s", exc)
             return remember(query)

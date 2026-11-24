@@ -264,7 +264,7 @@ class _FakeNaiveDense:
 
 
 class _EmptyChunkRepo:
-    async def get_by_patient_id(self, patient_id: str, org_id: str):
+    async def get_by_patient_id(self, patient_id: str, org_id: str, **_kwargs):
         return []
 
 
