@@ -214,6 +214,69 @@ def test_passage_below_inclusion_abstains_on_the_last_loop(monkeypatch):
     assert check.policy_decision.retrieval_hints["inclusion_passed"] is False
 
 
+def test_weak_provenance_retrieves_again_before_the_last_loop():
+    from app.core.config import settings
+
+    policy = EvidenceSufficiencyPolicy()
+    facets = [
+        ClinicalFacet(name="guideline_concordance", threshold=0.55, keywords=["guideline", "recommendation"]),
+        ClinicalFacet(name="safety_contraindications", threshold=0.45, keywords=["contraindication", "avoid"]),
+    ]
+    passages = [
+        _passage("c1", "Guideline recommendation supports treatment when clinically indicated."),
+        _passage("c3", "Current guideline recommendation confirms treatment for the eligible population."),
+        _passage("c2", "Review contraindications and avoid therapy when severe allergy is present."),
+    ]
+    passages[0].metadata = {"weak_provenance": True}
+
+    early = policy.check_sufficiency(
+        passages,
+        iteration=0,
+        constraints={"required_facets": [facet.model_dump() for facet in facets]},
+        selected_passages=passages,
+    )
+    late = policy.check_sufficiency(
+        passages,
+        iteration=settings.MAX_RETRIEVE_LOOPS - 1,
+        constraints={"required_facets": [facet.model_dump() for facet in facets]},
+        selected_passages=passages,
+    )
+
+    assert early.passed is False
+    assert early.action_taken == "retrieve_more"
+    assert "source identity" in early.policy_decision.reason
+    assert late.action_taken == "insufficient_evidence"
+    assert "source identity" in late.policy_decision.reason
+
+
+def test_source_counts_do_not_accept_or_reject(monkeypatch):
+    from app.core.config import settings
+
+    policy = EvidenceSufficiencyPolicy()
+    facets = [
+        ClinicalFacet(name="guideline_concordance", threshold=0.55, keywords=["guideline", "recommendation"]),
+        ClinicalFacet(name="safety_contraindications", threshold=0.45, keywords=["contraindication", "avoid"]),
+    ]
+    passages = [
+        _passage("c1", "Guideline recommendation supports treatment when clinically indicated."),
+        _passage("c3", "Current guideline recommendation confirms treatment for the eligible population."),
+        _passage("c2", "Review contraindications and avoid therapy when severe allergy is present."),
+    ]
+    constraints = {"required_facets": [facet.model_dump() for facet in facets]}
+    before = policy.check_sufficiency(passages, constraints=constraints, selected_passages=passages)
+    monkeypatch.setattr(settings, "SUFF_T_CPG", 9)
+    monkeypatch.setattr(settings, "SUFF_T_EMR", 9)
+    after = policy.check_sufficiency(passages, constraints=constraints, selected_passages=passages)
+
+    assert before.action_taken == after.action_taken == "accept"
+    assert after.kappa_cpg < before.kappa_cpg
+    assert after.policy_decision.retrieval_hints["source_count_audit"] == {
+        "cpg": 3,
+        "emr": 0,
+        "gates_action": False,
+    }
+
+
 def test_reported_mean_keeps_a_zero_calibrated_score():
     from app.medswin.gate import EvidenceGate
     from app.schemas.enums import SourceType as SchemaSource

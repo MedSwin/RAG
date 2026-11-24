@@ -152,6 +152,13 @@ class EvidenceGate:
         )
         inclusion_ok, mean_ok, mean_confidence = _confidence_vote(passages)
         confidence_gap = _confidence_gap(passages, inclusion_ok, mean_ok, mean_confidence)
+        provenance_only = (
+            bool(passages)
+            and not provenance_ok
+            and not missing
+            and not unresolved_critical
+            and not contradiction_overflow
+        )
         bundle_ok = (
             not missing
             and not unresolved_critical
@@ -170,6 +177,7 @@ class EvidenceGate:
             missing
             or unresolved_critical
             or contradiction_overflow
+            or not provenance_ok
             or marginal > settings.SUFF_MIN_MARGINAL_UTILITY
             or confidence_gap is not None
         ):
@@ -177,6 +185,8 @@ class EvidenceGate:
             reason = (
                 confidence_gap
                 if bundle_ok and confidence_gap
+                else "A selected passage is missing a source identity."
+                if provenance_only
                 else "Required facets, contradiction adjudication, or marginal utility justify targeted retrieval."
             )
             passed = False
@@ -185,6 +195,8 @@ class EvidenceGate:
             reason = (
                 confidence_gap
                 if bundle_ok and confidence_gap
+                else "A selected passage is missing a source identity."
+                if provenance_only
                 else "Evidence remains insufficient for clinician CDS after policy-bounded retrieval."
             )
             passed = False
@@ -240,6 +252,13 @@ class EvidenceGate:
         )
         cpg = [p for p in passages if p.source_type == SourceType.CPG]
         emr = [p for p in passages if p.source_type == SourceType.EMR]
+        # SUFF_T_CPG and SUFF_T_EMR scale this audit ratio. They do not accept or reject.
+        if decision.retrieval_hints is not None:
+            decision.retrieval_hints["source_count_audit"] = {
+                "cpg": len(cpg),
+                "emr": len(emr),
+                "gates_action": False,
+            }
         recorded_mean = (decision.retrieval_hints or {}).get("mean_confidence")
         mean_confidence = float(recorded_mean) if recorded_mean is not None else 0.0
         return SufficiencyCheck(

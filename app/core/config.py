@@ -124,7 +124,8 @@ class Settings(BaseSettings):
     RERANK_TOP_K: int = 10
     FINAL_TOP_K: int = 3
 
-    # Evidence sufficiency policy
+    # Evidence sufficiency policy.
+    # These two values scale the audit ratio only. They do not accept or reject.
     SUFF_T_CPG: int = 2
     SUFF_T_EMR: int = 2
     SUFF_T_INCLUSION: float = 0.55
