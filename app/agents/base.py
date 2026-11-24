@@ -138,6 +138,14 @@ def shared_claim_system_message() -> str:
     return f"{SHARED_CLAIM_SYSTEM_PREFIX}\n{schema_instruction(CLAIM_SCHEMA)}"
 
 
+def _caution_head(text: str) -> str:
+    """Keep the caution sentence. Drop the repeated clinic note after it."""
+    from app.retrieval.lexical import LexicalRetriever
+
+    span = LexicalRetriever._caution_span(text or "").strip()
+    return span or (text or "")
+
+
 def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
     """Render bounded specialist context.
 
@@ -167,30 +175,53 @@ def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
         others = [passage for passage in selected if passage not in cautions]
         selected = cautions + others
     total_cap = _COMPACT_PASSAGE_BLOCK_CHARS if compact else None
-    blocks: List[str] = []
+    parts: List[tuple] = []
+
+    def _render(items: List[tuple]) -> str:
+        return "\n\n".join(f"{header}\n{body}" for header, body, _caution in items)
+
     for passage in selected:
-        if len(blocks) >= limit:
+        if len(parts) >= limit:
             break
-        if len(blocks) >= configured_limit and not (compact and _is_prompt_caution(passage)):
+        caution = _is_prompt_caution(passage)
+        if len(parts) >= configured_limit and not (compact and caution):
             break
         header = f"[{passage.chunk_id}|{passage.source_type.value}|doc={passage.doc_id}]"
         redacted = lead_with_caution(redact_phi_text(passage.text or ""))
         body = redacted[:configured_chars]
-        block = f"{header}\n{body}"
-        if total_cap is not None:
-            trial = "\n\n".join(blocks + [block])
-            if len(trial) > total_cap:
-                used = len("\n\n".join(blocks))
-                separator = 2 if blocks else 0
-                room = total_cap - used - separator - len(header) - 1
-                if room <= 0:
+        candidate = (header, body, caution)
+        if total_cap is None or len(_render(parts + [candidate])) <= total_cap:
+            parts.append(candidate)
+            continue
+        if compact and caution:
+            head = _caution_head(body)
+            shrunk = []
+            for old_header, old_body, old_caution in parts:
+                if not old_caution:
+                    shrunk.append((old_header, old_body, False))
+                    continue
+                short = _caution_head(old_body)
+                shrunk.append((old_header, short if len(short) < len(old_body) else old_body, True))
+            fitted = None
+            for new_body in (body, head):
+                trial = shrunk + [(header, new_body, True)]
+                if len(_render(trial)) <= total_cap:
+                    fitted = trial
                     break
-                block = f"{header}\n{redacted[:room]}"
-                trial = "\n\n".join(blocks + [block])
-                if len(trial) > total_cap:
-                    break
-        blocks.append(block)
-    return "\n\n".join(blocks)
+            if fitted is not None:
+                parts = fitted
+            continue
+        used = len(_render(parts))
+        separator = 2 if parts else 0
+        room = total_cap - used - separator - len(header) - 1
+        if room <= 0:
+            break
+        block_body = redacted[:room]
+        trial = parts + [(header, block_body, caution)]
+        if len(_render(trial)) > total_cap:
+            break
+        parts.append((header, block_body, caution))
+    return _render(parts)
 
 
 def _finite_unit_score(value: Any) -> Optional[float]:
