@@ -824,7 +824,9 @@ _TAKING = re.compile(
 )
 _ARRIVAL_ON = re.compile(
     r"\b(?:came|come|comes|coming|admitted|admission|discharg(?:e|ed|ing)|"
-    r"presents?|presented|presenting|brought)\b(?:\s+\w+){0,5}\s+on\b",
+    r"presents?|presented|presenting|brought|went|goes|going|gone|sent|sends|sending)\b"
+    r"(?:\s+\w+){0,5}\s+on\b"
+    r"|^\s*home\s+on\b",
     re.I,
 )
 _DEPENDENT_ON = re.compile(r"\bdepend(?:s|ed|ent|ing)?\b(?:\s+\w+){0,3}\s+on\b", re.I)
