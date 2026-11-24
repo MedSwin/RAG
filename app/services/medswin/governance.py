@@ -53,12 +53,43 @@ _TRACE_IDENTITY_KEYS = {
 }
 
 
+def lead_with_caution(text: str) -> str:
+    """Put the caution where the clinician sees the first lines of a passage."""
+    from app.retrieval.lexical import LexicalRetriever
+    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+    raw = text or ""
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", raw) if part.strip()]
+
+    def _is_caution(sentence: str) -> bool:
+        return bool(_ungoverned_caution(sentence) or _QUALIFY.search(sentence))
+
+    if len(sentences) > 1:
+        cautions = [sentence for sentence in sentences if _is_caution(sentence)]
+        if cautions and not _is_caution(sentences[0]):
+            rest = [sentence for sentence in sentences if not _is_caution(sentence)]
+            return " ".join(cautions + rest)
+        return raw
+    span = LexicalRetriever._caution_span(raw)
+    if span and raw.lower().find(span.lower()) > 80:
+        return f"{span} {raw}"
+    return raw
+
+
+def _lead_passages(payload: Dict[str, Any]) -> None:
+    bundle = payload.get("evidence_bundle") or {}
+    for passage in bundle.get("passages") or []:
+        if isinstance(passage, dict) and isinstance(passage.get("text"), str):
+            passage["text"] = lead_with_caution(passage["text"])
+
+
 def redact_public_chat(response: Any) -> Any:
     """Redact a chat response after the gate has finished."""
     from app.schemas.traces import ChatResponse
 
-    payload = response.model_dump(mode="python")
-    return ChatResponse.model_validate(redact_stored_trace(payload))
+    payload = redact_stored_trace(response.model_dump(mode="python"))
+    _lead_passages(payload)
+    return ChatResponse.model_validate(payload)
 
 
 def redact_stored_trace(payload: Any) -> Any:

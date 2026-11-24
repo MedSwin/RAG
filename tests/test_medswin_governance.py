@@ -2,6 +2,38 @@ from app.models.medswin import CandidatePassage, SourceType
 from app.services.medswin.governance import build_citation, ensure_cds_language, redact_phi_payload, redact_phi_text
 
 
+def test_a_long_passage_shows_the_caution_first():
+    from app.schemas.evidence import EvidenceBundle
+    from app.schemas.traces import ChatResponse
+    from app.services.medswin.governance import redact_public_chat
+
+    history = " ".join(f"history{i}." for i in range(40))
+    response = ChatResponse(
+        answer="The evidence is insufficient.",
+        evidence_bundle=EvidenceBundle(
+            passages=[
+                CandidatePassage(
+                    chunk_id="chart-1",
+                    doc_id="doc-chart",
+                    source_type=SourceType.EMR,
+                    text=f"{history} Avoid apixaban.",
+                )
+            ],
+            total_tokens=20,
+            cpg_count=0,
+            emr_count=1,
+            lit_count=0,
+            safety_count=0,
+        ),
+        trace_id="trace-caution",
+    )
+    public = redact_public_chat(response)
+    shown = public.evidence_bundle.passages[0].text
+    assert shown.startswith("Avoid apixaban.")
+    assert "apixaban" in shown[:320].lower()
+    assert "history39" in shown
+
+
 def test_the_chat_response_drops_a_phone_number():
     from app.schemas.evidence import EvidenceBundle, EvidenceClaim, EvidenceLedgerEntry
     from app.schemas.traces import ChatResponse
