@@ -433,6 +433,26 @@ def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
     return " ".join(item.claim for item in entry.claims)
 
 
+def _conflict_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = None) -> str:
+    """Use the caution sentence when it names the drug. A support sentence stays out."""
+    from app.retrieval.lexical import LexicalRetriever
+    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+    full = _pairing_text(entry, claim)
+    spans = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", full):
+        if not sentence.strip():
+            continue
+        if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
+            span = LexicalRetriever._caution_span(sentence).strip()
+            if span:
+                spans.append(span)
+    caution = " ".join(spans)
+    if caution and intervention_tokens(caution):
+        return caution
+    return full
+
+
 PATIENT_CHART_ID = "patient-chart"
 
 
@@ -543,7 +563,7 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
         for support in bucket["support"]:
             for conflict in bucket["contradict"]:
                 support_text = _pairing_text(support)
-                conflict_text = _pairing_text(conflict)
+                conflict_text = _conflict_text(conflict)
                 if not same_intervention(support_text, conflict_text):
                     continue
                 _add(
@@ -576,12 +596,12 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
             # A safety warning crosses facets only when both sides name the same drug.
             # An unnamed caution still covers the safety facet. It does not veto every guideline.
             if not intervention_tokens(_pairing_text(support_entry, support_claim)) or not intervention_tokens(
-                _pairing_text(warning_entry, warning_claim)
+                _conflict_text(warning_entry, warning_claim)
             ):
                 continue
             if not same_intervention(
                 _pairing_text(support_entry, support_claim),
-                _pairing_text(warning_entry, warning_claim),
+                _conflict_text(warning_entry, warning_claim),
             ):
                 continue
             _add(
@@ -591,7 +611,7 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 _reason_with_drug(
                     "Same-drug safety warning conflicts with this recommendation.",
                     _pairing_text(support_entry, support_claim),
-                    _pairing_text(warning_entry, warning_claim),
+                    _conflict_text(warning_entry, warning_claim),
                 ),
             )
     qualifies: List[tuple[EvidenceLedgerEntry, EvidenceClaim]] = []
@@ -605,12 +625,12 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
     for support_entry, support_claim in plain_supports:
         for qualify_entry, qualify_claim in qualifies:
             if not intervention_tokens(_pairing_text(support_entry, support_claim)) or not intervention_tokens(
-                _pairing_text(qualify_entry, qualify_claim)
+                _conflict_text(qualify_entry, qualify_claim)
             ):
                 continue
             if not same_intervention(
                 _pairing_text(support_entry, support_claim),
-                _pairing_text(qualify_entry, qualify_claim),
+                _conflict_text(qualify_entry, qualify_claim),
             ):
                 continue
             _add(
@@ -620,7 +640,7 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 _reason_with_drug(
                     "Same-drug caution qualifies this recommendation.",
                     _pairing_text(support_entry, support_claim),
-                    _pairing_text(qualify_entry, qualify_claim),
+                    _conflict_text(qualify_entry, qualify_claim),
                 ),
                 severity="low",
             )

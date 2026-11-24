@@ -215,6 +215,39 @@ def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
     assert different == []
 
 
+def test_a_warfarin_caution_does_not_block_an_apixaban_recommendation():
+    support = _entry(
+        "cpg",
+        "guideline_concordance",
+        "Guideline recommendation supports apixaban.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    support.text = "Guideline recommendation supports apixaban."
+    mixed = _entry(
+        "note",
+        "safety_contraindications",
+        "Apixaban is recommended. Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    mixed.text = "Apixaban is recommended. Avoid warfarin."
+    assert detect_contradictions([support, mixed]) == []
+
+    warfarin = _entry(
+        "war",
+        "guideline_concordance",
+        "Warfarin is recommended.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    warfarin.text = "Warfarin is recommended."
+    pairs = detect_contradictions([warfarin, mixed])
+    assert len(pairs) == 1
+    assert "warfarin" in pairs[0].reason
+    assert "apixaban" not in pairs[0].reason
+
+
 def test_monitoring_does_not_qualify_the_same_drug():
     facet = ClinicalFacet(name="guideline_concordance", keywords=["metformin"])
     support = _passage("cpg", "Metformin is recommended for type 2 diabetes.")
