@@ -208,7 +208,7 @@ _LOCAL_NEGATION = re.compile(
     r"\b(?:no|not|without|absent|denies|denied|negative for|free of)\b(?:\W+\w+){0,4}\W*$",
     re.I,
 )
-_BENIGN_DO_NOT = re.compile(r"^\s+(?:delay|withhold|wait|hesitate)\b", re.I)
+_BENIGN_DO_NOT = re.compile(r"^\s+(?:delay|withhold|wait|hesitate|stop)\b", re.I)
 _QUALIFY = re.compile(r"\b(?:unless|except|cautions?|precautions?|monitor)\b", re.I)
 
 

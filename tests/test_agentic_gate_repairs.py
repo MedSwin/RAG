@@ -70,6 +70,47 @@ def test_a_required_abstention_fails_when_the_answer_gives_a_dose():
     assert abstention_matches(dose, False) is True
 
 
+def test_do_not_stop_warfarin_still_conflicts_with_the_warfarin_warning():
+    support = _entry(
+        "note",
+        "guideline_concordance",
+        "Do not stop warfarin. Apixaban is recommended.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    same = _entry(
+        "aw",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    pairs = detect_contradictions([support, warning, same])
+    assert any(pair.chunk_id_b == "war" and "warfarin" in pair.reason and "apixaban" not in pair.reason for pair in pairs)
+    assert any(pair.chunk_id_b == "aw" and "apixaban" in pair.reason and "warfarin" not in pair.reason for pair in pairs)
+    assert infer_polarity(
+        _passage("stop", "Do not stop warfarin."),
+        ClinicalFacet(name="guideline_concordance", keywords=["warfarin"]),
+    ) == EvidencePolarity.SUPPORTS
+    agreed = _entry(
+        "agreed",
+        "guideline_concordance",
+        "Do not use warfarin. Apixaban is recommended.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    agreed_pairs = detect_contradictions([agreed, warning, same])
+    assert all(pair.chunk_id_b != "war" for pair in agreed_pairs)
+    assert any(pair.chunk_id_b == "aw" for pair in agreed_pairs)
+
+
 def test_negated_caution_does_not_become_a_conflict():
     facet = ClinicalFacet(name="guideline_concordance", keywords=["apixaban"])
     negated = _passage("cpg-1", "The guideline reports no contraindications for selected adults.")
