@@ -51,3 +51,38 @@ def test_a_zero_claim_confidence_stays_zero():
     )
     assert batch.claims[0].confidence == 0.0
     assert batch.claims[0].calibrated_relevance == 0.0
+
+
+def test_malformed_claim_confidence_and_synthesis_fields_do_not_crash():
+    from app.agents.synthesis import SynthesisAgent
+    from app.schemas.evidence import EvidenceBundle
+
+    passage = _passage(calibrated_score=0.72, rerank_score=0.8)
+    batch = parse_claims(
+        "guideline",
+        {
+            "claims": [
+                {"facet": "guideline", "claim": "First", "chunk_id": "c1", "confidence": "high"},
+                {"facet": "guideline", "claim": "Second", "chunk_id": "c1", "confidence": 1.8},
+                {"facet": "guideline", "claim": "Third", "chunk_id": "c1", "confidence": -0.3},
+            ],
+            "notes": "single note",
+        },
+        [passage],
+    )
+    assert [c.confidence for c in batch.claims] == [0.72, 1.0, 0.0]
+    assert batch.notes == ["single note"]
+
+    bundle = EvidenceBundle(passages=[passage], total_tokens=10, cpg_count=1, emr_count=0, lit_count=0)
+    rendered, provenance = SynthesisAgent(None)._render(
+        {
+            "answer": "Guideline supports review.",
+            "evidence_used": ["c1", "fake"],
+            "contraindications_risks": "Check renal function.",
+            "next_steps": None,
+        },
+        bundle,
+    )
+    assert provenance.cited_chunk_ids == ["c1"]
+    assert provenance.rejected_chunk_ids == ["fake"]
+    assert "- Check renal function." in rendered

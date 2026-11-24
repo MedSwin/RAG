@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from typing import Any, Dict, List, Optional
 
@@ -96,6 +97,20 @@ def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
     return "\n\n".join(blocks)
 
 
+def _finite_unit_score(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return max(0.0, min(1.0, number))
+
+
 def parse_claims(
     agent_id: str,
     payload: Dict[str, Any],
@@ -104,10 +119,13 @@ def parse_claims(
 ) -> AgentClaimBatch:
     allowed = {p.chunk_id: p for p in passages}
     claims: List[EvidenceClaim] = []
-    for item in payload.get("claims") or []:
+    raw_claims = payload.get("claims") if isinstance(payload, dict) else []
+    if not isinstance(raw_claims, list):
+        raw_claims = []
+    for item in raw_claims:
         if not isinstance(item, dict):
             continue
-        chunk_id = str(item.get("chunk_id") or "")
+        chunk_id = str(item.get("chunk_id") or "").strip()
         if chunk_id not in allowed:
             continue
         passage = allowed[chunk_id]
@@ -116,16 +134,16 @@ def parse_claims(
         except ValueError:
             polarity = EvidencePolarity.SUPPORTS
         grade = evidence_grade_from_metadata(passage)
-        raw_confidence = item.get("confidence")
-        if raw_confidence == "":
-            raw_confidence = None
+        parsed_confidence = _finite_unit_score(item.get("confidence"))
+        fallback_confidence = _finite_unit_score(passage.calibrated_score)
+        confidence = first_present(parsed_confidence, fallback_confidence, default=0.5)
         claims.append(
             EvidenceClaim(
                 facet=canonicalize_facet(str(item.get("facet") or "clinical_evidence"), facets),
                 claim=str(item.get("claim") or "")[:500],
                 polarity=polarity,
                 chunk_id=chunk_id,
-                confidence=float(first_present(raw_confidence, passage.calibrated_score, default=0.5)),
+                confidence=float(confidence),
                 evidence_grade=grade,
                 calibrated_relevance=float(first_present(passage.calibrated_score, passage.rerank_score, default=0.0)),
                 agent_id=agent_id,
@@ -136,10 +154,17 @@ def parse_claims(
                 },
             )
         )
+    raw_notes = payload.get("notes") if isinstance(payload, dict) else []
+    if isinstance(raw_notes, str):
+        notes = [raw_notes] if raw_notes.strip() else []
+    elif isinstance(raw_notes, list):
+        notes = [str(n) for n in raw_notes if n]
+    else:
+        notes = []
     return AgentClaimBatch(
         agent_id=agent_id,
         claims=claims,
-        notes=[str(n) for n in (payload.get("notes") or []) if n],
+        notes=notes,
     )
 
 

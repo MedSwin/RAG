@@ -12,6 +12,15 @@ from app.services.prompts import answer as answer_prompt
 from app.services.prompts.structured import extract_json_object
 
 
+def _text_items(value: Any) -> List[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item or "").strip()]
+    return []
+
+
 class SynthesisAgent:
     def __init__(self, client: LLMClient):
         self.client = client
@@ -21,11 +30,21 @@ class SynthesisAgent:
         cited = []
         rejected = []
         statements = []
-        for item in answer_data.get("evidence_used", []):
-            chunk_id = str(item.get("chunk_id", ""))
+        raw_evidence = answer_data.get("evidence_used") if isinstance(answer_data, dict) else []
+        if not isinstance(raw_evidence, list):
+            raw_evidence = []
+        for item in raw_evidence:
+            if isinstance(item, dict):
+                chunk_id = str(item.get("chunk_id") or "").strip()
+                use = str(item.get("use") or "supporting evidence")
+            elif isinstance(item, str):
+                chunk_id = item.strip()
+                use = "supporting evidence"
+            else:
+                continue
             if chunk_id in allowed:
                 cited.append(chunk_id)
-                statements.append({"chunk_id": chunk_id, "use": item.get("use", "supporting evidence")})
+                statements.append({"chunk_id": chunk_id, "use": use})
             elif chunk_id:
                 rejected.append(chunk_id)
         sections = [str(answer_data.get("answer", "")).strip()]
@@ -35,10 +54,10 @@ class SynthesisAgent:
             sections.append("Evidence used: No valid retrieved chunk citations were provided by the model.")
         if answer_data.get("uncertainty"):
             sections.append(f"Uncertainty: {answer_data['uncertainty']}")
-        risks = [str(item) for item in answer_data.get("contraindications_risks", []) if item]
+        risks = _text_items(answer_data.get("contraindications_risks"))
         if risks:
             sections.append("Contraindications/risks:\n" + "\n".join(f"- {item}" for item in risks))
-        next_steps = [str(item) for item in answer_data.get("next_steps", []) if item]
+        next_steps = _text_items(answer_data.get("next_steps"))
         if next_steps:
             sections.append("Next steps:\n" + "\n".join(f"- {item}" for item in next_steps))
         answer = ensure_cds_language("\n\n".join(part for part in sections if part))
