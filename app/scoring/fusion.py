@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage
 from app.scoring.calibrate import clamp, first_present
-from app.scoring.coverage import _token_is_caution
+from app.scoring.coverage import _LOCAL_NEGATION, _token_is_caution
 from app.scoring.hierarchy import evidence_grade_from_metadata
 
 
@@ -57,12 +57,22 @@ def _source(candidate: CandidatePassage) -> float:
     return settings.SOURCE_LIT_SCORE
 
 
+def _governed_caution(text: str, start: int) -> bool:
+    window = text[max(0, start - 48):start]
+    return _LOCAL_NEGATION.search(window) is None
+
+
 def _safety(candidate: CandidatePassage) -> float:
-    tokens = re.findall(r"[a-z0-9]+", candidate.text.lower())
-    hits = 0
-    for token in tokens:
-        if _token_is_caution(token) or token.startswith(("renal", "pregnan")):
-            hits += 1
+    text = candidate.text.lower()
+    hits = len(_CONFLICT_PHRASE.findall(text))
+    for match in re.finditer(r"[a-z0-9]+", text):
+        token = match.group(0)
+        caution = _token_is_caution(token)
+        if not caution and not token.startswith(("renal", "pregnan")):
+            continue
+        if caution and not _governed_caution(text, match.start()):
+            continue
+        hits += 1
     return clamp(hits * 0.16)
 
 
@@ -97,7 +107,12 @@ def _is_conflict_token(token: str) -> bool:
 def _contradiction(candidate: CandidatePassage) -> float:
     text = candidate.text.lower()
     hits = len(_CONFLICT_PHRASE.findall(text))
-    hits += sum(1 for token in re.findall(r"[a-z0-9]+", text) if _is_conflict_token(token))
+    for match in re.finditer(r"[a-z0-9]+", text):
+        if not _is_conflict_token(match.group(0)):
+            continue
+        if not _governed_caution(text, match.start()):
+            continue
+        hits += 1
     return clamp(hits * 0.16)
 
 

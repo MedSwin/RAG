@@ -21,6 +21,33 @@ def test_a_dose_sentence_does_not_raise_the_safety_rank():
     assert _safety(caution) > 0.0
 
 
+def test_a_direct_caution_raises_the_safety_rank():
+    direct = CandidatePassage(
+        chunk_id="direct",
+        doc_id="direct",
+        source_type=SourceType.SAFETY,
+        text="Do not use metformin when the eGFR is low.",
+    )
+    negated = CandidatePassage(
+        chunk_id="negated",
+        doc_id="negated",
+        source_type=SourceType.CPG,
+        text="The guideline reports no contraindications for selected adults.",
+    )
+    delay = CandidatePassage(
+        chunk_id="delay",
+        doc_id="delay",
+        source_type=SourceType.CPG,
+        text="Do not delay antibiotics when infection is confirmed.",
+    )
+    assert _safety(direct) > 0.0
+    assert _contradiction(direct) > 0.0
+    assert _safety(negated) == 0.0
+    assert _contradiction(negated) == 0.0
+    assert _safety(delay) == 0.0
+    assert _contradiction(delay) == 0.0
+
+
 def test_a_hedge_does_not_pin_a_contradiction():
     hedge = CandidatePassage(
         chunk_id="hedge",
