@@ -311,6 +311,40 @@ def test_a_chart_caution_is_on_the_critical_card():
     assert "patient-chart" not in card["summary"]
 
 
+def test_a_high_chart_order_stays_on_the_card_when_a_qualifier_comes_first():
+    from app.medswin.ledger import PATIENT_CHART_ID
+    from app.schemas.evidence import ContradictionPair
+
+    response = _response(accepted=True, unresolved=True)
+    response.contradictions = [
+        ContradictionPair(
+            facet="guideline_concordance",
+            chunk_id_a="apx",
+            chunk_id_b=PATIENT_CHART_ID,
+            severity="low",
+            reason=(
+                "Chart caution: Use apixaban with caution. | "
+                "Same-drug caution qualifies this recommendation for apixaban."
+            ),
+        ),
+        ContradictionPair(
+            facet="safety_contraindications",
+            chunk_id_a=PATIENT_CHART_ID,
+            chunk_id_b="war",
+            severity="high",
+            reason=(
+                "Chart recommendation: Warfarin is recommended. | "
+                "Same-drug safety warning conflicts with this recommendation for warfarin."
+            ),
+        ),
+    ]
+    card = cards_from_chat(response)[0]
+    assert card["indicator"] == "critical"
+    assert card["summary"] == "Unresolved evidence conflicts for warfarin need clinician review."
+    assert "Chart recommendation: Warfarin is recommended." in card["detail"]
+    assert "Chart caution: Use apixaban with caution." not in card["detail"]
+
+
 def test_the_card_names_the_warning_drug_not_the_recommendation():
     from app.schemas.evidence import ContradictionPair
 

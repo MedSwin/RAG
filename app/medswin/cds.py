@@ -206,6 +206,7 @@ def _chart_caution_line(decision: Any, contradictions: List[Any]) -> str:
     pairs = list(contradictions or [])
     if decision is not None:
         pairs.extend(list(getattr(decision, "contradictions", []) or []))
+    matches = []
     for item in pairs:
         if getattr(item, "resolved", False):
             continue
@@ -218,8 +219,12 @@ def _chart_caution_line(decision: Any, contradictions: List[Any]) -> str:
             or reason.startswith("Chart recommendation:")
         ):
             continue
-        return reason.split(" | ", 1)[0].strip()
-    return ""
+        matches.append(item)
+    if not matches:
+        return ""
+    rank = {"high": 0, "medium": 1, "low": 2}
+    chosen = sorted(matches, key=lambda item: rank.get(getattr(item, "severity", ""), 3))
+    return (chosen[0].reason or "").split(" | ", 1)[0].strip()
 
 
 def _evidence_caution_line(passages: List[Any], decision: Any, contradictions: List[Any]) -> str:
