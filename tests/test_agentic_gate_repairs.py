@@ -332,6 +332,42 @@ def test_a_lost_session_insert_keeps_the_id_when_this_user_owns_it():
     assert kept == "sess-race"
 
 
+def test_a_session_trace_list_stays_with_the_owner():
+    import asyncio
+
+    from app.repositories.traces import TraceRepository
+
+    class _Cursor:
+        def __init__(self, query):
+            self.query = query
+
+        def sort(self, *_args):
+            return self
+
+        def limit(self, _count):
+            return self
+
+        async def to_list(self, length=None):
+            return [{"trace_id": "trace-1", "user_id": self.query["user_id"]}]
+
+    class _Store:
+        def __init__(self):
+            self.queries = []
+
+        def find(self, query):
+            self.queries.append(query)
+            return _Cursor(query)
+
+    store = _Store()
+    repo = TraceRepository()
+    repo._db = {"traces": store}
+    rows = asyncio.run(repo.get_by_session_id("sess-1", "org-a", "dr-chen"))
+    empty = asyncio.run(repo.get_by_session_id("sess-1", "org-a", ""))
+    assert rows == [{"trace_id": "trace-1", "user_id": "dr-chen"}]
+    assert empty == []
+    assert store.queries == [{"session_id": "sess-1", "org_id": "org-a", "user_id": "dr-chen"}]
+
+
 def test_a_trace_update_keeps_the_owner_and_the_identity_fields():
     import asyncio
 

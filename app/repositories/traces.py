@@ -40,10 +40,19 @@ class TraceRepository(BaseRepository):
         """Get trace by ID."""
         return await self.collection.find_one({"trace_id": trace_id, "org_id": org_id})
     
-    async def get_by_session_id(self, session_id: str, org_id: str,
-                                limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get traces by session ID."""
-        cursor = self.collection.find({"session_id": session_id, "org_id": org_id}).sort("created_at", -1)
+    async def get_by_session_id(
+        self,
+        session_id: str,
+        org_id: str,
+        user_id: str,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get traces for a session when this clinician owns them."""
+        if not user_id:
+            return []
+        cursor = self.collection.find(
+            {"session_id": session_id, "org_id": org_id, "user_id": user_id}
+        ).sort("created_at", -1)
         if limit:
             cursor = cursor.limit(limit)
         return await cursor.to_list(length=None)
