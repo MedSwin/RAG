@@ -429,6 +429,51 @@ def test_a_chart_update_keeps_the_patient_and_the_identity_fields():
     ]
 
 
+def test_a_failed_chunk_file_keeps_the_chart_text_off_disk(tmp_path, monkeypatch):
+    from app.services import storage as storage_mod
+
+    monkeypatch.setattr(storage_mod.settings, "DATA_DIR", str(tmp_path))
+
+    class _Coll:
+        def bulk_write(self, _operations, ordered=False):
+            raise RuntimeError("patient phone 555-234-5678")
+
+    class _DB:
+        def __getitem__(self, _name):
+            return _Coll()
+
+    class _Client:
+        def __init__(self, _url):
+            return None
+
+        def __getitem__(self, _name):
+            return _DB()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(storage_mod, "MongoClient", _Client)
+    result = storage_mod.StorageService()._store_chunks_sync(
+        [
+            {
+                "chunk_id": "c1",
+                "org_id": "org-a",
+                "doc_id": "d1",
+                "patient_id": "pt-1",
+                "text": "Metformin dose and phone 555-234-5678",
+            }
+        ],
+        "chunks",
+        10,
+    )
+    body = (tmp_path / "failed_chunks.json").read_text()
+    assert result["failed_count"] == 1
+    assert "c1" in body
+    assert "555-234-5678" not in body
+    assert "Metformin" not in body
+    assert "pt-1" not in body
+
+
 def test_a_chart_replace_keeps_the_patient():
     import asyncio
 

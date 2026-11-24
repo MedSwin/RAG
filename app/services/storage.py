@@ -36,6 +36,15 @@ from app.services.strategy import (
 
 logger = logging.getLogger(__name__)
 
+
+def _failed_chunk_record(chunk: Dict[str, Any]) -> Dict[str, str]:
+    """Keep the identity of a failed write. Leave the chart text off disk."""
+    return {
+        "chunk_id": str(chunk.get("chunk_id") or ""),
+        "org_id": str(chunk.get("org_id") or ""),
+        "doc_id": str(chunk.get("doc_id") or ""),
+    }
+
 EMBEDDING_REFRESH_STATUS: Dict[str, Any] = {
     "running": False,
     "ready": not settings.CLOUD_MODE,
@@ -203,7 +212,10 @@ class StorageService:
         if failed_chunks:
             failed_path = Path(settings.DATA_DIR) / "failed_chunks.json"
             failed_path.parent.mkdir(parents=True, exist_ok=True)
-            failed_path.write_text(json.dumps(failed_chunks, default=str, indent=2), encoding="utf-8")
+            failed_path.write_text(
+                json.dumps([_failed_chunk_record(chunk) for chunk in failed_chunks], indent=2),
+                encoding="utf-8",
+            )
             logger.warning("%s failed chunks saved to %s", len(failed_chunks), failed_path)
 
         return {
