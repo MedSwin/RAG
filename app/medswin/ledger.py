@@ -519,14 +519,26 @@ def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
 def named_caution_text(text: str) -> str:
     """Return the caution sentences when they name a drug."""
     from app.retrieval.lexical import LexicalRetriever
-    from app.scoring.coverage import _QUALIFY, _not_brought_stop, _not_home_stop, _not_regular_med_stop, _ungoverned_caution
+    from app.scoring.coverage import (
+        _QUALIFY,
+        _not_brought_stop,
+        _not_home_stop,
+        _not_own_stop,
+        _not_regular_med_stop,
+        _ungoverned_caution,
+    )
 
     spans = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
         if not sentence.strip():
             continue
         if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
-            if _not_regular_med_stop(sentence) or _not_home_stop(sentence) or _not_brought_stop(sentence):
+            if (
+                _not_regular_med_stop(sentence)
+                or _not_home_stop(sentence)
+                or _not_brought_stop(sentence)
+                or _not_own_stop(sentence)
+            ):
                 spans.append(sentence.strip())
                 continue
             recommendation, clause = _caution_clause(sentence)
@@ -870,6 +882,11 @@ _BROUGHT_IN = re.compile(
     r"\bbrought\b(?:\s+(?:in|his|her|their|the|a|an))?\b",
     re.I,
 )
+_OWN_MED = re.compile(
+    r"\b(?:patient(?:'s|s')?|his|her|their)\s+own\b(?:\s+supply\s+of\b)?"
+    r"|^\s*own\s+(?:supply\s+of\b)?",
+    re.I,
+)
 _DEPENDENT_ON = re.compile(r"\bdepend(?:s|ed|ent|ing)?\b(?:\s+\w+){0,3}\s+on\b", re.I)
 _ESTABLISHED_ON = re.compile(
     r"\b(?:established|stabilised|stabilized|stable)\b(?:\s+\w+){0,3}\s+on\b",
@@ -1067,6 +1084,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
     if _arrival_on_drug(sentence):
         return True
     if _brought_in_drug(sentence):
+        return True
+    if _own_supply(sentence):
         return True
     if _dependent_on_drug(sentence):
         return True
@@ -1457,6 +1476,33 @@ def _brought_in_drug(sentence: str) -> bool:
             word
             for word in words
             if word.lower() not in {"to", "the", "a", "an", "his", "her", "their", "this", "that", "in"}
+        ]
+        nxt = content[1] if len(content) >= 2 else ""
+        if nxt and (_ON_TOPIC.match(nxt) or _NOT_HAS_OBJECT.match(nxt)):
+            continue
+        return True
+    return False
+
+
+def _own_supply(sentence: str) -> bool:
+    """True when the patient's own supply names a drug."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _MED_HISTORY, _ON_TOPIC, _on_object_is_drug
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text) or _MED_HISTORY.search(text):
+        return False
+    for match in _OWN_MED.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        tail = text[match.end():]
+        if not _on_object_is_drug(tail):
+            continue
+        words = re.findall(r"[A-Za-z0-9'-]+", tail)
+        content = [
+            word
+            for word in words
+            if word.lower() not in {"to", "the", "a", "an", "his", "her", "their", "this", "that", "of"}
         ]
         nxt = content[1] if len(content) >= 2 else ""
         if nxt and (_ON_TOPIC.match(nxt) or _NOT_HAS_OBJECT.match(nxt)):
@@ -1959,6 +2005,7 @@ def _chart_caution_text(chart: str) -> str:
         _not_regular_med_stop,
         _not_home_stop,
         _not_brought_stop,
+        _not_own_stop,
         _med_list_stop,
         _refused_stop,
         _negated_away_split,
@@ -1989,6 +2036,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _not_regular_med_stop(sentence)
                 or _not_home_stop(sentence)
                 or _not_brought_stop(sentence)
+                or _not_own_stop(sentence)
                 or _med_list_stop(sentence)
                 or _refused_stop(sentence)
             ):

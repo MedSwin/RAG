@@ -462,6 +462,10 @@ _NOT_BROUGHT = re.compile(
     r"(?:\s+(?:in|his|her|their|the|a|an))?",
     re.I,
 )
+_NOT_OWN = re.compile(
+    r"\b(?:no|not|never)\b(?:\s+[A-Za-z0-9'-]+){0,4}\s+own\b(?:\s+supply\s+of\b)?",
+    re.I,
+)
 _NOT_REGULAR_MED = re.compile(
     r"\b(?:is|was|were|are|am|been)\s+not\s+"
     r"(?:(?:a|an|the|his|her|their)\s+)?"
@@ -820,6 +824,19 @@ def _not_brought_stop(text: str) -> bool:
     return False
 
 
+def _not_own_stop(text: str) -> bool:
+    """True when the patient's own supply does not include a named drug."""
+    raw = text or ""
+    if re.search(r"\b(?:counsel|discuss|advise|update|inform|educat\w*)\b", raw, re.I):
+        return False
+    if _MED_TOPIC.search(raw) or _MED_HISTORY.search(raw):
+        return False
+    for match in _NOT_OWN.finditer(raw):
+        if _on_object_is_drug(raw[match.end():]):
+            return True
+    return False
+
+
 def _not_for_stop(text: str) -> bool:
     """True when the line says the patient is not for a named drug."""
     if _negated_off_keep(text):
@@ -1043,6 +1060,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _not_regular_med_stop(text)
         or _not_home_stop(text)
         or _not_brought_stop(text)
+        or _not_own_stop(text)
         or _med_list_stop(text)
         or _refused_stop(text)
     )
