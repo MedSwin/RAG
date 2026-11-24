@@ -337,6 +337,32 @@ def test_the_card_names_the_warning_drug_not_the_recommendation():
     assert "apixaban" not in card["summary"].lower()
 
 
+def test_the_card_names_the_conflict_drug_when_the_note_warns_about_another_drug():
+    from app.schemas.evidence import ContradictionPair
+
+    response = _response(accepted=True, unresolved=True)
+    response.evidence_bundle.passages.append(
+        CandidatePassage(
+            chunk_id="caution",
+            doc_id="doc-caution",
+            source_type=SourceType.LIT,
+            text="Apixaban is recommended. Avoid warfarin.",
+        )
+    )
+    response.contradictions = [
+        ContradictionPair(
+            facet="guideline_concordance",
+            chunk_id_a="chunk-1",
+            chunk_id_b="caution",
+            severity="high",
+            reason="Same-drug safety warning conflicts with this recommendation for apixaban.",
+        )
+    ]
+    card = cards_from_chat(response)[0]
+    assert card["summary"] == "Unresolved evidence conflicts for apixaban need clinician review."
+    assert "warfarin" not in card["summary"].lower()
+
+
 def test_a_critical_card_names_the_conflict_drug():
     from app.schemas.evidence import ContradictionPair
 

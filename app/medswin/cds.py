@@ -329,12 +329,36 @@ def _caution_drug_name(
         ids.add(item.chunk_id_b)
     found: List[str] = []
     for passage in passages or []:
-        if getattr(passage, "chunk_id", None) not in ids:
+        chunk_id = getattr(passage, "chunk_id", None)
+        if chunk_id not in ids:
             continue
         raw = getattr(passage, "text", "") or ""
         if not (_ungoverned_caution(raw) or _QUALIFY.search(raw)):
             continue
-        for drug in sorted(intervention_tokens(named_caution_text(raw))):
+        caution_drugs = set(intervention_tokens(named_caution_text(raw)))
+        passage_drugs = set(intervention_tokens(raw))
+        chosen: set = set()
+        saw_unnamed = False
+        saw_pair = False
+        for item in pairs:
+            if item.resolved or not _pair_matches_severity(item, severity):
+                continue
+            if chunk_id not in {item.chunk_id_a, item.chunk_id_b}:
+                continue
+            saw_pair = True
+            named = set(intervention_tokens(getattr(item, "reason", "") or ""))
+            if not named:
+                saw_unnamed = True
+                continue
+            if caution_drugs & named:
+                chosen |= caution_drugs & named
+            elif passage_drugs & named:
+                chosen |= passage_drugs & named
+            else:
+                chosen |= named
+        if saw_unnamed or not saw_pair:
+            chosen |= caution_drugs
+        for drug in sorted(chosen):
             if drug not in found:
                 found.append(drug)
     if not found:
