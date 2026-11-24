@@ -22,7 +22,7 @@ import numpy as np
 from app.core.config import settings
 from app.core.database import get_database
 from app.medswin.ledger import build_retrieval_ledger
-from app.services.medswin.governance import ensure_cds_language, redact_phi_text
+from app.services.medswin.governance import ensure_cds_language, redact_phi_text, redact_public_chat
 from app.repositories.sessions import SessionRepository
 from app.repositories.traces import TraceRepository
 from app.retrieval.dense import DenseRetriever
@@ -645,7 +645,7 @@ class NaiveRAGOrchestrator:
             logger.warning("Naive trace persist failed: %s", exc)
             mode["trace_persist"] = True
             trace.degraded_mode = mode
-        return ChatResponse(
+        return redact_public_chat(ChatResponse(
             answer=answer,
             answer_artifact=benchmark_artifact or AnswerArtifact(
                 content=answer,
@@ -668,7 +668,7 @@ class NaiveRAGOrchestrator:
             ranked_evidence=self._document_rank(ranked_passages),
             retrieval_backend=backend,
             timing_ms=timing,
-        )
+        ))
 
     @staticmethod
     def _document_rank(passages: List[CandidatePassage], depth: int = 20) -> List[RankedEvidenceItem]:

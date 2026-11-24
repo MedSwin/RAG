@@ -45,7 +45,7 @@ from app.scoring.calibrate import get_calibration_store
 from app.services.adapters.embedding import EmbeddingClient
 from app.services.adapters.llm import LLMClient
 from app.services.adapters.reranker import RerankerClient
-from app.services.medswin.governance import build_citation, redact_phi_text
+from app.services.medswin.governance import build_citation, redact_phi_text, redact_public_chat
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +370,7 @@ class MedSwinOrchestrator:
                 trace.citations = citations
                 trace.timing_ms["total"] = round((time.perf_counter() - started) * 1000.0, 2)
                 await self._persist_trace(trace, org_id, degraded)
-                return ChatResponse(
+                return redact_public_chat(ChatResponse(
                     answer=answer,
                     answer_artifact=AnswerArtifact(content="", rendered_text=answer, exact_answer=None, ideal_answer="" if benchmark else None, cited_chunk_ids=[c["chunk_id"] for c in citations], abstained=True),
                     evidence_bundle=evidence_bundle,
@@ -393,7 +393,7 @@ class MedSwinOrchestrator:
                     ranked_evidence=ranked_evidence,
                     retrieval_backend=trace.retrieval_backend,
                     timing_ms=trace.timing_ms,
-                )
+                ))
 
             synthesis_started = time.perf_counter()
             answer, provenance, answer_artifact = await self.synthesis_agent.synthesize_with_artifact(
@@ -426,7 +426,7 @@ class MedSwinOrchestrator:
             trace.citations = citations
             trace.timing_ms["total"] = round((time.perf_counter() - started) * 1000.0, 2)
             await self._persist_trace(trace, org_id, degraded)
-            return ChatResponse(
+            return redact_public_chat(ChatResponse(
                 answer=answer,
                 answer_artifact=answer_artifact,
                 evidence_bundle=evidence_bundle,
@@ -450,7 +450,7 @@ class MedSwinOrchestrator:
                 ranked_evidence=ranked_evidence,
                 retrieval_backend=trace.retrieval_backend,
                 timing_ms=trace.timing_ms,
-            )
+            ))
         except Exception as exc:  # noqa: BLE001
             logger.error("Orchestration failed: %s", exc, exc_info=True)
             degraded["error"] = True
@@ -468,7 +468,7 @@ class MedSwinOrchestrator:
             trace.degraded_mode = degraded
             trace.timing_ms["total"] = round((time.perf_counter() - started) * 1000.0, 2)
             await self._persist_trace(trace, org_id, degraded)
-            return ChatResponse(
+            return redact_public_chat(ChatResponse(
                 answer=failure,
                 answer_artifact=AnswerArtifact(
                     content="",
@@ -488,7 +488,7 @@ class MedSwinOrchestrator:
                 ranked_evidence=ranked_evidence,
                 retrieval_backend=trace.retrieval_backend,
                 timing_ms=trace.timing_ms,
-            )
+            ))
 
     async def _patient_query(
         self,

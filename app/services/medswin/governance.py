@@ -50,6 +50,14 @@ _TRACE_IDENTITY_KEYS = {
 }
 
 
+def redact_public_chat(response: Any) -> Any:
+    """Redact a chat response after the gate has finished."""
+    from app.schemas.traces import ChatResponse
+
+    payload = response.model_dump(mode="python")
+    return ChatResponse.model_validate(redact_stored_trace(payload))
+
+
 def redact_stored_trace(payload: Any) -> Any:
     """Redact free text in a stored trace. Keep ids and timestamps."""
     return _redact_stored(payload, None)

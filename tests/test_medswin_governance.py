@@ -2,6 +2,59 @@ from app.models.medswin import CandidatePassage, SourceType
 from app.services.medswin.governance import build_citation, ensure_cds_language, redact_phi_payload, redact_phi_text
 
 
+def test_the_chat_response_drops_a_phone_number():
+    from app.schemas.evidence import EvidenceBundle, EvidenceClaim, EvidenceLedgerEntry
+    from app.schemas.traces import ChatResponse
+    from app.services.medswin.governance import redact_public_chat
+
+    response = ChatResponse(
+        answer="Call 555-234-5678. Continue metformin.",
+        evidence_bundle=EvidenceBundle(
+            passages=[
+                CandidatePassage(
+                    chunk_id="emr-1",
+                    doc_id="doc-emr-1",
+                    source_type=SourceType.EMR,
+                    text="Call 555-234-5678. Creatinine is 1.4. Continue metformin.",
+                    metadata={"patient_id": "pt-1", "note": "Call 555-234-5678."},
+                )
+            ],
+            total_tokens=12,
+            cpg_count=0,
+            emr_count=1,
+            lit_count=0,
+            safety_count=0,
+            evidence_ledger=[
+                EvidenceLedgerEntry(
+                    chunk_id="emr-1",
+                    doc_id="doc-emr-1",
+                    source_type=SourceType.EMR,
+                    text="Call 555-234-5678. Creatinine is 1.4.",
+                    claims=[
+                        EvidenceClaim(
+                            facet="patient_applicability",
+                            claim="Call 555-234-5678. Creatinine is 1.4.",
+                            chunk_id="emr-1",
+                        )
+                    ],
+                )
+            ],
+        ),
+        trace_id="trace-1",
+    )
+    public = redact_public_chat(response)
+    assert "555-234-5678" not in public.answer
+    assert "metformin" in public.answer
+    passage = public.evidence_bundle.passages[0]
+    assert "555-234-5678" not in passage.text
+    assert "Creatinine is 1.4." in passage.text
+    assert passage.metadata["patient_id"] == "pt-1"
+    assert "555-234-5678" not in passage.metadata["note"]
+    assert "555-234-5678" not in public.evidence_bundle.evidence_ledger[0].text
+    assert "Creatinine is 1.4." in public.evidence_bundle.evidence_ledger[0].claims[0].claim
+    assert public.evidence_bundle.passages[0].chunk_id == "emr-1"
+
+
 def test_phi_redaction_handles_direct_identifiers():
     text = "Patient ID: ABC1234, DOB: 01/02/1970, call +1 555 123 4567 or test@example.com"
 
