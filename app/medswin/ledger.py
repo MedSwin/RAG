@@ -1706,7 +1706,7 @@ def _directed_drug(sentence: str) -> bool:
 
 _WITH_DRUG = re.compile(
     r"\b(?:loads?|loaded|loading)\b(?:\s+\w+){0,5}\s+with\b"
-    r"|\b(?:cover(?:s|ed|ing)?|bridg(?:e|es|ed|ing))\s+the\s+patient\s+with\b"
+    r"|\b(?:cover(?:s|ed|ing)?|bridg(?:e|es|ed|ing))(?:\s+the\s+patient)?\s+with\b"
     r"|\b(?:was|is|were|been)\s+(?:covered|bridged)\s+with\b",
     re.I,
 )
