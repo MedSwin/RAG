@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.database import init_database, get_database, close_database
 from app.core.state import initialize_services, get_model_manager, get_model_download_service, cleanup_services
 from app.api.v1.router import api_router
+from app.api.cds import router as cds_router
 from app.api.auth import AuthMiddleware
 from app.services.dataset import HuggingFaceDatasetService
 from app.services.storage import StorageService
@@ -220,6 +221,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(cds_router)
 
 _WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 _WEB_PUBLIC = Path(__file__).resolve().parent.parent / "web" / "public"
