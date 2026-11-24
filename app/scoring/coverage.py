@@ -78,7 +78,6 @@ def score_passage_facets(
 ) -> Dict[str, float]:
     """Score passage-to-facet alignment (paper Eq. facet-alignment)."""
     text = passage.text.lower()
-    explicit_scores = passage.facet_scores or passage.metadata.get("facet_scores", {}) or {}
     scores: Dict[str, float] = {}
     for facet in facets:
         source_bonus = _source_policy_score(passage.source_type, facet.source_policy)
@@ -92,11 +91,7 @@ def score_passage_facets(
             text_score = 0.0
         else:
             text_score = clamp(0.20 + source_bonus + keyword_score + 0.15 * section_score + safety_bonus)
-        explicit = explicit_scores.get(facet.name) if isinstance(explicit_scores, dict) else None
-        if text_score <= 0.0 or not isinstance(explicit, (int, float)) or isinstance(explicit, bool):
-            scores[facet.name] = text_score
-        else:
-            scores[facet.name] = max(text_score, clamp(explicit))
+        scores[facet.name] = text_score
     passage.facet_scores = scores
     return scores
 

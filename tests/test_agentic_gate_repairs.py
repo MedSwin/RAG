@@ -1040,11 +1040,30 @@ def test_a_stored_facet_score_cannot_cover_text_that_lacks_the_facet():
         ClinicalFacet(name="safety_contraindications", keywords=["contraindicated"], threshold=0.70),
     ]
     scores = score_passage_facets(passage, facets)
+    plain = _passage("cpg-plain", "Metformin is first-line for type 2 diabetes.")
+    plain_score = score_passage_facets(plain, facets)["guideline_concordance"]
     assert scores["safety_contraindications"] == 0.0
-    assert scores["guideline_concordance"] >= 0.95
+    assert scores["guideline_concordance"] == plain_score
+    assert scores["guideline_concordance"] < 0.95
     ledger = build_retrieval_ledger([passage], facets)
     assert "safety_contraindications" not in ledger[0].facets
     assert "guideline_concordance" in ledger[0].facets
+
+
+def test_a_stored_facet_score_does_not_satisfy_a_weak_sentence():
+    facet = ClinicalFacet(
+        name="guideline_concordance",
+        keywords=["apixaban"],
+        required=True,
+        threshold=0.70,
+    )
+    weak = _passage("weak", "See apixaban in the appendix.")
+    weak.metadata = {"facet_scores": {"guideline_concordance": 1.0}}
+    weak.calibrated_score = 0.95
+    weak.evidence_grade_score = 0.95
+    row = compute_facet_coverage([facet], build_retrieval_ledger([weak], [facet]))[0]
+    assert row.coverage_probability < facet.threshold
+    assert row.status != "satisfied"
 
 
 def test_a_specialist_confidence_cannot_cover_a_facet_the_passage_does_not_support():
