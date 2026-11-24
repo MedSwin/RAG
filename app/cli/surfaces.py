@@ -74,7 +74,7 @@ def probe(url: str, *, timeout: float = 2.0, params: dict[str, Any] | None = Non
         status, body = http_json("GET", url, timeout=timeout, params=params)
         return {"ok": 200 <= status < 400, "status": status, "body": body}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "status": None, "error": str(exc)}
+        return {"ok": False, "status": None, "error": type(exc).__name__}
 
 
 def collect_status(api_base: str, org_id: str) -> dict[str, Any]:

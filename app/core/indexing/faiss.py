@@ -142,7 +142,7 @@ class FAISSIndexBuilder(BaseIndexBuilder):
                 "index_path": index_path,
                 "mapping_path": mapping_path,
                 "total_vectors": 0,
-                "message": f"Index building failed: {str(e)}"
+                "message": f"Index building failed: {type(e).__name__}"
             }
     
     def load(self, index_path: str, mapping_path: str) -> bool:

@@ -62,3 +62,27 @@ def test_hnsw_retry_ceiling_does_not_scale_to_full_index(monkeypatch):
     assert fake.efs[-1] == 2000
     assert max(fake.efs) == 2000
     assert len(fake.efs) < 10
+
+
+def test_index_build_message_hides_the_exception_text(monkeypatch):
+    from app.cli.surfaces import probe
+    from app.core.indexing.faiss import FAISSIndexBuilder
+    from app.core.indexing.tree import TreeIndexBuilder
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("index path 555-234-5678")
+
+    for builder in (HNSWIndexBuilder(2), FAISSIndexBuilder(2), TreeIndexBuilder(2)):
+        builder._validate_embeddings = _boom
+        result = builder.build([[1.0, 0.0]], ["c1"], "/tmp/index", "/tmp/map")
+        assert result["success"] is False
+        assert result["message"] == "Index building failed: RuntimeError"
+        assert "555-234-5678" not in result["message"]
+
+    def _http(*_args, **_kwargs):
+        raise RuntimeError("connection 555-234-5678")
+
+    monkeypatch.setattr("app.cli.surfaces.http_json", _http)
+    status = probe("http://127.0.0.1:9/health")
+    assert status["error"] == "RuntimeError"
+    assert "555-234-5678" not in str(status)
