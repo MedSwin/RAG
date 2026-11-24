@@ -403,6 +403,8 @@ class MedSwinOrchestrator:
                 benchmark=bool(benchmark),
             )
             trace.timing_ms["synthesis"] = round((time.perf_counter() - synthesis_started) * 1000.0, 2)
+            if answer_artifact.abstained and decision.passed:
+                degraded["synthesis"] = True
             citations = self._citations(evidence_bundle)
             trace.answer_provenance = provenance
             trace.completed_at = datetime.utcnow()

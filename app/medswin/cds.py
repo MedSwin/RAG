@@ -63,6 +63,7 @@ def cards_from_chat(
     unresolved = bool(decision and decision.unresolved_critical_conflicts)
     abstained = bool(response.answer_artifact and response.answer_artifact.abstained)
     crashed = bool((response.degraded_mode or {}).get("error")) or decision is None
+    synthesis_failed = bool(decision and decision.passed and abstained)
     accepted = bool(
         decision
         and not crashed
@@ -81,6 +82,9 @@ def cards_from_chat(
     elif unresolved:
         indicator = "critical"
         summary = "Unresolved evidence conflicts need clinician review."
+    elif synthesis_failed:
+        indicator = "warning"
+        summary = "The model did not return a structured clinical answer."
     else:
         indicator = "warning"
         summary = "The available evidence is insufficient."

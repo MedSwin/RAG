@@ -145,6 +145,24 @@ def test_a_crashed_check_returns_a_critical_card():
     }
 
 
+def test_a_passed_gate_with_an_unstructured_answer_is_not_called_insufficient():
+    response = _response(accepted=True).model_copy(
+        update={
+            "answer": "The model did not return a structured clinical answer.",
+            "answer_artifact": AnswerArtifact(
+                content="The model did not return a structured clinical answer.",
+                rendered_text="The model did not return a structured clinical answer.",
+                abstained=True,
+            ),
+            "degraded_mode": {"synthesis": True},
+        }
+    )
+    card = cards_from_chat(response)[0]
+    assert card["indicator"] == "warning"
+    assert card["summary"] == "The model did not return a structured clinical answer."
+    assert "insufficient" not in card["summary"].lower()
+
+
 def test_insufficient_decision_returns_a_warning_card():
     cards = cards_from_chat(_response(accepted=False))
     assert cards[0]["indicator"] == "warning"
