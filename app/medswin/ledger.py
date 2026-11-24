@@ -604,8 +604,16 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         and before_drugs.isdisjoint(after_drugs)
         and after_near
     ):
-        clause_begin = anchor
-        clause_end = max([anchor, *after_near]) + 1
+        after_text = " ".join(words[match_end + 1:])
+        later_order = _has_recommendation_verb(after_text) and set(
+            intervention_tokens(after_text)
+        ).isdisjoint(before_drugs)
+        if later_order:
+            clause_begin = before[-1]
+            clause_end = match_end + 1
+        else:
+            clause_begin = anchor
+            clause_end = max([anchor, *after_near]) + 1
     elif (
         not hard_caution
         and before_drugs
