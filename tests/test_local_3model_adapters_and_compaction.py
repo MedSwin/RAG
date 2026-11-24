@@ -22,7 +22,7 @@ from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage, EvidenceBundle
 from app.schemas.facets import ClinicalFacet
 from app.services.adapters.embedding import EmbeddingClient
-from app.services.adapters.llm import LLMClient, _estimate_message_tokens
+from app.services.adapters.llm import LLMClient, _estimate_message_tokens, fit_local_messages
 from app.services.adapters.reranker import RerankerClient
 from benchmarks.system_eval.contracts import GENERATOR_CONTRACTS, resolve_generator_contract
 from benchmarks.system_eval.runner import _profile_environment, _retrieval_identity_matches
@@ -652,6 +652,38 @@ async def test_local_llm_defaults_and_clamps_completion_inside_2048(monkeypatch)
     await foundry.call_llm([{"role": "user", "content": huge}], max_tokens=32)
     assert seen["json"]["max_completion_tokens"] == 32
     assert "max_tokens" not in seen["json"]
+
+
+def test_the_local_window_keeps_the_chart_and_the_caution():
+    history = "history " * 1500
+    specialist = (
+        "Shared Evidence Passages:\n"
+        f"[c1|CPG|doc=d1]\nAvoid apixaban. {history}\n\n"
+        "Query: Which dose?\n\n"
+        "Patient chart:\nASA 100mg daily\n"
+        "The patient chart is context. Cite only a chunk_id from the evidence."
+    )
+    synthesis = (
+        "Query: Which dose?\n\n"
+        "Patient chart:\nASA 100mg daily\n"
+        "The patient chart is context. Cite only a chunk_id from the evidence.\n\n"
+        "Facet coverage:\n- guideline: satisfied\n\n"
+        f"Evidence:\n[c1] Avoid apixaban. {history}\n\n"
+        "Valid chunk_ids: c1\n"
+    )
+    for content in (specialist, synthesis):
+        fitted = fit_local_messages(
+            [
+                {"role": "system", "content": "Return one JSON object. " * 40},
+                {"role": "user", "content": content},
+            ],
+            384,
+        )
+        text = fitted[-1]["content"]
+        assert "ASA 100mg daily" in text
+        assert "Avoid apixaban" in text
+        assert "history " * 40 not in text
+        assert _estimate_message_tokens(fitted) + 384 <= 1980
 
 
 def test_nist_download_sends_a_browser_user_agent(monkeypatch, tmp_path):

@@ -93,7 +93,60 @@ def fit_local_messages(messages: List[Dict[str, Any]], completion_tokens: int) -
     return fitted
 
 
+def _chart_block(content: str, width: int) -> str:
+    marker = "Patient chart:\n"
+    if marker not in content:
+        return ""
+    tail = content.split(marker, 1)[1]
+    stop = len(tail)
+    for header in ("\n\nFacet coverage:", "\n\nEvidence:", "\n\nSafety notes:", "\n\nValid chunk_ids:"):
+        index = tail.find(header)
+        if index >= 0:
+            stop = min(stop, index)
+    block = tail[:stop].strip()
+    if not block:
+        return ""
+    return f"{marker}{block[:width]}"
+
+
+def _evidence_heads(content: str, width: int) -> str:
+    if "Evidence:\n" not in content:
+        return ""
+    evidence = content.split("Evidence:\n", 1)[1]
+    for header in ("\n\nValid chunk_ids:", "\n\nSafety notes:"):
+        if header in evidence:
+            evidence = evidence.split(header, 1)[0]
+    blocks = []
+    for block in evidence.split("\n\n"):
+        text = block.strip()
+        if not text:
+            continue
+        blocks.append(text[:width])
+        if len(blocks) >= 4:
+            break
+    if not blocks:
+        return ""
+    return "Evidence:\n" + "\n\n".join(blocks)
+
+
+def _compact_user_message(content: str, width: int) -> str:
+    """Keep the chart and the evidence head. Drop the history tail."""
+    chart = _chart_block(content, width)
+    evidence = _evidence_heads(content, width)
+    if not chart and not evidence:
+        return content[: max(80, len(content) // 2)]
+    if "Patient chart:\n" in content:
+        question = content.split("Patient chart:\n", 1)[0]
+    elif "Evidence:\n" in content:
+        question = content.split("Evidence:\n", 1)[0]
+    else:
+        question = content
+    parts = [part for part in (question.strip()[:240], chart, evidence) if part]
+    return "\n\n".join(parts)
+
+
 def _shrink_user_message(messages: List[Dict[str, Any]], prompt_budget: int) -> bool:
+    width = 480
     for _ in range(16):
         if _estimate_message_tokens(messages) <= prompt_budget:
             return True
@@ -104,6 +157,10 @@ def _shrink_user_message(messages: List[Dict[str, Any]], prompt_budget: int) -> 
         content = str(messages[index].get("content") or "")
         if len(content) <= 80:
             return False
+        if "Patient chart:" in content or "Evidence:\n" in content:
+            width = max(80, width // 2)
+            messages[index]["content"] = _compact_user_message(content, width)
+            continue
         messages[index]["content"] = content[: max(80, len(content) // 2)]
     return _estimate_message_tokens(messages) <= prompt_budget
 
