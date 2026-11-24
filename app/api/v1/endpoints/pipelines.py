@@ -8,6 +8,7 @@ import time
 from hashlib import sha256
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -18,7 +19,14 @@ from app.medswin.naive import NaiveRAGOrchestrator
 from app.medswin.orchestrator import MedSwinOrchestrator
 from app.repositories.sessions import SessionRepository
 from app.repositories.traces import TraceRepository
-from app.schemas import ChatResponse, PipelineId
+from app.schemas import (
+    AnswerArtifact,
+    ChatResponse,
+    EvidenceBundle,
+    PipelineId,
+    PolicyAction,
+    PolicyDecision,
+)
 from app.services.adapters.embedding import EmbeddingClient
 from app.services.medswin.governance import redacted_trace_summary
 
@@ -151,6 +159,35 @@ async def pipeline_chat(pipeline: PipelineId, request: PipelineChatRequest, http
         ) from exc
 
 
+def _failed_compare_arm(pipeline: PipelineId, exc: BaseException) -> ChatResponse:
+    reason = f"{pipeline.value} pipeline failed: {type(exc).__name__}"
+    answer = "The evidence check failed before a decision was recorded."
+    decision = PolicyDecision(
+        passed=False,
+        action=PolicyAction.INSUFFICIENT_EVIDENCE,
+        reason=reason,
+    )
+    return ChatResponse(
+        answer=answer,
+        answer_artifact=AnswerArtifact(content="", rendered_text=answer, abstained=True),
+        evidence_bundle=EvidenceBundle(
+            passages=[],
+            total_tokens=0,
+            cpg_count=0,
+            emr_count=0,
+            lit_count=0,
+            safety_count=0,
+            policy_decision=decision,
+        ),
+        safety_notes=type(exc).__name__,
+        trace_id=str(uuid4()),
+        degraded_mode={"error": True},
+        uncertainty_level="high",
+        policy_decision=decision,
+        pipeline=pipeline,
+    )
+
+
 def _diff(left: ChatResponse, right: ChatResponse) -> Dict[str, Any]:
     left_docs = [row.doc_id for row in left.ranked_evidence]
     right_docs = [row.doc_id for row in right.ranked_evidence]
@@ -181,7 +218,13 @@ async def pipeline_compare(request: CompareRequest, http_request: Request):
     results: Dict[str, ChatResponse] = {}
     for pipeline in ordered:
         started = time.perf_counter()
-        response = await _chat(pipeline, request)
+        try:
+            response = await _chat(pipeline, request)
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.error("%s pipeline failed during compare: %s", pipeline.value, exc, exc_info=True)
+            response = _failed_compare_arm(pipeline, exc)
         response.timing_ms.setdefault("compare_wall", (time.perf_counter() - started) * 1000.0)
         results[pipeline.value] = response
     adjacent: Dict[str, Dict[str, Any]] = {}

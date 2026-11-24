@@ -295,6 +295,42 @@ def test_a_storage_error_hides_the_exception_text(monkeypatch):
     assert "555-234-5678" not in response.text
 
 
+def test_compare_keeps_a_successful_arm_when_one_pipeline_fails(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", False)
+
+    async def _chat(pipeline, request):
+        if pipeline == PipelineId.NAIVE:
+            raise RuntimeError("patient phone 555-234-5678")
+        return ChatResponse(
+            answer="held",
+            evidence_bundle=EvidenceBundle(passages=[], total_tokens=0, cpg_count=0, emr_count=0, lit_count=0),
+            trace_id="trace-full",
+            pipeline=pipeline,
+        )
+
+    monkeypatch.setattr(pipelines, "_chat", _chat)
+    app = FastAPI()
+    app.include_router(pipelines.router, prefix="/api/v1/pipelines")
+    response = TestClient(app).post(
+        "/api/v1/pipelines/compare",
+        json={
+            "query": "q",
+            "user_id": "clinician-1",
+            "org_id": "org-a",
+            "pipelines": ["naive", "full"],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "555-234-5678" not in response.text
+    assert body["results"]["full"]["answer"] == "held"
+    failed = body["results"]["naive"]
+    assert failed["degraded_mode"]["error"] is True
+    assert failed["safety_notes"] == "RuntimeError"
+    assert failed["policy_decision"]["reason"] == "naive pipeline failed: RuntimeError"
+    assert failed["answer_artifact"]["abstained"] is True
+
+
 def test_a_pipeline_error_hides_the_exception_text(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_AUTH", False)
 
