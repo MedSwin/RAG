@@ -291,6 +291,21 @@ def test_a_low_caution_is_named_when_the_gate_abstains():
     )
     assert "high-severity" in high_text.lower()
     assert "apixaban" in high_text.lower()
+    assert "Avoid apixaban." in high_text
+    long_text = insufficient_answer(
+        "Which dose?",
+        decision,
+        passages=[
+            CandidatePassage(
+                chunk_id="caution",
+                doc_id="doc-caution",
+                source_type=SourceType.SAFETY,
+                text="The patient has a long history of clinic visits. Avoid apixaban.",
+            )
+        ],
+    )
+    assert "Avoid apixaban." in long_text
+    assert "clinic visits" not in long_text
     from app.medswin.ledger import PATIENT_CHART_ID
 
     chart_decision = PolicyDecision(

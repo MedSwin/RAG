@@ -125,6 +125,7 @@ def cards_from_chat(
         conflict_drug=_caution_drug_name(passages, decision, contradictions, severity="high"),
         medium_name=_caution_drug_name(passages, decision, contradictions, severity="medium"),
         chart_caution=_chart_caution_line(decision, contradictions),
+        evidence_caution=_evidence_caution_line(passages, decision, contradictions),
     )
     card: Dict[str, Any] = {
         "uuid": response.trace_id or str(uuid.uuid4()),
@@ -215,6 +216,38 @@ def _chart_caution_line(decision: Any, contradictions: List[Any]) -> str:
             continue
         return reason.split(" | ", 1)[0].strip()
     return ""
+
+
+def _evidence_caution_line(passages: List[Any], decision: Any, contradictions: List[Any]) -> str:
+    """Return the caution sentence from a cited evidence passage."""
+    import re
+
+    from app.retrieval.lexical import LexicalRetriever
+    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+    pairs = list(contradictions or [])
+    if decision is not None:
+        pairs.extend(list(getattr(decision, "contradictions", []) or []))
+    cited = set()
+    for item in pairs:
+        if getattr(item, "resolved", False):
+            continue
+        cited.add(item.chunk_id_a)
+        cited.add(item.chunk_id_b)
+    spans: List[str] = []
+    for passage in passages or []:
+        if getattr(passage, "chunk_id", None) not in cited:
+            continue
+        text = getattr(passage, "text", "") or ""
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+            if not sentence.strip():
+                continue
+            if not (_ungoverned_caution(sentence) or _QUALIFY.search(sentence)):
+                continue
+            span = LexicalRetriever._caution_span(sentence).strip()
+            if span and span not in spans:
+                spans.append(span)
+    return " ".join(spans)
 
 
 def _named_summary(drugs: str, full_prefix: str, full_suffix: str, short_prefix: str) -> str:
@@ -347,6 +380,7 @@ def _detail(
     conflict_drug: str = "",
     medium_name: str = "",
     chart_caution: str = "",
+    evidence_caution: str = "",
 ) -> str:
     missing_text = ", ".join(missing) if missing else "none"
     passage_text = ", ".join(passage_ids) if passage_ids else "none"
@@ -370,6 +404,9 @@ def _detail(
             lead = f"{lead} {medium_sentence}"
     if chart_caution and chart_caution.lower() not in lead.lower():
         sentence = chart_caution if chart_caution.endswith(".") else f"{chart_caution}."
+        lead = f"{lead} {sentence}"
+    if evidence_caution and evidence_caution.lower() not in lead.lower():
+        sentence = evidence_caution if evidence_caution.endswith(".") else f"{evidence_caution}."
         lead = f"{lead} {sentence}"
     return (
         f"{lead} "

@@ -204,6 +204,7 @@ def test_the_warning_card_names_the_caution_drug():
     assert card["indicator"] == "warning"
     assert card["summary"] == "An unresolved caution qualifies apixaban."
     assert "apixaban" in card["detail"].lower()
+    assert "Avoid apixaban." in card["detail"]
 
 
 def test_a_low_caution_is_named_on_the_warning_card():

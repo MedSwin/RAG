@@ -92,6 +92,12 @@ def insufficient_answer(
     if chart_line and chart_line.lower() not in conflict.lower():
         sentence = chart_line if chart_line.endswith(".") else f"{chart_line}."
         conflict += f" {sentence}"
+    from app.medswin.cds import _evidence_caution_line
+
+    evidence_line = _evidence_caution_line(passages or [], decision, decision.contradictions)
+    if evidence_line and evidence_line.lower() not in conflict.lower():
+        sentence = evidence_line if evidence_line.endswith(".") else f"{evidence_line}."
+        conflict += f" {sentence}"
     body = (
         f"The available evidence is insufficient to provide a grounded clinician decision-support "
         f"answer for the query: {redact_phi_text(query)}. "
