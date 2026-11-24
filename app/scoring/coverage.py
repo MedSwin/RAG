@@ -287,6 +287,61 @@ def _named_safety_caution(text: str) -> bool:
     return False
 
 
+def _away_split(text: str) -> Optional[tuple[str, str]]:
+    """Split a switch or a replace into the new order and the stopped drug."""
+    raw = text or ""
+    switched = re.search(
+        r"\b(?P<verb>switch|change)\b(?:\s+\w+){0,4}\s+from\s+"
+        r"(?P<source>[A-Za-z][A-Za-z0-9-]{3,})\b(?:\s+\w+){0,6}\s+to\s+"
+        r"(?P<dest>[A-Za-z][A-Za-z0-9-]{3,})",
+        raw,
+        re.I,
+    )
+    replaced = re.search(
+        r"\breplace\s+(?P<source>[A-Za-z][A-Za-z0-9-]{3,})\s+with\s+"
+        r"(?P<dest>[A-Za-z][A-Za-z0-9-]{3,})",
+        raw,
+        re.I,
+    )
+    match = switched or replaced
+    if match is None:
+        return None
+    window = raw[max(0, match.start() - 48):match.start()]
+    if _LOCAL_NEGATION.search(window):
+        return None
+    source = match.group("source")
+    dest = match.group("dest")
+    if source.lower() == dest.lower():
+        return None
+    if not _token_names_drug(source) or not _token_names_drug(dest):
+        return None
+    clause = raw[match.start():match.end("source")].strip(" .,;")
+    if match is switched:
+        verb = match.group("verb")
+        recommendation = f"{verb[:1].upper()}{verb[1:].lower()} to {dest}"
+    else:
+        recommendation = f"Replace with {dest}"
+    return recommendation, clause
+
+
+def _source_stop(text: str) -> bool:
+    """True when the line stops one named drug. The new drug stays out of this check."""
+    raw = text or ""
+    pattern = re.compile(
+        r"\b(?:switch|change)\b(?:\s+\w+){0,4}\s+from\s+([A-Za-z][A-Za-z0-9-]{3,})\b"
+        r"|\breplace\s+([A-Za-z][A-Za-z0-9-]{3,})\b",
+        re.I,
+    )
+    for match in pattern.finditer(raw):
+        window = raw[max(0, match.start() - 48):match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        word = match.group(1) or match.group(2)
+        if _token_names_drug(word):
+            return True
+    return False
+
+
 def _ungoverned_caution(text: str) -> bool:
     """True when caution wording is not cancelled by a nearby negation."""
     for match in _CAUTION.finditer(text or ""):
@@ -297,7 +352,7 @@ def _ungoverned_caution(text: str) -> bool:
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(text[match.end():]):
             continue
         return True
-    return _named_safety_caution(text)
+    return _named_safety_caution(text) or _source_stop(text)
 
 
 def infer_polarity(passage: CandidatePassage, facet: ClinicalFacet) -> EvidencePolarity:

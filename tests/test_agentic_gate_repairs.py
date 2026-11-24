@@ -1092,6 +1092,62 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
     assert pairs_for("Increased bleeding on warfarin.", "Warfarin is recommended.") == []
 
 
+def test_a_switch_away_conflicts_with_the_stopped_drug():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("Which dose?", QuerySpec(canonical_terms=["dose"]))
+
+    def passage(chunk_id: str, text: str, source: SourceType) -> CandidatePassage:
+        return CandidatePassage(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=source,
+            text=text,
+            section="Recommendations",
+            calibrated_score=0.90,
+            evidence_grade_score=0.95,
+        )
+
+    def pairs_for(note: str, other: str):
+        source = SourceType.SAFETY if other.startswith("Avoid") else SourceType.CPG
+        return detect_contradictions(
+            build_retrieval_ledger(
+                [passage("note", note, SourceType.SAFETY), passage("other", other, source)],
+                facets,
+            )
+        )
+
+    for note in (
+        "Switch from warfarin to apixaban.",
+        "Switch the patient from warfarin to apixaban.",
+        "Change from warfarin to apixaban.",
+        "Replace warfarin with apixaban.",
+    ):
+        stopped = pairs_for(note, "Warfarin is recommended.")
+        assert len(stopped) == 1, note
+        assert stopped[0].severity == "high"
+        assert "warfarin" in stopped[0].reason
+        assert "apixaban" not in stopped[0].reason
+        assert pairs_for(note, "Avoid warfarin.") == [], note
+        assert pairs_for(note, "Apixaban is recommended.") == [], note
+        ordered = pairs_for(note, "Avoid apixaban.")
+        assert len(ordered) == 1, note
+        assert "apixaban" in ordered[0].reason
+        assert "warfarin" not in ordered[0].reason
+        chart = chart_contradictions(
+            note,
+            build_retrieval_ledger(
+                [passage("other", "Continue warfarin.", SourceType.CPG)],
+                facets,
+            ),
+        )
+        assert len(chart) == 1, note
+        assert "warfarin" in chart[0].reason
+        assert "apixaban" not in chart[0].reason
+    assert pairs_for("Switch to apixaban.", "Warfarin is recommended.") == []
+    assert pairs_for("Do not switch from warfarin to apixaban.", "Avoid warfarin.") == []
+
+
 def test_a_named_intolerance_conflicts_with_the_same_drug_order():
     from app.medswin.normalize import QueryNormalizer
 

@@ -578,7 +578,12 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         _LOCAL_NEGATION,
         _QUALIFY,
         _STOP_ORDER,
+        _away_split,
     )
+
+    away = _away_split(sentence)
+    if away:
+        return away
 
     hard_matches = []
     soft_matches = []
@@ -899,7 +904,10 @@ _START_VERB = re.compile(
     r"\b(?:commence|commenced|commencing|begin|begins|began|beginning|offer|offered|offering)\b",
     re.I,
 )
-_SWITCH_TO = re.compile(r"\b(?:switch|change)\b(?:\s+\w+){0,6}\s+to\b", re.I)
+_SWITCH_TO = re.compile(
+    r"\b(?:switch|change)\b(?:\s+\w+){0,6}\s+to\b|\breplace\b(?:\s+\w+){0,4}\s+with\b",
+    re.I,
+)
 _DRUG_OF_CHOICE = re.compile(r"\b(?:drug of choice|first choice)\b", re.I)
 _DOSE_CHANGE = re.compile(
     r"\b(?:add(?:ed|ing)?|increase[ds]?|increasing|up-?titrates?|up\s+titrates?)\b",
@@ -1016,14 +1024,14 @@ def _chart_continuation_text(chart: str) -> str:
 def _chart_caution_text(chart: str) -> str:
     """Keep caution sentences from a chart note. A later drug sentence stays out."""
     from app.retrieval.lexical import LexicalRetriever
-    from app.scoring.coverage import _QUALIFY, _STOP_ORDER, _ungoverned_caution
+    from app.scoring.coverage import _QUALIFY, _STOP_ORDER, _away_split, _ungoverned_caution
 
     kept = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", chart or ""):
         if not sentence.strip():
             continue
         if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
-            if _STOP_ORDER.search(sentence):
+            if _STOP_ORDER.search(sentence) or _away_split(sentence):
                 kept.append(named_caution_text(sentence))
             else:
                 kept.append(LexicalRetriever._caution_span(sentence))
