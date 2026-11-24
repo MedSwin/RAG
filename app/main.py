@@ -213,11 +213,16 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+def cors_allow_credentials(origins: list[str]) -> bool:
+    """Allow cookies only for an explicit origin list."""
+    return bool(origins) and "*" not in origins
+
+
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=cors_allow_credentials(list(settings.ALLOWED_ORIGINS)),
     allow_methods=["*"],
     allow_headers=["*"],
 )
