@@ -1,6 +1,24 @@
-# Finish MedSwin before the Bedrock move
+# MedSwin CDSS architecture standards
 
-MedSwin 2.0 already abstains when its evidence gate fails, and that behaviour is the right clinical instinct. It is still strategically incomplete. The live process is one FastAPI service on Azure AI Foundry (`gpt-5.4`, Cohere `embed-v-4-0` at 1536 dimensions, `Cohere-rerank-v4.0-fast`), with hybrid retrieval, fusion, and a provenance check on the two-stage and full pipelines, and with no CDS Hooks cards, no FHIR Clinical Reasoning evaluation, no real JWT check, and no Bedrock client. Strategic completeness means four locked identities: an inspectable decision the clinician can verify, a vector space that matches the index, a control plane that can stop and resume without repeating a write, and Bedrock IDs that the docs and the Kollab catalog actually use. The cutover target is `global.openai.gpt-6-luna` for chat and `global.cohere.embed-v4:0` for embeddings, with rerank on `cohere.rerank-v3-5:0` under IAM, after the corpus is embedded again. This Mac (Apple M5 Pro, 48 GB) can hold MedEmbed-large-v0.1, bge-reranker-v2-m3, and the MedSwin 7B LLaMA line at the same time. It cannot host GPT-6 Luna. The regulatory sentences below are readings of published guidance. They are not a device-classification opinion.
+## Current state
+
+This section describes the code after the Bedrock cutover. The sections below it are the 24 November 2026 pre-cutover audit. Read those sections as the record of what was wrong. Do not read them as the live process.
+
+The cloud default is AWS Bedrock. Chat uses `global.openai.gpt-6-luna` through Converse in `ap-southeast-2`. Embeddings use `global.cohere.embed-v4:0` at 1536 dimensions. Rerank uses `cohere.rerank-v3-5:0` in `us-east-1`. Foundry remains available when `CLOUD_PROVIDER=foundry`. The client is `app/services/adapters/bedrock.py`. Luna calls omit temperature. A caller that omits `max_tokens` gets a 1024-token cap.
+
+Local retrieval uses `abhinand/MedEmbed-large-v0.1` with CLS pooling and `EMBEDDING_DIMENSION` 1024. The downloader accepts safetensors. It does not write MiniLM into that directory. `BAAI/bge-reranker-v2-m3` is the local reranker. A Bedrock index and a MedEmbed index are different vector spaces. Cloud `/health` returns HTTP 503 when an existing index does not match the active embedder.
+
+`ENABLE_AUTH` still defaults off. When it is on, non-public routes need an HS256 JWT with a subject and a valid expiry. `ENABLE_RBAC` is read. A clinical role or the operator role is required when both switches are on. A signed clinician cannot list, fetch, store, or refresh chart rows. A corpus delete and a shared index rebuild require an operator. The build route returns HTTP 400 if the body names an organisation. The index is one shared index.
+
+CDS Hooks discovery is `GET /cds-services`. The evidence service is `POST /cds-services/medswin-evidence` for `patient-view`. An accepted card summary is the clinical answer. The card detail states that the card does not establish a diagnosis or a treatment order. Feedback is stored and does not call a model. There is still no FHIR `GuidanceResponse`.
+
+The evidence gate uses inclusion and mean confidence. `SUFF_T_CPG` and `SUFF_T_EMR` still only scale reported kappa. They do not accept or reject. An empty naive retrieval does not call the generator. A naive answer that does run carries the clinician decision-support boundary. Dataset ingest is refused while cloud mode is on, so the local embedder cannot rebuild the shared index.
+
+These items remain open. Authentication is off unless an operator turns it on. The corpus has not been re-embedded on Bedrock. `ENABLE_OTEL` is unused. There is no drug–drug or drug–allergy check, and the evaluation portfolio named in the audit has not been run.
+
+## Pre-cutover audit, 24 November 2026
+
+MedSwin 2.0 already abstains when its evidence gate fails, and that behaviour is the right clinical instinct. The process at the time of this audit was one FastAPI service on Azure AI Foundry (`gpt-5.4`, Cohere `embed-v-4-0` at 1536 dimensions, `Cohere-rerank-v4.0-fast`), with hybrid retrieval, fusion, and a provenance check on the two-stage and full pipelines, and with no CDS Hooks cards, no FHIR Clinical Reasoning evaluation, no real JWT check, and no Bedrock client. Strategic completeness means four locked identities: an inspectable decision the clinician can verify, a vector space that matches the index, a control plane that can stop and resume without repeating a write, and Bedrock IDs that the docs and the Kollab catalog actually use. The cutover target was `global.openai.gpt-6-luna` for chat and `global.cohere.embed-v4:0` for embeddings, with rerank on `cohere.rerank-v3-5:0` under IAM, after the corpus is embedded again. This Mac (Apple M5 Pro, 48 GB) can hold MedEmbed-large-v0.1, bge-reranker-v2-m3, and the MedSwin 7B LLaMA line at the same time. It cannot host GPT-6 Luna. The regulatory sentences below are readings of published guidance. They are not a device-classification opinion.
 
 ## MedSwin abstains in prose and still misses the card contract
 
