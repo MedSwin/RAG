@@ -129,6 +129,7 @@ def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
 
     assert len(same) == 1
     assert same[0].facet == "guideline_concordance"
+    assert same[0].reason == "Same-drug safety warning conflicts with this recommendation for apixaban."
     assert different == []
 
 
@@ -237,6 +238,7 @@ def test_same_drug_caution_qualifies_the_recommendation():
     assert len(same) == 1
     assert same[0].severity == "low"
     assert same[0].chunk_id_b == "safety-ckd"
+    assert same[0].reason == "Same-drug caution qualifies this recommendation for apixaban."
     assert different == []
 
 

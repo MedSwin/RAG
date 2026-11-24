@@ -281,6 +281,14 @@ def _pair_severity(left: EvidenceLedgerEntry, right: EvidenceLedgerEntry) -> str
     )
 
 
+def _reason_with_drug(reason: str, left: str, right: str) -> str:
+    """Name the shared drug in the ledger line the clinician reads."""
+    drugs = sorted(intervention_tokens(left) & intervention_tokens(right))
+    if not drugs:
+        return reason
+    return f"{reason.rstrip('.')} for {', '.join(drugs)}."
+
+
 def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = None) -> str:
     """Use the full passage when the claim preview was cut."""
     stored = (entry.text or "").strip()
@@ -333,7 +341,16 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 conflict_text = _pairing_text(conflict)
                 if not same_intervention(support_text, conflict_text):
                     continue
-                _add(facet, support, conflict, "Incompatible support and caution for the same intervention.")
+                _add(
+                    facet,
+                    support,
+                    conflict,
+                    _reason_with_drug(
+                        "Incompatible support and caution for the same intervention.",
+                        support_text,
+                        conflict_text,
+                    ),
+                )
 
     safety_warnings: List[tuple[EvidenceLedgerEntry, EvidenceClaim]] = []
     other_supports: List[tuple[EvidenceLedgerEntry, EvidenceClaim]] = []
@@ -366,7 +383,11 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 support_claim.facet,
                 support_entry,
                 warning_entry,
-                "Same-drug safety warning conflicts with this recommendation.",
+                _reason_with_drug(
+                    "Same-drug safety warning conflicts with this recommendation.",
+                    _pairing_text(support_entry, support_claim),
+                    _pairing_text(warning_entry, warning_claim),
+                ),
             )
     qualifies: List[tuple[EvidenceLedgerEntry, EvidenceClaim]] = []
     plain_supports: List[tuple[EvidenceLedgerEntry, EvidenceClaim]] = []
@@ -391,7 +412,11 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 support_claim.facet,
                 support_entry,
                 qualify_entry,
-                "Same-drug caution qualifies this recommendation.",
+                _reason_with_drug(
+                    "Same-drug caution qualifies this recommendation.",
+                    _pairing_text(support_entry, support_claim),
+                    _pairing_text(qualify_entry, qualify_claim),
+                ),
                 severity="low",
             )
     return pairs
