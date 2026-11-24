@@ -449,3 +449,19 @@ def test_nonfinite_sampling_retries_greedy(serve):
     assert model.calls == [True, False]
     assert cached == 0
     assert int(sequences.shape[-1]) == 3
+
+
+def test_the_generation_lock_covers_only_the_forward_pass():
+    text = SCRIPT_PATH.read_text(encoding="utf-8")
+    start = text.index("    def _run_generate()")
+    end = text.index("    try:\n        output, cached_tokens", start)
+    generate = text[start:end]
+    assert generate.count("_GENERATION_LOCK") == 1
+    assert "_generate_with_optional_prefix_cache" in generate
+    assert "tokenizer" not in generate
+    chat = text[text.index("async def chat"): text.index("\nif __name__")]
+    lock_at = chat.index("with _GENERATION_LOCK")
+    assert chat.index("tokenizer(prompt") < lock_at
+    assert chat.index('inputs["input_ids"].to(device)') < lock_at
+    assert chat.index("tokenizer.decode") > lock_at
+    assert chat.index("return ChatResponse") > lock_at
