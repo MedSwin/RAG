@@ -1107,6 +1107,12 @@ _CHART_ORDER_VERB = re.compile(
     r"\b(?:order(?:s|ed|ing)?|chart(?:s|ed|ing)?|issu(?:e|es|ed|ing)|provid(?:e|es|ed|ing))\b",
     re.I,
 )
+_RX_MARK = re.compile(r"\brx\b\s*:?", re.I)
+_SCRIPT_FOR = re.compile(
+    r"\bscript(?:ed|s|ing)?\b(?:\s+\w+){0,3}\s+for\b|\bscripted\b",
+    re.I,
+)
+_SCRIPT_END = re.compile(r"\bscript\s*[.!?]*\s*$", re.I)
 _PUT_ON = re.compile(
     r"\b(?:put|puts|putting|placed?|placing)\b(?:\s+\w+){0,5}\s+on\b",
     re.I,
@@ -1429,6 +1435,66 @@ def _verb_orders_named_drug(text: str, start: int, end: int) -> bool:
     )
 
 
+def _script_orders_drug(text: str) -> bool:
+    """True when a script or an Rx names a drug."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _ON_TOPIC, _on_object_is_drug
+
+    raw = text or ""
+    if _COUNSEL_ON.search(raw):
+        return False
+
+    def _blocked(tail: str) -> bool:
+        content = _content_words(tail)
+        nxt = content[1] if len(content) >= 2 else ""
+        return bool(nxt and _ON_TOPIC.match(nxt))
+
+    for match in _RX_MARK.finditer(raw):
+        window = raw[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        tail = raw[match.end():]
+        drug_tail = re.sub(r"^\s*(?:for\b\s*)?", "", tail, count=1, flags=re.I)
+        prefix = raw[: match.start()]
+        if _direct_drug_object(drug_tail) and not _blocked(drug_tail):
+            return True
+        if (
+            not intervention_tokens(tail)
+            and _subject_is_drug(prefix)
+            and not _MONITOR_WORD.search(tail or "")
+        ):
+            return True
+    for match in _SCRIPT_FOR.finditer(raw):
+        window = raw[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        tail = raw[match.end():]
+        prefix = raw[: match.start()]
+        phrase = match.group(0).lower()
+        if phrase.endswith(" for"):
+            if _on_object_is_drug(tail):
+                return True
+            continue
+        if _direct_drug_object(tail) and not _blocked(tail):
+            return True
+        if (
+            not intervention_tokens(tail)
+            and _subject_is_drug(prefix)
+            and not _MONITOR_WORD.search(tail or "")
+        ):
+            return True
+    end = _SCRIPT_END.search(raw)
+    if end is not None:
+        window = raw[max(0, end.start() - 48): end.start()]
+        prefix = raw[: end.start()]
+        if (
+            not _LOCAL_NEGATION.search(window)
+            and _subject_is_drug(prefix)
+            and not _MONITOR_WORD.search(prefix)
+        ):
+            return True
+    return False
+
+
 def _has_recommendation_verb(text: str) -> bool:
     from app.scoring.coverage import _LOCAL_NEGATION, _ON_TOPIC, _QUALIFY
 
@@ -1481,6 +1547,8 @@ def _has_recommendation_verb(text: str) -> bool:
             and not _MONITOR_WORD.search(tail or "")
         ):
             return True
+    if _script_orders_drug(text):
+        return True
     for match in _PUT_ON.finditer(text or ""):
         window = text[max(0, match.start() - 48): match.start()]
         if _LOCAL_NEGATION.search(window):
