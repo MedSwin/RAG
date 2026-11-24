@@ -302,11 +302,11 @@ class LexicalRetriever:
         marker = "patient retrieval context:"
         index = raw.lower().find(marker)
         if index < 0:
-            return LexicalRetriever._with_generics(raw.strip())
+            return LexicalRetriever._fit_embed_query(LexicalRetriever._with_generics(raw.strip()))
         question = raw[:index].strip()
         kept = LexicalRetriever._caution_sentences(raw[index + len(marker):])
         if not kept:
-            return LexicalRetriever._with_generics(question)
+            return LexicalRetriever._fit_embed_query(LexicalRetriever._with_generics(question))
         return LexicalRetriever._fit_embed_query(
             LexicalRetriever._with_generics(
                 f"{question}\n\nPatient retrieval context:\n{' '.join(kept)}"
@@ -326,7 +326,27 @@ class LexicalRetriever:
         marker = "Patient retrieval context:"
         index = (text or "").find(marker)
         if index < 0:
-            return _TOKENIZER.decode(tokens[:limit])
+            kept = [span.strip() for span in LexicalRetriever._caution_sentences(text) if span.strip()]
+            caution = " ".join(kept)
+            head = _TOKENIZER.decode(tokens[:limit])
+            if not caution or caution.lower() in head.lower():
+                return head
+            caution_tokens = _TOKENIZER.encode(caution)
+            if len(caution_tokens) >= limit:
+                return _TOKENIZER.decode(caution_tokens[:limit])
+            room = max(0, limit - len(caution_tokens))
+            question_tokens = list(tokens)
+            trimmed = _TOKENIZER.decode(question_tokens[:room]).rstrip()
+            fitted = f"{trimmed}\n\n{caution}".strip() if trimmed else caution
+            fitted_tokens = _TOKENIZER.encode(fitted)
+            while len(fitted_tokens) > limit and question_tokens:
+                question_tokens = question_tokens[:-8]
+                trimmed = _TOKENIZER.decode(question_tokens).rstrip() if question_tokens else ""
+                fitted = f"{trimmed}\n\n{caution}".strip() if trimmed else caution
+                fitted_tokens = _TOKENIZER.encode(fitted)
+                if not question_tokens:
+                    break
+            return fitted
         caution = text[index:]
         caution_tokens = _TOKENIZER.encode(caution)
         if len(caution_tokens) >= limit:
