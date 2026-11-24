@@ -960,6 +960,61 @@ def test_a_recommendation_that_cannot_use_warfarin_does_not_conflict_with_that_w
     assert all(pair.chunk_id_b != "war" for pair in blocked)
 
 
+def test_a_qualifier_does_not_warn_the_other_drug():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("Which dose?", QuerySpec(canonical_terms=["dose"]))
+
+    def passage(chunk_id: str, text: str, source: SourceType = SourceType.CPG) -> CandidatePassage:
+        return CandidatePassage(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=source,
+            text=text,
+            section="Recommendations",
+            calibrated_score=0.90,
+            evidence_grade_score=0.95,
+        )
+
+    def pairs_for(note: str, other: str, source: SourceType = SourceType.CPG):
+        return detect_contradictions(
+            build_retrieval_ledger(
+                [passage("note", note), passage("other", other, source)],
+                facets,
+            )
+        )
+
+    def drugs(pairs):
+        return [(pair.severity, "warfarin" in pair.reason, "apixaban" in pair.reason) for pair in pairs]
+
+    for note in (
+        "Start warfarin unless the patient takes apixaban.",
+        "Start warfarin except in patients on apixaban.",
+    ):
+        assert drugs(pairs_for(note, "Avoid warfarin.", SourceType.SAFETY)) == [( "high", True, False)]
+        assert pairs_for(note, "Avoid apixaban.", SourceType.SAFETY) == []
+        assert drugs(pairs_for(note, "Warfarin is recommended.")) == [("low", True, False)]
+        assert pairs_for(note, "Apixaban is recommended.") == []
+    caution = "Use warfarin with caution in patients on apixaban."
+    assert pairs_for(caution, "Avoid warfarin.", SourceType.SAFETY) == []
+    assert pairs_for(caution, "Avoid apixaban.", SourceType.SAFETY) == []
+    assert drugs(pairs_for(caution, "Warfarin is recommended.")) == [("low", True, False)]
+    assert pairs_for(caution, "Apixaban is recommended.") == []
+    for note in (
+        "Start warfarin when apixaban is contraindicated.",
+        "Prefer warfarin when apixaban is not recommended.",
+        "Initiate warfarin only if apixaban is contraindicated.",
+    ):
+        assert drugs(pairs_for(note, "Avoid warfarin.", SourceType.SAFETY)) == [("high", True, False)], note
+        assert pairs_for(note, "Avoid apixaban.", SourceType.SAFETY) == [], note
+        assert pairs_for(note, "Warfarin is recommended.") == [], note
+        assert drugs(pairs_for(note, "Apixaban is recommended.")) == [("high", False, True)], note
+    both = "Warfarin and apixaban are contraindicated."
+    assert pairs_for(both, "Avoid warfarin.", SourceType.SAFETY) == []
+    assert drugs(pairs_for(both, "Warfarin is recommended.")) == [("high", True, False)]
+    assert drugs(pairs_for(both, "Apixaban is recommended.")) == [("high", False, True)]
+
+
 def test_an_order_before_a_rejected_drug_keeps_that_order():
     from app.medswin.normalize import QueryNormalizer
 

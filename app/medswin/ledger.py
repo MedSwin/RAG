@@ -519,12 +519,16 @@ def named_caution_text(text: str) -> str:
             recommendation_drugs = intervention_tokens(recommendation)
             clause_drugs = intervention_tokens(clause)
             order = _chart_recommendation_text(recommendation) or _chart_continuation_text(recommendation)
-            if (
-                order
-                and recommendation_drugs
+            disjoint = bool(
+                recommendation_drugs
                 and clause_drugs
                 and recommendation_drugs.isdisjoint(clause_drugs)
-            ):
+            )
+            if order and disjoint and _ungoverned_caution(clause):
+                span = clause
+            elif disjoint and _QUALIFY.search(sentence) and not _ungoverned_caution(clause):
+                span = order or recommendation
+            elif order and disjoint:
                 span = clause
             else:
                 span = LexicalRetriever._caution_span(sentence).strip()
@@ -538,14 +542,19 @@ def named_caution_text(text: str) -> str:
 
 def _conflict_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = None) -> str:
     """Use the caution sentence when it names the drug. A support sentence stays out."""
-    return named_caution_text(_pairing_text(entry, claim))
+    paired = _pairing_text(entry, claim)
+    stored = " ".join((entry.text or "").split())
+    if stored and stored != paired and stored in paired:
+        paired = stored
+    return named_caution_text(paired)
 
 
 def _caution_clause(sentence: str) -> tuple[str, str]:
     """Split one sentence into the recommendation and a caution about another drug."""
     from app.scoring.coverage import _BENIGN_DO_NOT, _CAUTION, _LOCAL_NEGATION, _QUALIFY
 
-    match = None
+    hard_matches = []
+    soft_matches = []
     for item in list(_CAUTION.finditer(sentence or "")) + list(_QUALIFY.finditer(sentence or "")):
         window = sentence[max(0, item.start() - 48):item.start()]
         if _LOCAL_NEGATION.search(window):
@@ -553,8 +562,12 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         phrase = item.group(0).lower()
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(sentence[item.end():]):
             continue
-        if match is None or item.start() < match.start():
-            match = item
+        if _CAUTION.fullmatch(item.group(0)):
+            hard_matches.append(item)
+        else:
+            soft_matches.append(item)
+    candidates = hard_matches or soft_matches
+    match = min(candidates, key=lambda item: item.start()) if candidates else None
     if match is None:
         return sentence, ""
     words = (sentence or "").split()
@@ -565,11 +578,13 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         spans.append(at)
         cursor = at + len(word)
     anchor = 0
+    match_end = 0
     for index, begin in enumerate(spans):
         end = begin + len(words[index])
-        if begin <= match.start() < end or begin < match.end() <= end:
+        if begin < match.end() and end > match.start():
+            match_end = index
+        if begin <= match.start() < end:
             anchor = index
-            break
     drug_at = [index for index, word in enumerate(words) if intervention_tokens(word)]
     before = [index for index in drug_at if index < anchor]
     after = [index for index in drug_at if index > anchor]
@@ -591,6 +606,34 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
     ):
         clause_begin = anchor
         clause_end = max([anchor, *after_near]) + 1
+    elif (
+        not hard_caution
+        and before_drugs
+        and after_drugs
+        and before_drugs.isdisjoint(after_drugs)
+        and after_near
+    ):
+        clause_begin = after_near[0]
+        clause_end = max(after_near) + 1
+    elif hard_caution and not after and len(before) >= 2:
+        nearest = before[-1]
+        nearest_drugs = set(intervention_tokens(words[nearest]))
+        earlier_drugs = before_drugs - nearest_drugs
+        earlier = " ".join(words[:nearest])
+        if (
+            earlier_drugs
+            and nearest_drugs
+            and earlier_drugs.isdisjoint(nearest_drugs)
+            and _has_recommendation_verb(earlier)
+        ):
+            clause_begin = nearest
+            clause_end = max(match_end, nearest) + 1
+        elif nearby:
+            clause_begin = min([anchor, *nearby])
+            clause_end = max([anchor, *nearby]) + 1
+        else:
+            clause_begin = anchor
+            clause_end = min(len(words), anchor + 3)
     elif nearby:
         clause_begin = min([anchor, *nearby])
         clause_end = max([anchor, *nearby]) + 1
