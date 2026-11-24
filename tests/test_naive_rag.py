@@ -121,7 +121,7 @@ def test_naive_does_not_call_a_reranker_client():
     assert all(passage.rerank_score is None for passage in response.evidence_bundle.passages)
 
 
-def test_naive_generates_when_retrieval_is_empty():
+def test_naive_abstains_when_retrieval_is_empty():
     orch, _, llm = _orchestrator(passages=[])
 
     async def _empty(*args, **kwargs):
@@ -131,8 +131,11 @@ def test_naive_generates_when_retrieval_is_empty():
     response = asyncio.run(orch.chat(query="q", user_id="u1", org_id="org1"))
     assert response.pipeline == PipelineId.NAIVE
     assert response.evidence_bundle.passages == []
-    assert response.policy_decision.passed is True
-    assert "No passages were retrieved" in llm.calls[0]["messages"][0]["content"]
+    assert response.policy_decision.passed is False
+    assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert response.answer_artifact.abstained is True
+    assert "insufficient" in response.answer.lower()
+    assert llm.calls == []
 
 
 def test_naive_refuses_to_pretend_rag_when_corpus_has_no_embeddings():

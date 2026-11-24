@@ -4,7 +4,8 @@ This is the control pipeline for MedSwin evaluation. It reuses the same
 embedding client, ANN index, Mongo chunk store, org/patient filters, LLM backend,
 and evidence token budget as the full system. It deliberately omits BM25,
 reranking, calibration, fusion, utility selection, MAC agents, the sufficiency
-gate, retrieve-more, and hint expansion.
+gate, retrieve-more, and hint expansion. An empty retrieval does not call the
+generator.
 """
 
 from __future__ import annotations
@@ -251,6 +252,32 @@ class NaiveRAGOrchestrator:
                     generate_ms=0.0,
                     degraded=degraded,
                 )
+            if not passages:
+                reason = "Naive RAG retrieved no passages, so it did not call the generator."
+                decision = PolicyDecision(
+                    passed=False,
+                    action=PolicyAction.INSUFFICIENT_EVIDENCE,
+                    reason=reason,
+                    missing_facets=["retrieved_evidence"],
+                )
+                from app.medswin.abstain import insufficient_answer
+
+                return await self._respond(
+                    trace,
+                    org_id,
+                    passages=[],
+                    ranked_passages=[],
+                    backend=backend,
+                    answer=insufficient_answer(query, decision),
+                    notes=reason,
+                    started=started,
+                    embed_ms=embed_ms,
+                    retrieve_ms=retrieve_ms,
+                    generate_ms=0.0,
+                    degraded={"empty_retrieval": True},
+                    decision=decision,
+                    abstained=True,
+                )
 
             packed = _truncate_context(
                 passages[:k],
@@ -395,18 +422,16 @@ class NaiveRAGOrchestrator:
     async def _generate(
         self, query: str, passages: List[CandidatePassage], *, benchmark: Optional[Dict[str, Any]] = None
     ) -> tuple[str, Optional[AnswerArtifact]]:
-        if passages:
-            context = "\n\n".join(
-                f"[{idx}] chunk_id={passage.chunk_id} doc_id={passage.doc_id}\n{passage.text}"
-                for idx, passage in enumerate(passages, start=1)
-            )
-            instruction = (
-                "Answer the question using the retrieved passages. "
-                "If the passages are weak or incomplete, still give your best answer."
-            )
-        else:
-            context = "(no passages retrieved)"
-            instruction = "No passages were retrieved. Answer the question from your own knowledge."
+        if not passages:
+            raise RuntimeError("Naive RAG cannot generate without retrieved passages")
+        context = "\n\n".join(
+            f"[{idx}] chunk_id={passage.chunk_id} doc_id={passage.doc_id}\n{passage.text}"
+            for idx, passage in enumerate(passages, start=1)
+        )
+        instruction = (
+            "Answer the question using the retrieved passages. "
+            "If the passages are weak or incomplete, still give your best answer."
+        )
         messages = [
             {
                 "role": "system",
@@ -504,11 +529,13 @@ class NaiveRAGOrchestrator:
         generate_ms: float,
         degraded: Optional[Dict[str, bool]] = None,
         benchmark_artifact: Optional[AnswerArtifact] = None,
+        decision: Optional[PolicyDecision] = None,
+        abstained: bool = False,
     ) -> ChatResponse:
         if answer and not any(message.content == answer for message in trace.messages):
             trace.messages.append(AgentMessage(role="user", agent_id="naive_rag", content=trace.query))
             trace.messages.append(AgentMessage(role="assistant", agent_id="naive_rag", content=answer))
-        decision = PolicyDecision(passed=True, action=PolicyAction.ACCEPT, reason=notes)
+        decision = decision or PolicyDecision(passed=True, action=PolicyAction.ACCEPT, reason=notes)
         ledger = self._naive_ledger(passages)
         bundle = self.bundle_builder.build_bundle(
             passages,
@@ -550,7 +577,7 @@ class NaiveRAGOrchestrator:
                 content=answer,
                 rendered_text=answer,
                 cited_chunk_ids=[p.chunk_id for p in passages],
-                abstained=False,
+                abstained=abstained,
             ),
             evidence_bundle=bundle,
             safety_notes=notes,
