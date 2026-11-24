@@ -69,6 +69,24 @@ def test_facet_sufficiency_passes_with_required_coverage():
     assert {item.facet for item in check.facet_coverage} == {"guideline_concordance", "safety_contraindications"}
 
 
+def test_an_empty_selection_does_not_review_the_dropped_passages():
+    policy = EvidenceSufficiencyPolicy()
+    facets = [
+        ClinicalFacet(name="guideline_concordance", threshold=0.55, keywords=["guideline", "recommendation"]),
+        ClinicalFacet(name="safety_contraindications", threshold=0.45, keywords=["contraindication", "avoid"]),
+    ]
+    passages = [
+        _passage("c1", "Guideline recommendation supports treatment when clinically indicated."),
+        _passage("c3", "Current guideline recommendation confirms treatment for the eligible population."),
+        _passage("c2", "Review contraindications and avoid therapy when severe allergy is present."),
+    ]
+    constraints = {"required_facets": [facet.model_dump() for facet in facets]}
+    accepted = policy.check_sufficiency(passages, constraints=constraints, selected_passages=passages)
+    empty = policy.check_sufficiency(passages, constraints=constraints, selected_passages=[])
+    assert accepted.passed is True
+    assert empty.passed is False
+
+
 def test_facet_sufficiency_routes_missing_safety_to_retrieve_more():
     policy = EvidenceSufficiencyPolicy()
     facets = [

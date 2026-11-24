@@ -41,7 +41,7 @@ class EvidenceSufficiencyPolicy:
         query: str = "",
     ) -> SufficiencyCheck:
         facets = self.build_facets(query, query_spec, constraints, patient_id)
-        review = selected_passages or passages
+        review = passages if selected_passages is None else selected_passages
         ledger = build_retrieval_ledger(review, facets)
         check = self.gate.check(ledger, facets, review, iteration, constraints or {}, query_spec)
         self.last_policy_decision = check.policy_decision
