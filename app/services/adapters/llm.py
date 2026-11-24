@@ -198,6 +198,28 @@ def _chart_block(content: str, width: int) -> str:
     return f"{marker}{_fit_block(block, width)}"
 
 
+def _keep_drug_blocks(blocks: List[str], limit: int = 12) -> List[str]:
+    """Keep one block for each drug. A repeated warning does not fill the list."""
+    from app.agents.base import _make_room_for_new_drug
+
+    kept: List[str] = []
+    for block in blocks:
+        if len(kept) >= limit:
+            kept = [
+                item[0]
+                for item in _make_room_for_new_drug(
+                    [(item,) for item in kept],
+                    lambda item: item[0],
+                    block,
+                    True,
+                )
+            ]
+        if len(kept) >= limit:
+            continue
+        kept.append(block)
+    return kept
+
+
 def _evidence_heads(content: str, width: int) -> str:
     if "Evidence:\n" not in content:
         return ""
@@ -208,11 +230,9 @@ def _evidence_heads(content: str, width: int) -> str:
     blocks = []
     for block in evidence.split("\n\n"):
         text = block.strip()
-        if not text:
-            continue
-        blocks.append(_fit_block(text, width))
-        if len(blocks) >= 12:
-            break
+        if text:
+            blocks.append(_fit_block(text, width))
+    blocks = _keep_drug_blocks(blocks)
     if not blocks:
         return ""
     return "Evidence:\n" + "\n\n".join(blocks)
@@ -231,11 +251,9 @@ def _passage_heads(content: str, width: int) -> str:
     blocks = []
     for block in body.split("\n\n"):
         text = block.strip()
-        if not text:
-            continue
-        blocks.append(_fit_block(text, width))
-        if len(blocks) >= 12:
-            break
+        if text:
+            blocks.append(_fit_block(text, width))
+    blocks = _keep_drug_blocks(blocks)
     if not blocks:
         return ""
     return marker + "\n\n".join(blocks)

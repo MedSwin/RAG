@@ -842,6 +842,26 @@ def test_the_local_query_keeps_a_warning_at_the_end_of_a_long_question():
     assert _estimate_message_tokens(fitted) + 384 <= 1980
 
 
+def test_the_local_evidence_keeps_a_later_drug_when_repeated_warnings_fill_the_list():
+    blocks = [
+        f"[w-{index}] Avoid warfarin. " + ("monitoring plan details " * 30)
+        for index in range(12)
+    ]
+    blocks.append("[apix] Avoid apixaban.")
+    content = "Query: Which dose?\n\nEvidence:\n" + "\n\n".join(blocks)
+    fitted = fit_local_messages(
+        [
+            {"role": "system", "content": "Return one JSON object. " * 80},
+            {"role": "user", "content": content},
+        ],
+        384,
+    )
+    text = fitted[-1]["content"].lower()
+    assert "apixaban" in text
+    assert "warfarin" in text
+    assert _estimate_message_tokens(fitted) + 384 <= 1980
+
+
 def test_the_chart_window_keeps_every_drug_that_fits():
     from app.services.adapters.llm import _chart_block
 
