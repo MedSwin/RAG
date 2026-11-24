@@ -64,16 +64,15 @@ def _governed_caution(text: str, start: int) -> bool:
 
 def _safety(candidate: CandidatePassage) -> float:
     text = candidate.text.lower()
-    hits = len(_CONFLICT_PHRASE.findall(text))
+    score = len(_CONFLICT_PHRASE.findall(text)) * 0.32
     for match in re.finditer(r"[a-z0-9]+", text):
         token = match.group(0)
         caution = _token_is_caution(token)
-        if not caution and not token.startswith(("renal", "pregnan")):
-            continue
-        if caution and not _governed_caution(text, match.start()):
-            continue
-        hits += 1
-    return clamp(hits * 0.16)
+        if caution and _governed_caution(text, match.start()):
+            score += 0.32
+        elif token.startswith(("renal", "pregnan")):
+            score += 0.16
+    return clamp(score)
 
 
 def _noise(candidate: CandidatePassage) -> float:
@@ -106,14 +105,13 @@ def _is_conflict_token(token: str) -> bool:
 
 def _contradiction(candidate: CandidatePassage) -> float:
     text = candidate.text.lower()
-    hits = len(_CONFLICT_PHRASE.findall(text))
+    score = len(_CONFLICT_PHRASE.findall(text)) * 0.32
     for match in re.finditer(r"[a-z0-9]+", text):
-        if not _is_conflict_token(match.group(0)):
+        token = match.group(0)
+        if not _is_conflict_token(token) or not _governed_caution(text, match.start()):
             continue
-        if not _governed_caution(text, match.start()):
-            continue
-        hits += 1
-    return clamp(hits * 0.16)
+        score += 0.16 if token in {"conflict", "conflicts", "conflicting"} else 0.32
+    return clamp(score)
 
 
 def compute_fusion_scores(candidates: List[CandidatePassage]) -> List[CandidatePassage]:

@@ -1,6 +1,7 @@
 from app.core.config import settings
 from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage
+from app.agents.base import prioritize_passages
 from app.scoring.fusion import _contradiction, _safety
 
 
@@ -40,12 +41,29 @@ def test_a_direct_caution_raises_the_safety_rank():
         source_type=SourceType.CPG,
         text="Do not delay antibiotics when infection is confirmed.",
     )
-    assert _safety(direct) > 0.0
-    assert _contradiction(direct) > 0.0
+    renal = CandidatePassage(
+        chunk_id="renal",
+        doc_id="renal",
+        source_type=SourceType.CPG,
+        text="Metformin needs a renal review.",
+        calibrated_score=0.99,
+    )
+    filler = CandidatePassage(
+        chunk_id="filler",
+        doc_id="filler",
+        source_type=SourceType.CPG,
+        text="A general management statement.",
+        calibrated_score=0.99,
+    )
+    assert _safety(direct) >= 0.32
+    assert _contradiction(direct) >= 0.32
     assert _safety(negated) == 0.0
     assert _contradiction(negated) == 0.0
     assert _safety(delay) == 0.0
     assert _contradiction(delay) == 0.0
+    assert _safety(renal) < 0.32
+    direct.safety_score = _safety(direct)
+    assert prioritize_passages([filler, direct])[0].chunk_id == "direct"
 
 
 def test_a_hedge_does_not_pin_a_contradiction():
