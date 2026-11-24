@@ -1,4 +1,4 @@
-from app.medswin.abstain import abstention_matches
+from app.medswin.abstain import abstention_matches, citations_match
 from app.medswin.gate import EvidenceGate
 from app.medswin.ledger import (
     adjudicate_contradictions,
@@ -47,6 +47,14 @@ def _entry(chunk_id: str, facet: str, claim: str, polarity: EvidencePolarity, gr
             )
         ],
     )
+
+
+def test_an_answerable_case_needs_one_real_citation():
+    assert citations_match([], [], False) is False
+    assert citations_match(["cpg-1#0"], [], False) is True
+    assert citations_match(["cpg-1#0"], ["made-up#0"], False) is False
+    assert citations_match([], [], True) is True
+    assert citations_match([], ["made-up#0"], True) is False
 
 
 def test_a_required_abstention_fails_when_the_answer_gives_a_dose():

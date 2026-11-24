@@ -41,7 +41,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from app.agents.base import CLAIM_SCHEMA, passage_context
-from app.medswin.abstain import abstention_matches
+from app.medswin.abstain import abstention_matches, citations_match
 from app.models.pooling import cls_pool, inference_device
 from app.prompts import claims as claim_prompts
 from app.schemas.enums import SourceType
@@ -546,6 +546,7 @@ def main() -> None:
             keyword_hit = any(k in lower_c for k in sc["must_mention_any"])
         expect_abstain = bool(sc.get("expect_abstain"))
         abstain_ok = abstention_matches(content, expect_abstain)
+        citation_ok = citations_match(cited_valid, hallucinated_brackets, expect_abstain)
 
         scenario_results.append(
             {
@@ -563,6 +564,7 @@ def main() -> None:
                 "keyword_check_passed": keyword_hit,
                 "expect_abstain": expect_abstain,
                 "abstain_check_passed": abstain_ok,
+                "citation_check_passed": citation_ok,
                 "answer_preview": content[:260],
             }
         )
@@ -701,6 +703,7 @@ def main() -> None:
             "all_http_200": all(r["status_code"] == 200 for r in scenario_results),
             "all_within_2048_window": all(r["within_2048_window"] for r in scenario_results),
             "zero_hallucinated_chunk_ids": all(len(r["hallucinated_chunk_ids"]) == 0 for r in scenario_results),
+            "citation_contract_passed": all(r["citation_check_passed"] for r in scenario_results),
             "abstention_contract_passed": all(
                 r["abstain_check_passed"] for r in scenario_results if r["expect_abstain"]
             ),
@@ -727,13 +730,21 @@ def main() -> None:
     out_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(f"\nSaved complete 3-model benchmark report -> {out_path}", flush=True)
     print(json.dumps({k: v for k, v in summary.items() if k != "suite_c_generation_20_scenarios"}, indent=2))
-    if not summary["suite_c_generation_20_scenarios"]["abstention_contract_passed"]:
-        failed = [
-            item["scenario_id"]
-            for item in scenario_results
-            if item["expect_abstain"] and not item["abstain_check_passed"]
-        ]
-        raise SystemExit(f"Required abstention failed: {', '.join(failed)}")
+    suite_c = summary["suite_c_generation_20_scenarios"]
+    failed_abstain = [
+        item["scenario_id"]
+        for item in scenario_results
+        if item["expect_abstain"] and not item["abstain_check_passed"]
+    ]
+    failed_citations = [
+        item["scenario_id"] for item in scenario_results if not item["citation_check_passed"]
+    ]
+    if failed_abstain or failed_citations or not suite_c["abstention_contract_passed"]:
+        raise SystemExit(
+            "Smoke contract failed. "
+            f"Abstention: {', '.join(failed_abstain) or 'none'}. "
+            f"Citations: {', '.join(failed_citations) or 'none'}."
+        )
 
 
 if __name__ == "__main__":

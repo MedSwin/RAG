@@ -22,6 +22,19 @@ _ABSTAIN_MARKERS = (
 )
 
 
+def citations_match(
+    valid_ids: list[str],
+    hallucinated_ids: list[str],
+    expect_abstain: bool,
+) -> bool:
+    """An answerable case needs one real citation. A made-up citation fails either case."""
+    if hallucinated_ids:
+        return False
+    if expect_abstain:
+        return True
+    return len(valid_ids) >= 1
+
+
 def abstention_matches(content: str, expect_abstain: bool) -> bool:
     """Return whether a required abstention is present. An answerable case stays open."""
     if not expect_abstain:
