@@ -44,14 +44,19 @@ def _with_lexical_cautions(
 
     pool = list(ordered[:limit])
     kept = {item.chunk_id for item in pool}
-    extra: List[CandidatePassage] = []
+    lexical: List[CandidatePassage] = []
+    dense: List[CandidatePassage] = []
     for candidate in ordered[limit:]:
+        if candidate.chunk_id in kept or not _is_prompt_caution(candidate):
+            continue
+        if candidate.lexical_score is not None:
+            lexical.append(candidate)
+        else:
+            dense.append(candidate)
+    extra: List[CandidatePassage] = []
+    for candidate in lexical + dense:
         if len(extra) >= _LEXICAL_CAUTION_RESERVE:
             break
-        if candidate.chunk_id in kept or candidate.lexical_score is None:
-            continue
-        if not _is_prompt_caution(candidate):
-            continue
         extra.append(candidate)
         kept.add(candidate.chunk_id)
     return pool + extra

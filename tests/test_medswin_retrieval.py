@@ -687,3 +687,37 @@ def test_a_lexical_caution_stays_when_dense_hits_fill_the_pool():
     assert "caution" in kept
     assert "other" not in kept
     assert len(pool) == 81
+
+
+def test_a_lexical_caution_stays_ahead_of_weaker_dense_cautions():
+    from app.retrieval.hybrid import _with_lexical_cautions
+
+    fillers = [
+        _candidate(f"dense-{index}", "A general note.", dense=0.90)
+        for index in range(80)
+    ]
+    for item in fillers:
+        item.lexical_score = None
+    dense_cautions = []
+    for index in range(12):
+        item = _candidate(
+            f"weak-{index}",
+            "Avoid warfarin.",
+            source_type=SourceType.SAFETY,
+            dense=0.30 - (index * 0.01),
+        )
+        item.lexical_score = None
+        dense_cautions.append(item)
+    lexical = _candidate("lexical", "Avoid apixaban.", source_type=SourceType.SAFETY, dense=None)
+    lexical.lexical_score = 1.0
+    lexical.dense_score = None
+    ordered = sorted(
+        [*fillers, *dense_cautions, lexical],
+        key=lambda item: (item.dense_score or 0.0, item.lexical_score or 0.0),
+        reverse=True,
+    )
+    pool = _with_lexical_cautions(ordered, 80)
+    kept = {item.chunk_id for item in pool}
+    assert "lexical" in kept
+    assert "weak-0" in kept
+    assert "weak-11" not in kept
