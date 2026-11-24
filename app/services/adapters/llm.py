@@ -210,6 +210,7 @@ class LLMClient:
                 logger=logger,
                 json=payload,
                 headers=headers,
+                replay_safe=False,
             )
             response.raise_for_status()
             data = response.json()

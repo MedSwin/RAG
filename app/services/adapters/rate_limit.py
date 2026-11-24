@@ -154,6 +154,7 @@ class AdaptiveModelRateLimiter:
         json: Dict[str, Any],
         headers: Dict[str, str],
         fail_open_after_s: float | None = None,
+        replay_safe: bool = True,
     ) -> httpx.Response:
         last_error: Optional[BaseException] = None
         last_response: Optional[httpx.Response] = None
@@ -195,6 +196,18 @@ class AdaptiveModelRateLimiter:
 
             if status_code in {500, 502, 503, 504}:
                 last_response = response
+                if not replay_safe:
+                    delay = _retry_after_seconds(response) if status_code == 503 else None
+                    if delay is None or delay > 30 or attempt > 1:
+                        return response
+                    self._retry_events += 1
+                    logger.warning(
+                        "Model HTTP 503 for %s; waiting %.2fs for one admission retry",
+                        key,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
                 self._retry_events += 1
                 if attempt == settings.MODEL_RATE_LIMIT_MAX_ATTEMPTS:
                     response.raise_for_status()
@@ -248,6 +261,7 @@ async def request_with_model_rate_limit(
     json: Dict[str, Any],
     headers: Dict[str, str],
     fail_open_after_s: float | None = None,
+    replay_safe: bool = True,
 ) -> httpx.Response:
     """POST through a shared per-model limiter.
 
@@ -266,6 +280,7 @@ async def request_with_model_rate_limit(
         json=json,
         headers=headers,
         fail_open_after_s=fail_open_after_s,
+        replay_safe=replay_safe,
     )
 
 

@@ -94,3 +94,52 @@ def test_a_refused_connection_retries_once(monkeypatch):
     )
     assert response.status_code == 200
     assert client.calls == 2
+
+
+class _StatusClient:
+    def __init__(self, rows):
+        self.rows = list(rows)
+        self.calls = 0
+
+    async def post(self, url, json, headers):
+        self.calls += 1
+        status, response_headers = self.rows.pop(0)
+        response = _Response(response_headers)
+        response.status_code = status
+        return response
+
+
+def test_a_generation_server_error_does_not_send_a_second_request():
+    limiter = AdaptiveModelRateLimiter()
+    client = _StatusClient([(500, {})])
+    response = asyncio.run(
+        limiter.post(
+            client,
+            "https://generator.example/v1/chat/completions",
+            key="gen-500",
+            logger=logging.getLogger("test-rate-limit"),
+            json={"messages": []},
+            headers={},
+            replay_safe=False,
+        )
+    )
+    assert response.status_code == 500
+    assert client.calls == 1
+
+
+def test_a_generation_admission_retries_once_when_retry_after_is_short():
+    limiter = AdaptiveModelRateLimiter()
+    client = _StatusClient([(503, {"Retry-After": "0"}), (200, {})])
+    response = asyncio.run(
+        limiter.post(
+            client,
+            "http://127.0.0.1:9/v1/chat/completions",
+            key="gen-503",
+            logger=logging.getLogger("test-rate-limit"),
+            json={"messages": []},
+            headers={},
+            replay_safe=False,
+        )
+    )
+    assert response.status_code == 200
+    assert client.calls == 2
