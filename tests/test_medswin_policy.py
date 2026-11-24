@@ -87,6 +87,26 @@ def test_a_low_caution_is_named_in_the_gate_reason():
     )
     assert warned.reason == "An unresolved caution conflicts with apixaban."
     assert "qualifies" not in warned.reason.lower()
+    qualify = _passage("qualify", "Use metformin with caution.")
+    low = ContradictionPair(
+        facet="guideline_concordance",
+        chunk_id_a="c1",
+        chunk_id_b="qualify",
+        severity="low",
+        reason="Same-drug caution qualifies this recommendation for metformin.",
+    )
+    both = EvidenceGate().decide(
+        [],
+        [],
+        [passage, caution, qualify],
+        iteration=2,
+        clinical_scope=ClinicalScope.CLINICIAN_CDS,
+        contradictions=[medium, low],
+        stop_retrieval=True,
+    )
+    assert "conflicts with apixaban" in both.reason
+    assert "qualifies metformin" in both.reason
+    assert "qualifies apixaban" not in both.reason
 
 
 def test_the_policy_shim_uses_the_query_text():

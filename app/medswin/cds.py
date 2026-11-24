@@ -94,14 +94,20 @@ def cards_from_chat(
         summary = "The model did not return a structured clinical answer."
     else:
         indicator = "warning"
+        parts = []
         if _has_unresolved_severity(decision, contradictions, "medium"):
-            summary = _conflict_summary(
-                _caution_drug_name(passages, decision, contradictions, severity="medium")
+            parts.append(
+                _conflict_summary(
+                    _caution_drug_name(passages, decision, contradictions, severity="medium")
+                )
             )
-        elif _has_unresolved_caution(decision, contradictions):
-            summary = _caution_summary(_caution_drug_name(passages, decision, contradictions))
-        else:
-            summary = "The available evidence is insufficient."
+        if _has_unresolved_severity(decision, contradictions, "low"):
+            parts.append(
+                _caution_summary(
+                    _caution_drug_name(passages, decision, contradictions, severity="qualifier")
+                )
+            )
+        summary = " ".join(parts) if parts else "The available evidence is insufficient."
     detail = _detail(
         accepted=accepted,
         synthesis_failed=synthesis_failed,
@@ -110,7 +116,7 @@ def cards_from_chat(
         passage_ids=passage_ids,
         contradiction_count=len(contradictions),
         qualifying=_has_unresolved_severity(decision, contradictions, "low"),
-        caution_name=_caution_drug_name(passages, decision, contradictions),
+        caution_name=_caution_drug_name(passages, decision, contradictions, severity="qualifier"),
         conflict_drug=_caution_drug_name(passages, decision, contradictions, severity="high"),
         chart_caution=_chart_caution_line(decision, contradictions),
     )
@@ -269,6 +275,8 @@ def _pair_matches_severity(item: Any, severity: str) -> bool:
         return value == "high"
     if severity == "medium":
         return value == "medium"
+    if severity == "qualifier":
+        return value == "low"
     return value != "high"
 
 

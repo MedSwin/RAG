@@ -172,14 +172,25 @@ class EvidenceGate:
         medium_blocks = caution_blocks and any(
             not item.resolved and item.severity == "medium" for item in unresolved
         )
+        low_blocks = caution_blocks and any(
+            not item.resolved and item.severity == "low" for item in unresolved
+        )
+        reason_parts = []
         if medium_blocks:
-            caution_reason = _conflict_summary(
-                _caution_drug_name(passages, None, contradictions or [], severity="medium")
+            reason_parts.append(
+                _conflict_summary(
+                    _caution_drug_name(passages, None, contradictions or [], severity="medium")
+                )
             )
-        else:
-            caution_reason = _caution_summary(
-                _caution_drug_name(passages, None, contradictions or []) if caution_blocks else ""
+        if low_blocks:
+            reason_parts.append(
+                _caution_summary(
+                    _caution_drug_name(passages, None, contradictions or [], severity="qualifier")
+                )
             )
+        caution_reason = " ".join(reason_parts)
+        if caution_blocks and not caution_reason:
+            caution_reason = _caution_summary("")
         if caution_blocks and missing:
             caution_reason = f"{caution_reason} Required facets remain open."
         high_name = (

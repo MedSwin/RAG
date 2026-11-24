@@ -263,6 +263,27 @@ def test_a_medium_avoid_warning_does_not_say_qualifies():
     assert card["indicator"] == "warning"
     assert card["summary"] == "An unresolved caution conflicts with apixaban."
     assert "qualifies" not in card["summary"].lower()
+    response.evidence_bundle.passages.append(
+        CandidatePassage(
+            chunk_id="qualify",
+            doc_id="doc-qualify",
+            source_type=SourceType.CPG,
+            text="Use metformin with caution.",
+        )
+    )
+    response.contradictions.append(
+        ContradictionPair(
+            facet="guideline_concordance",
+            chunk_id_a="chunk-1",
+            chunk_id_b="qualify",
+            severity="low",
+            reason="Same-drug caution qualifies this recommendation for metformin.",
+        )
+    )
+    both = cards_from_chat(response)[0]
+    assert "conflicts with apixaban" in both["summary"]
+    assert "qualifies metformin" in both["summary"]
+    assert "qualifies apixaban" not in both["summary"]
 
 
 def test_a_chart_caution_is_on_the_critical_card():
