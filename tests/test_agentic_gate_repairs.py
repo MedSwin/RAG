@@ -397,7 +397,12 @@ def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():
         assert pairs[0].chunk_id_b == "war", chart
         assert "apixaban" not in pairs[0].reason
         assert _chart_caution_line(None, pairs).startswith("Chart recommendation:")
-    for chart in ("Ongoing warfarin.", "Warfarin ongoing."):
+    for chart in (
+        "Ongoing warfarin.",
+        "Warfarin ongoing.",
+        "The patient is still on warfarin.",
+        "Still on warfarin.",
+    ):
         pairs = chart_contradictions(chart, [warning, other])
         assert len(pairs) == 1, chart
         assert pairs[0].chunk_id_b == "war", chart
@@ -1113,6 +1118,11 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
         "Take the patient off warfarin.",
         "The patient should come off warfarin.",
         "Taper the patient from warfarin.",
+        "Omit warfarin.",
+        "Omit the patient from warfarin.",
+        "Omit the morning dose of warfarin.",
+        "The patient is no longer on warfarin.",
+        "The patient is no longer taking warfarin.",
         "Wean off warfarin.",
         "Wean the patient off warfarin.",
         "Wean warfarin.",
@@ -1186,6 +1196,8 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
         "Do not take the patient off warfarin.",
         "Should not come off warfarin.",
         "Do not taper the patient from warfarin.",
+        "Do not omit warfarin.",
+        "Do not omit the morning dose of warfarin.",
     ):
         assert pairs_for(note, "Warfarin is recommended.") == [], note
         kept_passive = pairs_for(note, "Avoid warfarin.")

@@ -212,7 +212,8 @@ _BENIGN_DO_NOT = re.compile(
     r"^\s+(?:(?:be|being)\s+)?"
     r"(?:delay|withhold|withheld|wait|hesitate|stop(?:ped)?|discontinue[d]?|cease[d]?|"
     r"interrupt(?:ed)?|hold|held|suspend(?:ed)?|pause[d]?|halt(?:ed)?|"
-    r"tapers?|tapered|tapering|weans?|weaned|weaning|withdraw(?:ing|n|s)?)\b",
+    r"tapers?|tapered|tapering|weans?|weaned|weaning|withdraw(?:ing|n|s)?|"
+    r"omit(?:ted|ting|s)?)\b",
     re.I,
 )
 _QUALIFY = re.compile(r"\b(?:unless|except|cautions?|precautions?|monitor)\b", re.I)
@@ -222,7 +223,7 @@ _NAMED_SAFETY = re.compile(
 )
 _STOP_ORDER = re.compile(
     r"\b(?:stop(?:ped)?|withh(?:old|eld)|hold|held|discontinue[d]?|cease[d]?|suspend(?:ed)?|"
-    r"pause[d]?|halt(?:ed)?|interrupt(?:ed)?|withdraw(?:ing|n|s)?)\b",
+    r"pause[d]?|halt(?:ed)?|interrupt(?:ed)?|withdraw(?:ing|n|s)?|omit(?:ted|ting|s)?)\b",
     re.I,
 )
 _SAFETY_LIST = re.compile(r"^\s+list\b", re.I)
@@ -392,6 +393,39 @@ _COME_OFF = re.compile(
 )
 
 
+_NO_LONGER = re.compile(
+    r"\bno longer\b(?:\s+\w+){0,3}\s+(?:on|taking|takes|take)\b",
+    re.I,
+)
+
+
+def _no_longer_stop(text: str) -> bool:
+    """True when the patient is no longer on a named drug."""
+    raw = text or ""
+    words = raw.split()
+    if not words:
+        return False
+    spans = []
+    cursor = 0
+    for word in words:
+        at = raw.find(word, cursor)
+        spans.append(at)
+        cursor = at + len(word)
+    for match in _NO_LONGER.finditer(raw):
+        window = raw[max(0, match.start() - 48):match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        anchor = 0
+        for index, begin in enumerate(spans):
+            if begin <= match.start() < begin + len(words[index]):
+                anchor = index
+                break
+        near = words[max(0, anchor - 4): min(len(words), anchor + 9)]
+        if any(_token_names_drug(word) for word in near):
+            return True
+    return False
+
+
 def _come_off_stop(text: str) -> bool:
     """True when taper or wean takes the patient off a named drug."""
     raw = text or ""
@@ -494,7 +528,12 @@ def _ungoverned_caution(text: str) -> bool:
         ):
             continue
         return True
-    return _named_safety_caution(text) or _source_stop(text) or _come_off_stop(text)
+    return (
+        _named_safety_caution(text)
+        or _source_stop(text)
+        or _come_off_stop(text)
+        or _no_longer_stop(text)
+    )
 
 
 def infer_polarity(passage: CandidatePassage, facet: ClinicalFacet) -> EvidencePolarity:

@@ -579,6 +579,7 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         _QUALIFY,
         _STOP_ORDER,
         _COME_OFF,
+        _NO_LONGER,
         _away_split,
         _negated_away_split,
     )
@@ -594,7 +595,7 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
     soft_matches = []
     for item in list(_CAUTION.finditer(sentence or "")) + list(_QUALIFY.finditer(sentence or "")) + list(
         _STOP_ORDER.finditer(sentence or "")
-    ) + list(_COME_OFF.finditer(sentence or "")):
+    ) + list(_COME_OFF.finditer(sentence or "")) + list(_NO_LONGER.finditer(sentence or "")):
         window = sentence[max(0, item.start() - 48):item.start()]
         if _LOCAL_NEGATION.search(window):
             continue
@@ -663,7 +664,9 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         clause_begin = after_near[0]
         clause_end = max(after_near) + 1
     elif (
-        _STOP_ORDER.fullmatch(match.group(0) or "") or _COME_OFF.fullmatch(match.group(0) or "")
+        _STOP_ORDER.fullmatch(match.group(0) or "")
+        or _COME_OFF.fullmatch(match.group(0) or "")
+        or _NO_LONGER.fullmatch(match.group(0) or "")
     ) and not before and after:
         limit = min(len(words), anchor + 9)
         split_at = None
@@ -798,7 +801,7 @@ PATIENT_CHART_ID = "patient-chart"
 _CONTINUE_VERB = re.compile(r"\b(?:continue|continuing|continued)\b", re.I)
 _BE_CONTINUED = re.compile(r"\b(?:be|was|is|were|been)\s+continued\b", re.I)
 _TO_CONTINUE = re.compile(r"\bto\s+(?:be\s+)?continued?\b", re.I)
-_REMAIN_ON = re.compile(r"\b(?:remain|remains|stay|stays)\s+on\b", re.I)
+_REMAIN_ON = re.compile(r"\b(?:remain|remains|stay|stays|still)\s+on\b", re.I)
 _KEEP_VERB = re.compile(r"\b(?:resume|restart|recommence|keep|maintain)\b", re.I)
 _ONGOING = re.compile(r"\bongoing\b", re.I)
 _MONITOR_NEXT = re.compile(
@@ -1192,6 +1195,7 @@ def _chart_caution_text(chart: str) -> str:
         _STOP_ORDER,
         _away_split,
         _come_off_stop,
+        _no_longer_stop,
         _negated_away_split,
         _ungoverned_caution,
     )
@@ -1206,6 +1210,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _away_split(sentence)
                 or _negated_away_split(sentence)
                 or _come_off_stop(sentence)
+                or _no_longer_stop(sentence)
             ):
                 kept.append(named_caution_text(sentence))
             else:
