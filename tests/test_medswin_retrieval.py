@@ -328,6 +328,43 @@ def test_a_brand_caution_also_searches_the_generic_drug():
     assert "apixaban" in question_terms
 
 
+def test_a_chart_drug_after_leading_history_still_blocks_the_same_drug():
+    from app.medswin.ledger import chart_contradictions
+    from app.medswin.orchestrator import _chart_synopsis
+    from app.retrieval.lexical import LexicalRetriever
+    from app.schemas.enums import EvidencePolarity, SourceType
+    from app.schemas.evidence import EvidenceClaim, EvidenceGrade, EvidenceLedgerEntry
+
+    filler = " ".join(f"history{i}" for i in range(150))
+    note = f"{filler} Avoid this oral therapy after the bleeding risk review for apixaban"
+    synopsis = _chart_synopsis([{"text": note}])
+    query = f"Which dose?\n\nPatient retrieval context:\n{synopsis}"
+    terms = LexicalRetriever._lexical_terms(query)
+    assert "apixaban" in synopsis.lower()
+    assert "apixaban" in terms
+    assert "history0" not in terms
+    assert "history149" not in terms
+    support = EvidenceLedgerEntry(
+        chunk_id="rec",
+        doc_id="doc-rec",
+        source_type=SourceType.CPG,
+        text="Apixaban is recommended.",
+        evidence_grade=EvidenceGrade(score=0.90),
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Apixaban is recommended.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="rec",
+                confidence=0.9,
+            )
+        ],
+    )
+    pairs = chart_contradictions(synopsis, [support])
+    assert pairs
+    assert "apixaban" in pairs[0].reason
+
+
 def test_a_drug_several_words_after_the_caution_stays_in_the_search():
     from app.medswin.orchestrator import _chart_synopsis
     from app.retrieval.lexical import LexicalRetriever

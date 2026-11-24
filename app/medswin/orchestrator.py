@@ -247,8 +247,15 @@ def _fit_row(text: str, allowance: int) -> List[str]:
         piece = sentences[index].split()
         room = allowance - used
         if len(piece) > _CAUTION_KEEP:
-            piece = _caution_window(piece, min(room, _CAUTION_KEEP))
-        elif len(piece) > room:
+            from app.medswin.ledger import intervention_tokens
+            from app.retrieval.lexical import LexicalRetriever
+
+            span_words = LexicalRetriever._caution_span(sentences[index]).split()
+            window = _caution_window(piece, min(room, _CAUTION_KEEP))
+            span_drugs = intervention_tokens(" ".join(span_words))
+            window_drugs = intervention_tokens(" ".join(window))
+            piece = span_words if span_drugs - window_drugs else window
+        if len(piece) > room:
             piece = piece[:room]
         if piece:
             caution_bits.append(" ".join(piece))
