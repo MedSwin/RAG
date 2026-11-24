@@ -827,6 +827,17 @@ def _content_words(text: str) -> list[str]:
     return content
 
 
+def _dose_order_object(text: str, reduction: bool = False) -> bool:
+    """True when the dose change names the drug, not a level or a clearance."""
+    if not _direct_drug_object(text):
+        return False
+    if not reduction:
+        return True
+    content = _content_words(text)
+    drug_at = 2 if content and content[0].lower() == "dose" else 0
+    return not (drug_at + 1 < len(content) and _NOT_DOSE_NOUN.match(content[drug_at + 1]))
+
+
 def _direct_drug_object(text: str) -> bool:
     """True when the next phrase names the drug, not a note or a lab."""
     content = _content_words(text)
@@ -924,6 +935,15 @@ _DOSE_CHANGE = re.compile(
     r"\b(?:add(?:ed|ing)?|increase[ds]?|increasing|up-?titrates?|up\s+titrates?)\b",
     re.I,
 )
+_DOSE_REDUCTION = re.compile(
+    r"\b(?:decrease[ds]?|decreasing|reduce[ds]?|reducing|lower(?:s|ed|ing)?|"
+    r"down-?titrates?|down\s+titrates?|tapers?|tapering)\b",
+    re.I,
+)
+_NOT_DOSE_NOUN = re.compile(
+    r"^(?:clearance|levels?|concentrations?|sensitivit(?:y|ies)|effects?|responses?|activity)$",
+    re.I,
+)
 _RECORD_NOT_ORDER = re.compile(
     r"\b(?:allerg(?:y|ies|ic)|intolerance|adverse reaction|problem list)\b",
     re.I,
@@ -957,14 +977,14 @@ def _has_recommendation_verb(text: str) -> bool:
     for match in _SWITCH_TO.finditer(text or ""):
         if _object_is_drug(text[match.end():]):
             return True
-    for match in _DOSE_CHANGE.finditer(text or ""):
+    for match in list(_DOSE_CHANGE.finditer(text or "")) + list(_DOSE_REDUCTION.finditer(text or "")):
         window = text[max(0, match.start() - 48): match.start()]
         if _LOCAL_NEGATION.search(window):
             continue
         tail = text[match.end():]
         if _RECORD_NOT_ORDER.search(tail):
             continue
-        if _direct_drug_object(tail):
+        if _dose_order_object(tail, reduction=bool(_DOSE_REDUCTION.fullmatch(match.group(0)))):
             return True
     if _DRUG_OF_CHOICE.search(text or "") and intervention_tokens(text) and not _MONITOR_WORD.search(text or ""):
         return True

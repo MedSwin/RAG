@@ -377,6 +377,15 @@ def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():
         "Up-titrate warfarin.",
         "Up titrate warfarin.",
         "Add warfarin 5 mg daily.",
+        "Decrease warfarin.",
+        "Decrease the dose of warfarin.",
+        "Reduce warfarin.",
+        "Reduce the dose of warfarin.",
+        "Down-titrate warfarin.",
+        "Down titrate warfarin.",
+        "Lower the dose of warfarin.",
+        "Taper warfarin.",
+        "Taper the dose of warfarin.",
     ):
         pairs = chart_contradictions(chart, [warning, other])
         assert len(pairs) == 1, chart
@@ -398,6 +407,14 @@ def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():
         "Increase the INR on warfarin.",
         "Ongoing monitoring of warfarin.",
         "Increased bleeding on warfarin.",
+        "Decrease the INR on warfarin.",
+        "Reduce monitoring of warfarin.",
+        "Decreased bleeding on warfarin.",
+        "Do not decrease warfarin.",
+        "Do not reduce the dose of warfarin.",
+        "Reduce warfarin clearance.",
+        "Decreased warfarin levels.",
+        "Taper off warfarin.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
 
