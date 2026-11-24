@@ -360,6 +360,20 @@ async def test_emr_specialist_with_no_chart_does_not_read_the_other_passages():
     assert "no passages" in " ".join(batch.notes).lower()
 
 
+def test_a_late_caution_stays_in_the_model_passage():
+    from app.agents.base import passage_context
+    from app.agents.synthesis import _bounded_local_evidence
+
+    filler = "History note. " * 200
+    passage = _passage("emr-late", SourceType.EMR, f"{filler} Avoid apixaban.")
+    rendered = passage_context([passage])
+    evidence, shown = _bounded_local_evidence([passage])
+    assert rendered.lower().startswith("[emr-late")
+    assert "Avoid apixaban." in rendered
+    assert "Avoid apixaban." in evidence
+    assert shown == ["emr-late"]
+
+
 def test_the_model_passage_drops_a_phone_number():
     from app.agents.base import passage_context
     from app.agents.synthesis import _bounded_local_evidence

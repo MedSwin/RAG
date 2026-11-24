@@ -9,7 +9,7 @@ from app.agents.base import prioritize_passages
 from app.schemas.evidence import AnswerArtifact, AnswerProvenance, CandidatePassage, EvidenceBundle
 from app.schemas.facets import FacetCoverage
 from app.services.adapters.llm import LLMClient
-from app.services.medswin.governance import ensure_cds_language, redact_phi_text
+from app.services.medswin.governance import ensure_cds_language, lead_with_caution, redact_phi_text
 from app.services.prompts import answer as answer_prompt
 from app.services.prompts.structured import extract_json_object
 
@@ -35,7 +35,7 @@ def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> tuple[str, 
     for passage in prioritize_passages(list(passages)):
         if len(blocks) >= 6:
             break
-        body = redact_phi_text(passage.text or "")[:450]
+        body = lead_with_caution(redact_phi_text(passage.text or ""))[:450]
         block = f"[{passage.chunk_id}] {body}"
         trial = "\n\n".join(blocks + [block])
         if len(trial) > 2800:
@@ -44,7 +44,7 @@ def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> tuple[str, 
             room = 2800 - used - separator - len(f"[{passage.chunk_id}] ")
             if room <= 0:
                 break
-            block = f"[{passage.chunk_id}] {redact_phi_text(passage.text or '')[:room]}"
+            block = f"[{passage.chunk_id}] {lead_with_caution(redact_phi_text(passage.text or ''))[:room]}"
             trial = "\n\n".join(blocks + [block])
             if len(trial) > 2800:
                 break
