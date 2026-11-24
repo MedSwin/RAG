@@ -167,31 +167,15 @@ class AdaptiveModelRateLimiter:
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_error = exc
                 self._retry_events += 1
+                # A read or write timeout means the request may already be running.
+                # A second POST would queue another generation.
+                if not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+                    raise
                 # Connection refused / connect timeout is not a provider 429.
-                # The 600s rate-limit backoff would freeze naive-RAG and local
-                # chat for tens of minutes when EMBEDDING_URL / SUPERVISOR_URL
-                # are simply down.
-                if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
-                    if attempt >= 2:
-                        raise
-                    await asyncio.sleep(0.4 * attempt)
-                    continue
-                # A local generator keeps one lock. A read timeout means that
-                # call is still running. A retry queues a second generation.
-                if isinstance(exc, httpx.ReadTimeout) and _is_loopback_url(url):
+                # One short retry covers a process that is still opening its port.
+                if attempt >= 2:
                     raise
-                if attempt == settings.MODEL_RATE_LIMIT_MAX_ATTEMPTS:
-                    raise
-                backoff = _retry_backoff_seconds(attempt, url=url)
-                logger.warning(
-                    "Model request transient error (%s) for %s (attempt %d/%d); retrying in %.2fs",
-                    type(exc).__name__,
-                    key,
-                    attempt,
-                    settings.MODEL_RATE_LIMIT_MAX_ATTEMPTS,
-                    backoff,
-                )
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(0.4 * attempt)
                 continue
 
             status_code = getattr(response, "status_code", 200)
