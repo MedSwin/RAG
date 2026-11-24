@@ -16,6 +16,32 @@ def _passage(chunk_id, text, source_type=SourceType.CPG, score=0.92):
     )
 
 
+def test_a_low_caution_is_named_in_the_gate_reason():
+    from app.medswin.gate import EvidenceGate
+    from app.schemas.enums import ClinicalScope, PolicyAction
+    from app.schemas.evidence import ContradictionPair
+
+    passage = _passage("c1", "Use apixaban for stroke prevention.")
+    pair = ContradictionPair(
+        facet="guideline_concordance",
+        chunk_id_a="c1",
+        chunk_id_b="caution",
+        severity="low",
+        reason="Same-drug caution qualifies this recommendation.",
+    )
+    decision = EvidenceGate().decide(
+        [],
+        [],
+        [passage],
+        iteration=2,
+        clinical_scope=ClinicalScope.CLINICIAN_CDS,
+        contradictions=[pair],
+        stop_retrieval=True,
+    )
+    assert decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert decision.reason == "An unresolved caution qualifies this recommendation."
+
+
 def test_the_policy_shim_uses_the_query_text():
     policy = EvidenceSufficiencyPolicy()
     check = policy.check_sufficiency(

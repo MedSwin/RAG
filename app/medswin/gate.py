@@ -166,6 +166,10 @@ class EvidenceGate:
             and provenance_ok
         )
 
+        caution_blocks = contradiction_overflow and not unresolved_critical
+        caution_reason = "An unresolved caution qualifies this recommendation."
+        if caution_blocks and missing:
+            caution_reason = f"{caution_reason} Required facets remain open."
         if bundle_ok and confidence_gap is None:
             action = PolicyAction.ACCEPT
             reason = (
@@ -187,6 +191,8 @@ class EvidenceGate:
                 if bundle_ok and confidence_gap
                 else "A selected passage is missing a source identity."
                 if provenance_only
+                else caution_reason
+                if caution_blocks
                 else "Required facets, contradiction adjudication, or marginal utility justify targeted retrieval."
             )
             passed = False
@@ -197,6 +203,8 @@ class EvidenceGate:
                 if bundle_ok and confidence_gap
                 else "A selected passage is missing a source identity."
                 if provenance_only
+                else caution_reason
+                if caution_blocks
                 else "Evidence remains insufficient for clinician CDS after policy-bounded retrieval."
             )
             passed = False
