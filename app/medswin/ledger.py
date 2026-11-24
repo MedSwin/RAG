@@ -529,6 +529,29 @@ def _conflict_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = 
     return named_caution_text(_pairing_text(entry, claim))
 
 
+def _support_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = None) -> str:
+    """Drop a caution sentence that names a different drug from the recommendation."""
+    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+    text = _pairing_text(entry, claim)
+    caution: List[str] = []
+    other: List[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        if not sentence.strip():
+            continue
+        if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
+            caution.append(sentence.strip())
+        else:
+            other.append(sentence.strip())
+    other_text = " ".join(other)
+    caution_text = " ".join(caution)
+    other_drugs = intervention_tokens(other_text)
+    caution_drugs = intervention_tokens(caution_text)
+    if other_drugs and caution_drugs and other_drugs.isdisjoint(caution_drugs):
+        return other_text
+    return text
+
+
 PATIENT_CHART_ID = "patient-chart"
 
 
@@ -569,7 +592,7 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
         for claim in entry.claims:
             if claim.polarity != EvidencePolarity.SUPPORTS or claim.facet == "safety_contraindications":
                 continue
-            support_text = _pairing_text(entry, claim)
+            support_text = _support_text(entry, claim)
             if not intervention_tokens(support_text) or not same_intervention(support_text, text):
                 continue
             key = (claim.facet, entry.chunk_id)
@@ -648,7 +671,7 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 ]
                 for support_claim in support_claims:
                     for conflict_claim in conflict_claims:
-                        support_text = _pairing_text(support, support_claim)
+                        support_text = _support_text(support, support_claim)
                         conflict_text = _conflict_text(conflict, conflict_claim)
                         if not same_intervention(support_text, conflict_text):
                             continue
@@ -681,12 +704,12 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
         for warning_entry, warning_claim in safety_warnings:
             # A safety warning crosses facets only when both sides name the same drug.
             # An unnamed caution still covers the safety facet. It does not veto every guideline.
-            if not intervention_tokens(_pairing_text(support_entry, support_claim)) or not intervention_tokens(
+            if not intervention_tokens(_support_text(support_entry, support_claim)) or not intervention_tokens(
                 _conflict_text(warning_entry, warning_claim)
             ):
                 continue
             if not same_intervention(
-                _pairing_text(support_entry, support_claim),
+                _support_text(support_entry, support_claim),
                 _conflict_text(warning_entry, warning_claim),
             ):
                 continue
@@ -696,7 +719,7 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 warning_entry,
                 _reason_with_drug(
                     "Same-drug safety warning conflicts with this recommendation.",
-                    _pairing_text(support_entry, support_claim),
+                    _support_text(support_entry, support_claim),
                     _conflict_text(warning_entry, warning_claim),
                 ),
             )
@@ -710,12 +733,12 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 plain_supports.append((entry, claim))
     for support_entry, support_claim in plain_supports:
         for qualify_entry, qualify_claim in qualifies:
-            if not intervention_tokens(_pairing_text(support_entry, support_claim)) or not intervention_tokens(
+            if not intervention_tokens(_support_text(support_entry, support_claim)) or not intervention_tokens(
                 _conflict_text(qualify_entry, qualify_claim)
             ):
                 continue
             if not same_intervention(
-                _pairing_text(support_entry, support_claim),
+                _support_text(support_entry, support_claim),
                 _conflict_text(qualify_entry, qualify_claim),
             ):
                 continue
@@ -725,7 +748,7 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 qualify_entry,
                 _reason_with_drug(
                     "Same-drug caution qualifies this recommendation.",
-                    _pairing_text(support_entry, support_claim),
+                    _support_text(support_entry, support_claim),
                     _conflict_text(qualify_entry, qualify_claim),
                 ),
                 severity="low",

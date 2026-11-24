@@ -215,6 +215,43 @@ def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
     assert different == []
 
 
+def test_a_warning_sentence_in_the_recommendation_does_not_conflict_with_that_warning():
+    support = _entry(
+        "note",
+        "guideline_concordance",
+        "Apixaban is recommended. Do not use warfarin.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    same = _entry(
+        "aw",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    qualifier = _entry(
+        "qual",
+        "safety_contraindications",
+        "Use apixaban with caution.",
+        EvidencePolarity.QUALIFIES,
+        grade=0.80,
+    )
+    pairs = detect_contradictions([support, warning, same, qualifier])
+    assert all(pair.chunk_id_b != "war" for pair in pairs)
+    assert any(pair.chunk_id_b == "aw" and pair.severity == "high" for pair in pairs)
+    assert any(pair.chunk_id_b == "qual" and pair.severity == "low" for pair in pairs)
+    assert all("warfarin" not in pair.reason for pair in pairs)
+    assert all("apixaban" in pair.reason for pair in pairs)
+
+
 def test_a_long_specialist_quote_does_not_inherit_a_later_warning():
     body = "Apixaban is recommended for stroke prevention in atrial fibrillation. " * 8
     passage = _passage("note", body + "Avoid warfarin.")
