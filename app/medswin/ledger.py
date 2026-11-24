@@ -1142,7 +1142,17 @@ def _is_continuation_sentence(sentence: str) -> bool:
             continue
         if intervention_tokens(tail):
             continue
-        if _home_subject_is_drug(prefix):
+        prefix_words = re.findall(r"[A-Za-z0-9'-]+", prefix)
+        kept = [
+            word
+            for word in prefix_words
+            if word.lower() in {"dose", "dosing"}
+            or (
+                not _DOSE_TOKEN.fullmatch(word)
+                and not re.fullmatch(r"\d+(?:\.\d+)?", word)
+            )
+        ]
+        if _home_subject_is_drug(" ".join(kept)):
             return True
     for match in _KEEP_VERB.finditer(sentence or ""):
         window = sentence[max(0, match.start() - 48): match.start()]
