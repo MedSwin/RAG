@@ -40,6 +40,17 @@ def test_a_low_caution_is_named_in_the_gate_reason():
     )
     assert decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
     assert decision.reason == "An unresolved caution qualifies this recommendation."
+    caution = _passage("caution", "Avoid apixaban.")
+    named = EvidenceGate().decide(
+        [],
+        [],
+        [passage, caution],
+        iteration=2,
+        clinical_scope=ClinicalScope.CLINICIAN_CDS,
+        contradictions=[pair],
+        stop_retrieval=True,
+    )
+    assert named.reason == "An unresolved caution qualifies apixaban."
 
 
 def test_the_policy_shim_uses_the_query_text():

@@ -177,6 +177,21 @@ def test_a_low_caution_is_named_when_the_gate_abstains():
         reason="Missing evidence.",
     )
     assert "unresolved caution" not in insufficient_answer("Which dose?", clear).lower()
+    from app.schemas.enums import SourceType
+
+    named = insufficient_answer(
+        "Which dose?",
+        decision,
+        passages=[
+            CandidatePassage(
+                chunk_id="caution",
+                doc_id="doc-caution",
+                source_type=SourceType.SAFETY,
+                text="Avoid apixaban.",
+            )
+        ],
+    )
+    assert "apixaban" in named.lower()
 
 
 def test_same_drug_caution_qualifies_the_recommendation():

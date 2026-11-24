@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from app.schemas.evidence import PolicyDecision
 from app.schemas.facets import FacetCoverage
@@ -47,6 +47,7 @@ def insufficient_answer(
     query: str,
     decision: PolicyDecision,
     coverage: Optional[List[FacetCoverage]] = None,
+    passages: Optional[List[Any]] = None,
 ) -> str:
     """Worked-example style bounded CDS abstention."""
     covered = []
@@ -66,10 +67,12 @@ def insufficient_answer(
             "these are preserved for clinician review rather than averaged away."
         )
     if any(item.severity != "high" for item in decision.contradictions if not item.resolved):
-        conflict += (
-            " An unresolved caution qualifies this recommendation. "
-            "Review the paired evidence before a therapy change."
+        from app.medswin.cds import _caution_drug_name, _caution_summary
+
+        caution = _caution_summary(
+            _caution_drug_name(passages or [], decision, decision.contradictions)
         )
+        conflict += f" {caution} Review the paired evidence before a therapy change."
     body = (
         f"The available evidence is insufficient to provide a grounded clinician decision-support "
         f"answer for the query: {redact_phi_text(query)}. "

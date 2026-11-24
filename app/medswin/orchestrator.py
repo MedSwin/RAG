@@ -449,7 +449,9 @@ class MedSwinOrchestrator:
             trace.degraded_mode = degraded
 
             if not decision.passed:
-                answer = insufficient_answer(query, decision, evidence_bundle.facet_coverage)
+                answer = insufficient_answer(
+                    query, decision, evidence_bundle.facet_coverage, evidence_bundle.passages
+                )
                 citations = self._citations(evidence_bundle)
                 trace.completed_at = datetime.utcnow()
                 trace.final_answer = answer

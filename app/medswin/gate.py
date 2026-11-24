@@ -167,7 +167,11 @@ class EvidenceGate:
         )
 
         caution_blocks = contradiction_overflow and not unresolved_critical
-        caution_reason = "An unresolved caution qualifies this recommendation."
+        from app.medswin.cds import _caution_summary, _caution_drug_name
+
+        caution_reason = _caution_summary(
+            _caution_drug_name(passages, None, contradictions or []) if caution_blocks else ""
+        )
         if caution_blocks and missing:
             caution_reason = f"{caution_reason} Required facets remain open."
         if bundle_ok and confidence_gap is None:

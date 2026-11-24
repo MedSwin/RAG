@@ -242,7 +242,7 @@ def _detail(
     else:
         outcome = "The evidence gate did not accept this card."
     lead = outcome if synthesis_failed else f"{outcome} {reason}"
-    if qualifying:
+    if qualifying and "unresolved caution" not in reason.lower():
         lead = f"{lead} {_caution_summary(caution_name)}"
     return (
         f"{lead} "
