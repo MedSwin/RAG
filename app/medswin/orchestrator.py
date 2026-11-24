@@ -124,6 +124,14 @@ class MedSwinOrchestrator:
         self.trace_repo = TraceRepository()
         self._last_ranked_evidence: List[RankedEvidenceItem] = []
 
+    async def _persist_trace(self, trace: AuditTrace, org_id: str, degraded: Dict[str, bool]) -> None:
+        """Store the audit trace. A database failure does not replace the answer."""
+        try:
+            await self.trace_repo.create(trace, org_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Trace persistence failed: %s", exc)
+            degraded["trace"] = True
+
     async def chat(
         self,
         query: str,
@@ -216,7 +224,7 @@ class MedSwinOrchestrator:
                 trace.final_answer = answer
                 trace.citations = citations
                 trace.timing_ms["total"] = round((time.perf_counter() - started) * 1000.0, 2)
-                await self.trace_repo.create(trace, org_id)
+                await self._persist_trace(trace, org_id, degraded)
                 return ChatResponse(
                     answer=answer,
                     answer_artifact=AnswerArtifact(content="", rendered_text=answer, exact_answer=None, ideal_answer="" if benchmark else None, cited_chunk_ids=[c["chunk_id"] for c in citations], abstained=True),
@@ -256,7 +264,7 @@ class MedSwinOrchestrator:
             trace.final_answer = answer
             trace.citations = citations
             trace.timing_ms["total"] = round((time.perf_counter() - started) * 1000.0, 2)
-            await self.trace_repo.create(trace, org_id)
+            await self._persist_trace(trace, org_id, degraded)
             return ChatResponse(
                 answer=answer,
                 answer_artifact=answer_artifact,
@@ -287,7 +295,7 @@ class MedSwinOrchestrator:
             trace.completed_at = datetime.utcnow()
             trace.degraded_mode = degraded
             trace.timing_ms["total"] = round((time.perf_counter() - started) * 1000.0, 2)
-            await self.trace_repo.create(trace, org_id)
+            await self._persist_trace(trace, org_id, degraded)
             return ChatResponse(
                 answer="I encountered an error processing your query. Please try again or contact support.",
                 answer_artifact=AnswerArtifact(
