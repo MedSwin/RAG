@@ -60,6 +60,7 @@ def _safe_org_segment(org_id: str) -> Optional[str]:
 class LexicalRetriever:
     def __init__(self):
         self._memory: Dict[str, Dict[str, Any]] = {}
+        self.last_error: Optional[str] = None
 
     def _cache_key(
         self,
@@ -256,6 +257,7 @@ class LexicalRetriever:
         patient_id: Optional[str] = None,
         constraints: Optional[Dict[str, Any]] = None,
     ) -> List[CandidatePassage]:
+        self.last_error = None
         try:
             full_corpus = await self._fts_candidates(
                 query, org_id, k, source_type_filter, patient_id, constraints
@@ -310,4 +312,5 @@ class LexicalRetriever:
             return candidates
         except Exception as exc:  # noqa: BLE001
             logger.error("Lexical retrieval failed: %s", exc)
+            self.last_error = f"Lexical retrieval failed: {type(exc).__name__}"
             return []

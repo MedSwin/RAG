@@ -398,6 +398,8 @@ class NaiveRAGOrchestrator:
             patient_id,
             constraints,
         )
+        if getattr(self.dense, "last_error", None):
+            raise RuntimeError(str(self.dense.last_error))
         backend = "ann"
         skipped_dim = 0
         if not candidates and settings.NAIVE_ENABLE_MONGO_FALLBACK:

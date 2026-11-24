@@ -301,6 +301,8 @@ class MedSwinOrchestrator:
             trace.facet_coverage = evidence_bundle.facet_coverage
             trace.contradictions = evidence_bundle.contradictions
             trace.evidence_ledger = evidence_bundle.evidence_ledger
+            if any(item.error for item in trace.retrieval_traces):
+                degraded["retrieval"] = True
             trace.degraded_mode = degraded
 
             if not decision.passed:
@@ -562,6 +564,35 @@ class MedSwinOrchestrator:
             )
             retrieval_trace.iteration = iteration
             trace.retrieval_traces.append(retrieval_trace)
+            if retrieval_trace.error:
+                check = self.gate.check(
+                    [],
+                    facets,
+                    [],
+                    iteration=iteration,
+                    constraints=constraints,
+                    query_spec=query_spec,
+                    stop_retrieval=True,
+                )
+                if check.policy_decision:
+                    check.policy_decision.reason = "Retrieval failed."
+                    check.policy_decision.action = PolicyAction.INSUFFICIENT_EVIDENCE
+                    check.policy_decision.passed = False
+                    check.policy_decision.retrieval_hints = {}
+                check.passed = False
+                check.action_taken = PolicyAction.INSUFFICIENT_EVIDENCE.value
+                final_check = check
+                trace.sufficiency_checks.append(check)
+                if check.policy_decision:
+                    trace.policy_decisions.append(check.policy_decision)
+                trace.tool_calls.append(
+                    ToolCall(
+                        tool_name="retrieval.hybrid",
+                        parameters={"iteration": iteration, "hints": hints or {}},
+                        result={"union_count": 0, "error": retrieval_trace.error},
+                    )
+                )
+                break
             trace.tool_calls.append(
                 ToolCall(
                     tool_name="retrieval.hybrid",

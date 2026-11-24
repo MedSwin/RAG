@@ -13,7 +13,7 @@ from app.schemas.enums import EvidencePolarity
 from app.schemas.evidence import CandidatePassage, EvidenceClaim
 from app.schemas.facets import ClinicalFacet
 from app.services.adapters.llm import LLMClient
-from app.services.prompts.structured import extract_json_object, schema_instruction
+from app.services.prompts.structured import _is_schema_fragment, extract_json_object, schema_instruction
 from app.scoring.calibrate import first_present
 from app.scoring.hierarchy import evidence_grade_from_metadata
 
@@ -298,6 +298,17 @@ async def call_claim_agent(
             max_tokens=local_cap,
         )
         payload = extract_json_object(response["content"])
+        if (
+            not isinstance(payload, dict)
+            or _is_schema_fragment(payload)
+            or "claims" not in payload
+        ):
+            return AgentClaimBatch(
+                agent_id=agent_id,
+                claims=[],
+                degraded=True,
+                error="schema_echo_only",
+            )
         batch = parse_claims(agent_id, payload, passages, facets=facets)
         return batch
     except Exception as exc:  # noqa: BLE001

@@ -59,6 +59,7 @@ def _passage(chunk: Dict[str, Any], score: float, retrieved_by: str) -> Candidat
 class DenseRetriever:
     def __init__(self):
         self.index = HybridIndex()
+        self.last_error: Optional[str] = None
 
     async def _small_filtered_exact(
         self,
@@ -108,6 +109,7 @@ class DenseRetriever:
         patient_id: Optional[str] = None,
         constraints: Optional[Dict[str, Any]] = None,
     ) -> List[CandidatePassage]:
+        self.last_error = None
         try:
             # Every online query is at least org-filtered after ANN label
             # resolution. Oversample the shared index even without an explicit
@@ -143,4 +145,5 @@ class DenseRetriever:
             return candidates[:k]
         except Exception as exc:  # noqa: BLE001
             logger.error("Dense retrieval failed: %s", exc)
+            self.last_error = f"Dense retrieval failed: {type(exc).__name__}"
             return []

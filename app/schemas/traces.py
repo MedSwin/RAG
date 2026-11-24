@@ -68,6 +68,7 @@ class RetrievalTrace(BaseModel):
     lexical_count: int = 0
     union_count: int = 0
     hints: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
 
 
 class RerankTrace(BaseModel):

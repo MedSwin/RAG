@@ -115,6 +115,8 @@ async def _search(request: QueryRequest) -> RetrievalResponse:
             request.patient_id,
             request.constraints,
         )
+        if dense.last_error:
+            raise RuntimeError(str(dense.last_error))
 
         used_reranking = False
         if request.use_reranking and reranker_client and candidates:

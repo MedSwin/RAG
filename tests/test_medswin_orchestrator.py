@@ -3,7 +3,7 @@ import numpy as np
 from app.agents.base import parse_claims
 from app.medswin.normalize import QueryNormalizer
 from app.models.medswin import CandidatePassage, ClinicalFacet, ClinicalScope, QuerySpec, SourceType
-from app.schemas.enums import PipelineId
+from app.schemas.enums import PipelineId, PolicyAction
 from app.schemas.traces import RerankTrace, RetrievalTrace
 from app.services.medswin.orchestrator import MedSwinOrchestrator
 
@@ -111,6 +111,42 @@ def test_claim_parser_keeps_only_retrieved_chunks_and_canonical_facets():
     assert len(batch.claims) == 1
     assert batch.claims[0].facet == "safety_contraindications"
     assert batch.claims[0].chunk_id == "c1"
+
+
+def test_a_retrieval_failure_abstains_once():
+    import asyncio
+
+    class _FailedRetriever(FakeRetriever):
+        def __init__(self):
+            self.calls = 0
+
+        async def retrieve(self, **kwargs):
+            self.calls += 1
+            return [], RetrievalTrace(union_count=0, error="Dense retrieval failed: RuntimeError")
+
+    orchestrator = MedSwinOrchestrator(embedding_client=FakeEmbeddingClient(), reranker_client=None)
+    retriever = _FailedRetriever()
+    orchestrator.retriever = retriever
+    orchestrator.chunk_repo = EmptyRepo()
+    orchestrator._dispatch_agents = _noop_agents
+    from app.schemas.traces import AuditTrace
+
+    trace = AuditTrace(trace_id="t-fail", session_id="s1", user_id="u1", org_id="org1", query="q")
+    bundle, final_check = asyncio.run(
+        orchestrator._retrieve_with_sufficiency(
+            query="What treatment is safe?",
+            query_spec=QuerySpec(canonical_terms=["treatment"]),
+            org_id="org1",
+            patient_id=None,
+            constraints={},
+            trace=trace,
+        )
+    )
+    assert retriever.calls == 1
+    assert final_check.policy_decision.reason == "Retrieval failed."
+    assert final_check.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert bundle.policy_decision.reason == "Retrieval failed."
+    assert bundle.passages == []
 
 
 def test_retrieve_with_sufficiency_returns_policy_artifacts_for_insufficient_bundle():

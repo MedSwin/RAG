@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 SOURCE_BALANCE_PROBES = (SourceType.CPG, SourceType.LIT, SourceType.EMR, SourceType.SAFETY)
 
 
+def _stage_error(stage: Any) -> Optional[str]:
+    error = getattr(stage, "last_error", None)
+    return str(error) if error else None
+
+
 class HybridRetriever:
     """Two-stage hybrid retriever with calibrated reranking."""
 
@@ -79,11 +84,17 @@ class HybridRetriever:
         dense = await self.dense.retrieve(
             query_embedding, org_id, k, effective_source, patient_id, constraints
         )
+        stage_error = _stage_error(self.dense)
+        if stage_error:
+            return [], RetrievalTrace(error=stage_error, hints=hints or {})
         lexical = []
         if settings.ENABLE_BM25:
             lexical = await self.lexical.retrieve(
                 expanded, org_id, k, effective_source, patient_id, constraints
             )
+            stage_error = _stage_error(self.lexical)
+            if stage_error:
+                return [], RetrievalTrace(error=stage_error, hints=hints or {})
         all_candidates = self._union(dense, lexical)
 
         # Source-balanced probes for mixed-source CDS
@@ -94,11 +105,17 @@ class HybridRetriever:
                 d = await self.dense.retrieve(
                     query_embedding, org_id, max(1, k // 2), source_type, patient_id, source_constraints
                 )
+                stage_error = _stage_error(self.dense)
+                if stage_error:
+                    return [], RetrievalTrace(error=stage_error, hints=hints or {})
                 l = []
                 if settings.ENABLE_BM25:
                     l = await self.lexical.retrieve(
                         expanded, org_id, max(1, k // 2), source_type, patient_id, source_constraints
                     )
+                    stage_error = _stage_error(self.lexical)
+                    if stage_error:
+                        return [], RetrievalTrace(error=stage_error, hints=hints or {})
                 all_candidates = self._union(all_candidates, self._union(d, l))
 
         self._normalize(all_candidates)
