@@ -11,7 +11,7 @@ from app.schemas.enums import SourceType
 SYNONYM_MAP = {
     "metformin": ["biguanide", "glucophage"],
     "renal": ["kidney", "egfr", "creatinine", "ckd"],
-    "contraindication": ["contraindicated", "do not use", "avoid", "not recommended"],
+    "contraindication": ["contraindicated", "avoid"],
     "allergy": ["hypersensitivity", "allergic reaction"],
     "hypertension": ["high blood pressure", "htn"],
     "diabetes": ["dm", "t2dm", "type 2 diabetes"],

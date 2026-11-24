@@ -377,6 +377,27 @@ def test_an_expanded_search_keeps_the_synonym_off_the_chart_history():
     assert expand_query(expanded, hints) == expanded
 
 
+def test_an_expanded_caution_phrase_does_not_outrank_the_question_drug():
+    from app.retrieval.hints import expand_query
+    from app.retrieval.lexical import BM25Okapi, LexicalRetriever, _matching_indexes
+
+    context = "Avoid apixaban. " + " ".join(f"history{i}" for i in range(20))
+    query = f"Which metformin dose?\n\nPatient retrieval context:\n{context}"
+    expanded = expand_query(
+        query,
+        {"expand_synonyms": True, "missing_facets": ["safety_contraindications"]},
+    )
+    terms = LexicalRetriever._lexical_terms(expanded)
+    assert "do" not in terms
+    assert "recommended" not in terms
+    filler = LexicalRetriever._bm25_tokens("Do not use this form. It is not recommended for the note.")
+    drug = LexicalRetriever._bm25_tokens("Metformin is first-line treatment.")
+    caution = LexicalRetriever._bm25_tokens("Avoid apixaban when bleeding is present.")
+    order = _matching_indexes(BM25Okapi([filler, drug, caution]), terms, 3)
+    assert 0 not in order
+    assert order[0] == 2
+
+
 def test_a_second_expansion_does_not_change_the_query():
     from app.retrieval.hints import expand_query
 
