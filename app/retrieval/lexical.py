@@ -25,6 +25,7 @@ except ModuleNotFoundError:
     class BM25Okapi:
         def __init__(self, corpus):
             self.corpus = corpus
+            self.doc_freqs = [{token: doc.count(token) for token in set(doc)} for doc in corpus]
 
         def get_scores(self, query_tokens):
             query = set(query_tokens)
@@ -65,6 +66,28 @@ def _safe_org_segment(org_id: str) -> Optional[str]:
     if not _SAFE_ORG_RE.match(cleaned):
         return None
     return cleaned
+
+
+def _matching_indexes(bm25, query_tokens: List[str], limit: int) -> List[int]:
+    """Keep a passage that shares a query term.
+
+    BM25 can score that passage at zero when the term is rare in a small corpus.
+    """
+    query = {token for token in query_tokens if token}
+    if not query or limit <= 0:
+        return []
+    scores = bm25.get_scores(query_tokens)
+    order = np.argsort(scores)[::-1]
+    kept: List[int] = []
+    for idx in order:
+        if len(kept) >= limit:
+            break
+        index = int(idx)
+        freqs = bm25.doc_freqs[index] if index < len(bm25.doc_freqs) else {}
+        if query.isdisjoint(freqs):
+            continue
+        kept.append(index)
+    return kept
 
 
 class LexicalRetriever:
@@ -108,14 +131,23 @@ class LexicalRetriever:
         return candidate
 
     @staticmethod
+    def _bm25_tokens(text: str) -> List[str]:
+        """Tokenise a query or a passage. A sentence period stays off the word."""
+        tokens = []
+        for match in _FTS_TOKEN_RE.finditer((text or "").lower()):
+            term = match.group(0)
+            if not re.fullmatch(r"\d+(?:\.\d+)?", term):
+                term = term.strip("._/+-")
+            if term:
+                tokens.append(term)
+        return tokens
+
+    @staticmethod
     def _fts_terms(text: str) -> List[str]:
         terms = []
         seen = set()
-        for match in _FTS_TOKEN_RE.finditer((text or "").lower()):
-            term = match.group(0).replace('"', '""')
-            if not re.fullmatch(r"\d+(?:\.\d+)?", term):
-                term = term.strip("._/+-")
-            if term and term not in seen:
+        for term in LexicalRetriever._bm25_tokens(text):
+            if term not in seen:
                 seen.add(term)
                 terms.append(term)
         return terms
@@ -269,10 +301,10 @@ class LexicalRetriever:
                 continue
             chunk_ids.append(cid)
             if chunk.get("tokenized_text"):
-                tokenized.append(chunk["tokenized_text"])
+                tokenized.append(LexicalRetriever._bm25_tokens(" ".join(str(token) for token in chunk["tokenized_text"])))
             else:
                 text = chunk.get("text") or chunk.get("content", "")
-                tokenized.append(text.lower().split())
+                tokenized.append(LexicalRetriever._bm25_tokens(text))
         bm25 = BM25Okapi(tokenized)
         bundle = {"bm25": bm25, "chunk_ids": chunk_ids}
         if len(self._memory) >= _MEMORY_CACHE_MAX:
@@ -302,9 +334,9 @@ class LexicalRetriever:
                 return []
             bm25 = bundle["bm25"]
             chunk_ids = bundle["chunk_ids"]
-            scores = bm25.get_scores(query.lower().split())
-            top_indices = np.argsort(scores)[::-1][:k]
-            selected_ids = [chunk_ids[int(idx)] for idx in top_indices if idx < len(chunk_ids) and scores[idx] > 0]
+            query_tokens = self._bm25_tokens(query)
+            top_indices = _matching_indexes(bm25, query_tokens, k)
+            selected_ids = [chunk_ids[idx] for idx in top_indices if idx < len(chunk_ids)]
             if not selected_ids:
                 return []
             db = get_database()
@@ -314,7 +346,7 @@ class LexicalRetriever:
             chunk_map = {c["chunk_id"]: c for c in chunks if c.get("chunk_id")}
             candidates = []
             for idx in top_indices:
-                if idx >= len(chunk_ids) or scores[idx] <= 0:
+                if idx >= len(chunk_ids):
                     continue
                 chunk = chunk_map.get(chunk_ids[int(idx)])
                 if not chunk:

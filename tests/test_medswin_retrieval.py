@@ -205,6 +205,17 @@ def test_document_reranker_scores_text_and_content_chunks():
     assert ranked[0]["rerank_score"] == 0.9
 
 
+def test_a_sentence_period_does_not_hide_a_chart_drug():
+    from app.retrieval.lexical import BM25Okapi, LexicalRetriever, _matching_indexes
+
+    query = LexicalRetriever._bm25_tokens("Avoid apixaban.")
+    passage = LexicalRetriever._bm25_tokens("Avoid apixaban when bleeding is present.")
+    assert "apixaban" in query
+    assert "apixaban" in passage
+    index = BM25Okapi([passage, ["unrelated"]])
+    assert _matching_indexes(index, query, 2) == [0]
+
+
 def test_a_long_question_keeps_the_chart_caution_in_the_lexical_query():
     from app.retrieval.lexical import LexicalRetriever
 
