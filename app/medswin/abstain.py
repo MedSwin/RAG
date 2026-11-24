@@ -72,9 +72,14 @@ def insufficient_answer(
             f" Unresolved high-severity contradictions{named} were detected between evidence sources; "
             "these are preserved for clinician review rather than averaged away."
         )
-    if any(item.severity != "high" for item in decision.contradictions if not item.resolved):
-        from app.medswin.cds import _caution_drug_name, _caution_summary
+    from app.medswin.cds import _caution_drug_name, _caution_summary, _conflict_summary
 
+    if any(item.severity == "medium" for item in decision.contradictions if not item.resolved):
+        conflict += (
+            f" {_conflict_summary(_caution_drug_name(passages or [], decision, decision.contradictions, severity='medium'))}"
+            " Review the paired evidence before a therapy change."
+        )
+    if any(item.severity == "low" for item in decision.contradictions if not item.resolved):
         caution = _caution_summary(
             _caution_drug_name(passages or [], decision, decision.contradictions)
         )

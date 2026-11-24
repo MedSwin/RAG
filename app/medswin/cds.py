@@ -94,12 +94,14 @@ def cards_from_chat(
         summary = "The model did not return a structured clinical answer."
     else:
         indicator = "warning"
-        caution_name = _caution_drug_name(passages, decision, contradictions)
-        summary = (
-            _caution_summary(caution_name)
-            if _has_unresolved_caution(decision, contradictions)
-            else "The available evidence is insufficient."
-        )
+        if _has_unresolved_severity(decision, contradictions, "medium"):
+            summary = _conflict_summary(
+                _caution_drug_name(passages, decision, contradictions, severity="medium")
+            )
+        elif _has_unresolved_caution(decision, contradictions):
+            summary = _caution_summary(_caution_drug_name(passages, decision, contradictions))
+        else:
+            summary = "The available evidence is insufficient."
     detail = _detail(
         accepted=accepted,
         synthesis_failed=synthesis_failed,
@@ -107,7 +109,7 @@ def cards_from_chat(
         missing=missing,
         passage_ids=passage_ids,
         contradiction_count=len(contradictions),
-        qualifying=_has_unresolved_caution(decision, contradictions),
+        qualifying=_has_unresolved_severity(decision, contradictions, "low"),
         caution_name=_caution_drug_name(passages, decision, contradictions),
         conflict_drug=_caution_drug_name(passages, decision, contradictions, severity="high"),
         chart_caution=_chart_caution_line(decision, contradictions),
@@ -203,6 +205,13 @@ def _chart_caution_line(decision: Any, contradictions: List[Any]) -> str:
     return ""
 
 
+def _conflict_summary(drug_name: str) -> str:
+    """Name a medium Avoid warning. This sentence is not a low qualifier."""
+    if drug_name:
+        return _clip(f"An unresolved caution conflicts with {drug_name}.")
+    return "An unresolved caution conflicts with this recommendation."
+
+
 def _caution_summary(drug_name: str) -> str:
     """Name the caution drug when the passage states one."""
     if drug_name:
@@ -225,11 +234,7 @@ def _caution_drug_name(
     if decision is not None:
         pairs.extend(list(getattr(decision, "contradictions", []) or []))
     for item in pairs:
-        if item.resolved:
-            continue
-        if severity == "high" and item.severity != "high":
-            continue
-        if severity != "high" and item.severity == "high":
+        if item.resolved or not _pair_matches_severity(item, severity):
             continue
         ids.add(item.chunk_id_a)
         ids.add(item.chunk_id_b)
@@ -249,14 +254,30 @@ def _caution_drug_name(
         for item in pairs:
             if item.resolved or PATIENT_CHART_ID not in {item.chunk_id_a, item.chunk_id_b}:
                 continue
-            if severity == "high" and item.severity != "high":
-                continue
-            if severity != "high" and item.severity == "high":
+            if not _pair_matches_severity(item, severity):
                 continue
             for drug in sorted(intervention_tokens(item.reason)):
                 if drug not in found:
                     found.append(drug)
     return ", ".join(found)
+
+
+def _pair_matches_severity(item: Any, severity: str) -> bool:
+    """Match one pair. The low label still includes a medium pair."""
+    value = getattr(item, "severity", "")
+    if severity == "high":
+        return value == "high"
+    if severity == "medium":
+        return value == "medium"
+    return value != "high"
+
+
+def _has_unresolved_severity(decision: Any, contradictions: List[Any], severity: str) -> bool:
+    """True when an unresolved pair has this severity."""
+    pairs = list(contradictions or [])
+    if decision is not None:
+        pairs.extend(list(getattr(decision, "contradictions", []) or []))
+    return any(not item.resolved and getattr(item, "severity", "") == severity for item in pairs)
 
 
 def _has_unresolved_caution(decision: Any, contradictions: List[Any]) -> bool:

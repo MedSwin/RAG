@@ -167,11 +167,19 @@ class EvidenceGate:
         )
 
         caution_blocks = contradiction_overflow and not unresolved_critical
-        from app.medswin.cds import _caution_summary, _caution_drug_name
+        from app.medswin.cds import _caution_drug_name, _caution_summary, _conflict_summary
 
-        caution_reason = _caution_summary(
-            _caution_drug_name(passages, None, contradictions or []) if caution_blocks else ""
+        medium_blocks = caution_blocks and any(
+            not item.resolved and item.severity == "medium" for item in unresolved
         )
+        if medium_blocks:
+            caution_reason = _conflict_summary(
+                _caution_drug_name(passages, None, contradictions or [], severity="medium")
+            )
+        else:
+            caution_reason = _caution_summary(
+                _caution_drug_name(passages, None, contradictions or []) if caution_blocks else ""
+            )
         if caution_blocks and missing:
             caution_reason = f"{caution_reason} Required facets remain open."
         high_name = (

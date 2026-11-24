@@ -238,6 +238,33 @@ def test_unresolved_conflict_returns_a_critical_card():
     assert cards[0]["indicator"] == "critical"
 
 
+def test_a_medium_avoid_warning_does_not_say_qualifies():
+    from app.schemas.evidence import ContradictionPair
+
+    response = _response(accepted=False)
+    response.evidence_bundle.passages.append(
+        CandidatePassage(
+            chunk_id="caution",
+            doc_id="doc-caution",
+            source_type=SourceType.SAFETY,
+            text="Avoid apixaban.",
+        )
+    )
+    response.contradictions = [
+        ContradictionPair(
+            facet="guideline_concordance",
+            chunk_id_a="chunk-1",
+            chunk_id_b="caution",
+            severity="medium",
+            reason="Same-drug safety warning conflicts with this recommendation for apixaban.",
+        )
+    ]
+    card = cards_from_chat(response)[0]
+    assert card["indicator"] == "warning"
+    assert card["summary"] == "An unresolved caution conflicts with apixaban."
+    assert "qualifies" not in card["summary"].lower()
+
+
 def test_a_chart_caution_is_on_the_critical_card():
     from app.medswin.ledger import PATIENT_CHART_ID
     from app.schemas.evidence import ContradictionPair
