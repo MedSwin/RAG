@@ -1,3 +1,4 @@
+from app.agents.base import parse_claims
 from app.medswin.ledger import build_retrieval_ledger
 from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage
@@ -39,3 +40,14 @@ def test_a_later_zero_calibration_replaces_the_earlier_score():
     assert existing.calibrated_score == 0.0
     assert existing.rerank_score == 0.0
     assert existing.dense_score == 0.4
+
+
+def test_a_zero_claim_confidence_stays_zero():
+    passage = _passage(calibrated_score=0.0, rerank_score=0.9)
+    batch = parse_claims(
+        "safety",
+        {"claims": [{"facet": "safety", "claim": "Avoid this dose.", "chunk_id": "c1", "polarity": "safety", "confidence": 0}]},
+        [passage],
+    )
+    assert batch.claims[0].confidence == 0.0
+    assert batch.claims[0].calibrated_relevance == 0.0

@@ -12,6 +12,7 @@ from app.schemas.evidence import CandidatePassage, EvidenceClaim
 from app.schemas.facets import ClinicalFacet
 from app.services.adapters.llm import LLMClient
 from app.services.prompts.structured import extract_json_object
+from app.scoring.calibrate import first_present
 from app.scoring.hierarchy import evidence_grade_from_metadata
 
 
@@ -115,15 +116,18 @@ def parse_claims(
         except ValueError:
             polarity = EvidencePolarity.SUPPORTS
         grade = evidence_grade_from_metadata(passage)
+        raw_confidence = item.get("confidence")
+        if raw_confidence == "":
+            raw_confidence = None
         claims.append(
             EvidenceClaim(
                 facet=canonicalize_facet(str(item.get("facet") or "clinical_evidence"), facets),
                 claim=str(item.get("claim") or "")[:500],
                 polarity=polarity,
                 chunk_id=chunk_id,
-                confidence=float(item.get("confidence") or passage.calibrated_score or 0.5),
+                confidence=float(first_present(raw_confidence, passage.calibrated_score, default=0.5)),
                 evidence_grade=grade,
-                calibrated_relevance=float(passage.calibrated_score or passage.rerank_score or 0.0),
+                calibrated_relevance=float(first_present(passage.calibrated_score, passage.rerank_score, default=0.0)),
                 agent_id=agent_id,
                 provenance={
                     "doc_id": passage.doc_id,
