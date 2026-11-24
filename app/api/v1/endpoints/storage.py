@@ -87,6 +87,24 @@ def get_storage_service() -> StorageService:
     return _storage_service
 
 
+def _schedule_shared_index_rebuild(
+    background_tasks: BackgroundTasks,
+    http_request: Request,
+    storage_service: StorageService,
+) -> bool:
+    """Rebuild the shared index only for an operator or a local caller."""
+    try:
+        require_operator(http_request)
+    except HTTPException:
+        return False
+    background_tasks.add_task(
+        storage_service.build_hnsw_index_async,
+        force_rebuild=True,
+        org_id=None,
+    )
+    return True
+
+
 def cleanup_storage_service() -> None:
     _storage_service.cleanup()
 
@@ -258,12 +276,14 @@ async def store_chunks(
             collection_name=request.collection_name,
             batch_size=request.batch_size,
         )
+        scheduled = False
         if result["success_count"] > 0:
-            background_tasks.add_task(
-                storage_service.build_hnsw_index_async,
-                force_rebuild=True,
-                org_id=None,
-            )
+            scheduled = _schedule_shared_index_rebuild(background_tasks, http_request, storage_service)
+        rebuild_note = (
+            " The shared index rebuild is scheduled."
+            if scheduled
+            else " The shared index was not rebuilt."
+        )
         return StoreChunksResponse(
             success_count=result["success_count"],
             skipped_count=result.get("skipped_count", 0),
@@ -272,7 +292,8 @@ async def store_chunks(
             collection_name=request.collection_name,
             message=(
                 f"Stored {result['success_count']} new chunks, skipped "
-                f"{result.get('skipped_count', 0)} existing chunks, and failed {result['failed_count']}"
+                f"{result.get('skipped_count', 0)} existing chunks, and failed {result['failed_count']}."
+                f"{rebuild_note}"
             ),
         )
     except HTTPException:
@@ -323,11 +344,8 @@ async def refresh_cloud_embeddings(
     try:
         batch_size = request.batch_size or settings.CLOUD_EMBED_BATCH_SIZE
         result = await _refresh_tenant_embeddings(request.org_id, max(1, int(batch_size)))
-        background_tasks.add_task(
-            storage_service.build_hnsw_index_async,
-            force_rebuild=True,
-            org_id=None,
-        )
+        scheduled = _schedule_shared_index_rebuild(background_tasks, http_request, storage_service)
+        result["index_rebuild"] = "scheduled" if scheduled else "operator_required"
         return result
     except Exception as exc:
         logger.error("Error refreshing cloud embeddings: %s", exc, exc_info=True)

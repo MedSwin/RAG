@@ -270,3 +270,75 @@ def test_operator_can_build_the_index_when_rbac_is_on(monkeypatch):
 
 def test_local_index_build_stays_open_without_a_token():
     require_operator(_Request())
+
+
+def test_clinician_store_does_not_rebuild_the_shared_index(monkeypatch):
+    token = _auth(monkeypatch)
+    built = []
+
+    class Storage:
+        async def store_chunks(self, **kwargs):
+            return {"success_count": 1, "skipped_count": 0, "failed_count": 0}
+
+        async def build_hnsw_index_async(self, **kwargs):
+            built.append(kwargs)
+            return {"success": True}
+
+    async def _attach(chunks, batch_size):
+        return None
+
+    monkeypatch.setattr(storage, "_attach_missing_embeddings", _attach)
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(storage.router, prefix="/api/v1/storage")
+    app.dependency_overrides[storage.get_storage_service] = lambda: Storage()
+    response = TestClient(app).post(
+        "/api/v1/storage/chunks",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"org_id": "org-a", "chunks": [{"chunk_id": "c1", "doc_id": "d1", "text": "Metformin."}]},
+    )
+    assert response.status_code == 200
+    assert "was not rebuilt" in response.json()["message"]
+    assert built == []
+
+
+def test_operator_refresh_schedules_the_shared_index(monkeypatch):
+    secret = "clinical-secret-value"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "ENABLE_RBAC", False)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    built = []
+
+    class Storage:
+        async def build_hnsw_index_async(self, **kwargs):
+            built.append(kwargs)
+            return {"success": True}
+
+    async def _refresh(org_id, batch_size):
+        return {"org_id": org_id, "updated": 1}
+
+    monkeypatch.setattr(storage, "_refresh_tenant_embeddings", _refresh)
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(storage.router, prefix="/api/v1/storage")
+    app.dependency_overrides[storage.get_storage_service] = lambda: Storage()
+    clinician = _token(secret, {"sub": "clinician-1", "org_id": "org-a", "role": "clinician", "exp": int(time.time()) + 60})
+    held = TestClient(app).post(
+        "/api/v1/storage/embeddings/refresh",
+        headers={"Authorization": f"Bearer {clinician}"},
+        json={"org_id": "org-a"},
+    )
+    assert held.status_code == 200
+    assert held.json()["index_rebuild"] == "operator_required"
+    assert built == []
+    operator = _token(secret, {"sub": "ops-1", "org_id": "org-a", "role": "operator", "exp": int(time.time()) + 60})
+    allowed = TestClient(app).post(
+        "/api/v1/storage/embeddings/refresh",
+        headers={"Authorization": f"Bearer {operator}"},
+        json={"org_id": "org-a"},
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["index_rebuild"] == "scheduled"
+    assert built[0]["org_id"] is None
+    assert built[0]["force_rebuild"] is True
