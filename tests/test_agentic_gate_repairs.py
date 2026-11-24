@@ -221,6 +221,32 @@ def test_a_keyword_does_not_match_inside_another_word():
     assert score_passage_facets(passage, [facet])["patient_applicability"] == 0.0
 
 
+def test_a_two_term_caution_survives_packing():
+    from app.scoring.utility import select_bundle
+
+    strong = CandidatePassage(
+        chunk_id="strong",
+        doc_id="strong",
+        source_type=SourceType.CPG,
+        text="Guideline recommendation for apixaban.",
+        calibrated_score=0.90,
+        fusion_score=0.95,
+        token_count=80,
+    )
+    caution = CandidatePassage(
+        chunk_id="caution",
+        doc_id="caution",
+        source_type=SourceType.SAFETY,
+        text="Avoid apixaban. Apixaban is contraindicated.",
+        calibrated_score=0.80,
+        fusion_score=0.60,
+        contradiction_score=0.32,
+        token_count=20,
+    )
+    selected = select_bundle([strong, caution], token_budget=200, max_chunks=1)
+    assert "caution" in {item.chunk_id for item in selected}
+
+
 def test_a_passage_below_inclusion_is_not_packed():
     from app.scoring.utility import select_bundle
 

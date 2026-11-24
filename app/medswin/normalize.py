@@ -83,8 +83,8 @@ class QueryNormalizer:
                 continue
             item = dict(facet)
             item["name"] = str(item.get("name") or "clinical_evidence")
-            item["required"] = bool(item.get("required", True))
-            item["threshold"] = self._coerce_float(item.get("threshold"), 0.70)
+            item["required"] = bool(item.get("required", False))
+            item["threshold"] = self._bounded_threshold(self._coerce_float(item.get("threshold"), 0.70))
             item["weight"] = self._coerce_float(item.get("weight"), 1.0)
             keywords = item.get("keywords") or []
             if isinstance(keywords, str):
@@ -93,6 +93,12 @@ class QueryNormalizer:
             coerced.append(item)
         data["facets"] = coerced
         return data
+
+    @staticmethod
+    def _bounded_threshold(value: float) -> float:
+        """Keep a model threshold inside the configured facet ceiling."""
+        ceiling = min(1.0, max(settings.SUFF_FACET_THRESHOLD, settings.SUFF_CRITICAL_FACET_THRESHOLD))
+        return min(ceiling, max(0.0, float(value)))
 
     @staticmethod
     def build_facets(
@@ -152,12 +158,17 @@ class QueryNormalizer:
         for facet in query_spec.facets:
             current = merged.get(facet.name)
             if current is None:
-                merged[facet.name] = facet
+                merged[facet.name] = facet.model_copy(
+                    update={
+                        "required": False,
+                        "threshold": QueryNormalizer._bounded_threshold(facet.threshold),
+                    }
+                )
                 continue
             merged[facet.name] = current.model_copy(
                 update={
-                    "required": current.required or facet.required,
-                    "threshold": max(current.threshold, facet.threshold) if facet.threshold else current.threshold,
+                    "required": current.required,
+                    "threshold": max(current.threshold, QueryNormalizer._bounded_threshold(facet.threshold)) if facet.threshold else current.threshold,
                     "weight": max(current.weight, facet.weight),
                     "keywords": list(dict.fromkeys(list(current.keywords) + list(facet.keywords))),
                     "source_policy": facet.source_policy or current.source_policy,

@@ -5,11 +5,19 @@ from __future__ import annotations
 from fastapi import HTTPException, Request
 
 
+def fhir_id(value: str) -> str:
+    """Return the id tail of a FHIR reference such as Patient/pt-1."""
+    text = (value or "").strip()
+    if "/" in text:
+        return text.rsplit("/", 1)[-1].strip()
+    return text
+
+
 def bind_tenant(request: Request, user_id: str, org_id: str) -> tuple[str, str]:
     """Return the caller identity. A token wins over a different body value."""
-    supplied_user = user_id.strip()
+    supplied_user = fhir_id(user_id)
     supplied_org = org_id.strip()
-    token_user = str(getattr(request.state, "user_id", "") or "").strip()
+    token_user = fhir_id(str(getattr(request.state, "user_id", "") or ""))
     if not token_user:
         return supplied_user, supplied_org
     token_org = str(getattr(request.state, "org_id", "") or "").strip()

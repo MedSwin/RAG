@@ -8,7 +8,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.tenant import bind_tenant
+from app.api.tenant import bind_tenant, fhir_id
 from app.medswin.cds import SERVICE_ID, cards_from_chat, discovery, feedback_documents, missing_question_card
 
 router = APIRouter()
@@ -91,24 +91,16 @@ async def cds_discovery() -> Dict[str, Any]:
     return discovery()
 
 
-def _fhir_id(value: str) -> str:
-    """Return the id tail of a FHIR reference such as Practitioner/dr-chen."""
-    text = (value or "").strip()
-    if "/" in text:
-        return text.rsplit("/", 1)[-1].strip()
-    return text
-
-
 def _cds_caller(request: Request, body: CdsRequest) -> tuple[str, str]:
     token_user = str(getattr(request.state, "user_id", "") or "").strip()
     if token_user:
         token_org = str(getattr(request.state, "org_id", "") or "").strip()
         return bind_tenant(
             request,
-            _fhir_id(body.context.userId or token_user),
+            fhir_id(body.context.userId or token_user),
             (body.context.orgId or token_org).strip(),
         )
-    user_id = (body.context.userId or "cds-client").strip() or "cds-client"
+    user_id = fhir_id(body.context.userId or "") or "cds-client"
     org_id = (body.context.orgId or "cds").strip() or "cds"
     return user_id, org_id
 
@@ -128,12 +120,12 @@ async def cds_service(
     extra = body.context.model_extra or {}
     question = " ".join((body.context.question or str(extra.get("clinicalQuestion") or "")).split())
     if not question:
-        return {"cards": [missing_question_card(body.context.patientId)]}
+        return {"cards": [missing_question_card(fhir_id(body.context.patientId or "") or None)]}
     response = await chat(
         question=question,
         user_id=user_id,
         org_id=org_id,
-        patient_id=(body.context.patientId or "").strip() or None,
+        patient_id=fhir_id(body.context.patientId or "") or None,
     )
     return {"cards": cards_from_chat(response)}
 

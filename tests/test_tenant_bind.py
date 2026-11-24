@@ -59,6 +59,11 @@ def test_token_rejects_a_different_organisation():
         raise AssertionError("A different organisation was accepted")
 
 
+def test_a_fhir_reference_matches_the_stored_id():
+    request = _Request(user_id="Practitioner/dr-chen", org_id="org-a")
+    assert bind_tenant(request, "Practitioner/dr-chen", "org-a") == ("dr-chen", "org-a")
+
+
 def test_token_fills_a_missing_organisation():
     request = _Request(user_id="clinician-1", org_id="org-a")
     assert bind_tenant(request, "", "") == ("clinician-1", "org-a")

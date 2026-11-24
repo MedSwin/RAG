@@ -184,7 +184,7 @@ def test_cds_service_accepts_a_fhir_user_reference(monkeypatch):
             "hookInstance": "hook-1",
             "context": {
                 "userId": "Practitioner/dr-chen",
-                "patientId": "pt-1",
+                "patientId": "Patient/pt-1",
                 "orgId": "st-vincent-cdss",
                 "clinicalQuestion": "Which anticoagulant is safer?",
             },
@@ -193,6 +193,7 @@ def test_cds_service_accepts_a_fhir_user_reference(monkeypatch):
     assert response.status_code == 200
     assert response.json()["cards"]
     assert seen["user_id"] == "dr-chen"
+    assert seen["patient_id"] == "pt-1"
     assert seen["question"] == "Which anticoagulant is safer?"
 
 

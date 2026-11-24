@@ -86,6 +86,16 @@ def test_query_spec_coercion_recovers_malformed_llm_fields():
     assert spec.facets[0].threshold == 0.70
     assert spec.facets[0].weight == 1.25
     assert spec.facets[0].keywords == ["therapy"]
+    assert spec.facets[0].required is False
+
+    high = QueryNormalizer(None).coerce_spec({"facets": [{"name": "extra", "threshold": 4.0, "required": True}]})
+    assert high["facets"][0]["threshold"] <= 1.0
+    extra = QueryNormalizer.build_facets("guideline management", QuerySpec(**high), {}, None)
+    added = next(facet for facet in extra if facet.name == "extra")
+    assert added.required is False
+    from app.core.config import settings
+
+    assert added.threshold <= settings.SUFF_CRITICAL_FACET_THRESHOLD
 
 
 def test_claim_parser_keeps_only_retrieved_chunks_and_canonical_facets():

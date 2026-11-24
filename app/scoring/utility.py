@@ -133,7 +133,7 @@ def _preserve_safety(
     critical = [
         item for item in remaining
         if item.chunk_id not in selected_ids
-        and ((item.safety_score or 0.0) >= 0.48 or (item.contradiction_score or 0.0) >= 0.48)
+        and ((item.safety_score or 0.0) >= 0.32 or (item.contradiction_score or 0.0) >= 0.32)
     ]
     if not critical:
         return
