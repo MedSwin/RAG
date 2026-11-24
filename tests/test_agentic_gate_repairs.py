@@ -268,6 +268,28 @@ def test_a_mixed_note_keeps_the_recommendation_and_the_warning():
     assert EvidencePolarity.SUPPORTS not in {claim.polarity for claim in history_ledger[0].claims}
 
 
+def test_a_chart_warfarin_warning_does_not_block_the_apixaban_recommendation():
+    from app.schemas.enums import SourceType
+
+    passage = CandidatePassage(
+        chunk_id="note",
+        doc_id="note",
+        source_type=SourceType.LIT,
+        text="Apixaban is recommended. Avoid warfarin.",
+        calibrated_score=0.90,
+    )
+    facets = [
+        ClinicalFacet(name="guideline_concordance", keywords=["apixaban", "recommended"], source_policy="LIT"),
+        ClinicalFacet(name="safety_contraindications", keywords=["avoid", "warfarin"], source_policy="SAFETY"),
+    ]
+    ledger = build_retrieval_ledger([passage], facets)
+    assert chart_contradictions("Avoid warfarin.", ledger) == []
+    pairs = chart_contradictions("Avoid apixaban.", ledger)
+    assert len(pairs) == 1
+    assert "apixaban" in pairs[0].reason
+    assert "warfarin" not in pairs[0].reason.split("|", 1)[-1]
+
+
 def test_a_warfarin_caution_does_not_block_an_apixaban_recommendation():
     support = _entry(
         "cpg",

@@ -542,11 +542,11 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
     for entry in ledger:
         if entry.chunk_id == PATIENT_CHART_ID:
             continue
-        support_text = _pairing_text(entry)
-        if not intervention_tokens(support_text) or not same_intervention(support_text, text):
-            continue
         for claim in entry.claims:
             if claim.polarity != EvidencePolarity.SUPPORTS or claim.facet == "safety_contraindications":
+                continue
+            support_text = _pairing_text(entry, claim)
+            if not intervention_tokens(support_text) or not same_intervention(support_text, text):
                 continue
             key = (claim.facet, entry.chunk_id)
             if key in seen:
