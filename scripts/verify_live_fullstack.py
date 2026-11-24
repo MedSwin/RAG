@@ -56,6 +56,25 @@ def live_report_status(
         return "PASSED"
     return "ABSTAINED"
 
+
+LIVE_CHAT_PATHS = (
+    "/api/v1/pipelines/naive/chat",
+    "/api/v1/pipelines/two-stage/chat",
+    "/api/v1/pipelines/full/chat",
+)
+LIVE_COMPARE_PIPELINES = ["naive", "two-stage", "full"]
+
+
+def compare_covers_the_three_pipelines(body: dict[str, Any]) -> bool:
+    """The live compare must return naive, two-stage, and full."""
+    results = body.get("results") or {}
+    diffs = body.get("adjacent_diffs") or {}
+    return (
+        all(name in results for name in LIVE_COMPARE_PIPELINES)
+        and "naive_to_two_stage" in diffs
+        and "two_stage_to_full" in diffs
+    )
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON = str(REPO_ROOT / ".venv" / "bin" / "python")
 LLM_PORT = 18000
@@ -395,31 +414,32 @@ def main() -> None:
                 "nonvalvular atrial fibrillation patient pt-afib-ckd-01 with creatinine 1.7 mg/dL and weight 56 kg?"
             )
             session_id = "sess-live-cdss-001"
+            chat_body = {
+                "query": clinical_query,
+                "user_id": "dr-chen",
+                "org_id": ORG_ID,
+                "session_id": session_id,
+                "patient_id": patient_id,
+            }
+
+            naive_resp = client.post(LIVE_CHAT_PATHS[0], headers=clinician_headers, json=chat_body)
+            assert naive_resp.status_code == 200, naive_resp.text
+            naive_data = naive_resp.json()
+            assert naive_data["policy_decision"]["action"]
+            assert isinstance(naive_data["answer"], str)
 
             two_stage_resp = client.post(
-                "/api/v1/pipelines/two-stage/chat",
+                LIVE_CHAT_PATHS[1],
                 headers=clinician_headers,
-                json={
-                    "query": clinical_query,
-                    "user_id": "dr-chen",
-                    "org_id": ORG_ID,
-                    "session_id": session_id,
-                    "patient_id": patient_id,
-                },
+                json=chat_body,
             )
             assert two_stage_resp.status_code == 200, two_stage_resp.text
             two_stage_data = two_stage_resp.json()
 
             full_resp = client.post(
-                "/api/v1/pipelines/full/chat",
+                LIVE_CHAT_PATHS[2],
                 headers=clinician_headers,
-                json={
-                    "query": clinical_query,
-                    "user_id": "dr-chen",
-                    "org_id": ORG_ID,
-                    "session_id": session_id,
-                    "patient_id": patient_id,
-                },
+                json=chat_body,
             )
             assert full_resp.status_code == 200, full_resp.text
             full_data = full_resp.json()
@@ -448,7 +468,6 @@ def main() -> None:
             assert abstain_data["policy_decision"]["passed"] is False
             assert abstain_data["policy_decision"]["action"] == "insufficient_evidence"
 
-            # Side-by-side compare across naive + two-stage
             compare_resp = client.post(
                 "/api/v1/pipelines/compare",
                 headers=clinician_headers,
@@ -457,13 +476,12 @@ def main() -> None:
                     "user_id": "dr-chen",
                     "org_id": ORG_ID,
                     "patient_id": patient_id,
-                    "pipelines": ["naive", "two-stage"],
+                    "pipelines": LIVE_COMPARE_PIPELINES,
                 },
             )
             assert compare_resp.status_code == 200, compare_resp.text
             compare_data = compare_resp.json()
-            assert "naive" in compare_data["results"] and "two-stage" in compare_data["results"]
-            assert "naive_to_two_stage" in compare_data["adjacent_diffs"]
+            assert compare_covers_the_three_pipelines(compare_data)
 
             # Persisted audit trace & session retrieval
             trace_id = full_data["trace_id"]
@@ -548,6 +566,13 @@ def main() -> None:
             "rbac_clinician_emr_write_status": rbac_emr_block.status_code,
             "ingested_chunks": ingest_data["success_count"],
             "hnsw_vectors": build_data["total_vectors"],
+            "naive": {
+                "policy_action": naive_data["policy_decision"]["action"],
+                "passed": naive_data["policy_decision"]["passed"],
+                "citations": len(naive_data.get("citations") or []),
+                "timing_ms": naive_data["timing_ms"],
+                "answer_preview": naive_data["answer"][:260],
+            },
             "two_stage": {
                 "policy_action": two_stage_data["policy_decision"]["action"],
                 "passed": two_stage_data["policy_decision"]["passed"],
@@ -570,7 +595,10 @@ def main() -> None:
                 "abstained": abstain_data["answer_artifact"]["abstained"],
                 "answer_preview": abstain_data["answer"][:200],
             },
-            "compare_adjacent_diff": compare_data["adjacent_diffs"]["naive_to_two_stage"],
+            "compare_adjacent_diff": {
+                "naive_to_two_stage": compare_data["adjacent_diffs"]["naive_to_two_stage"],
+                "two_stage_to_full": compare_data["adjacent_diffs"]["two_stage_to_full"],
+            },
             "persisted_trace_keys": sorted(trace_summary.keys()),
             "persisted_session_id": sess_data["session_id"],
             "cds_hooks": {

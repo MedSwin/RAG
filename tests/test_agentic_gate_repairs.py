@@ -626,6 +626,16 @@ def test_live_report_status_does_not_pass_when_the_answerable_query_abstains():
         abstain_action="accept",
         card_indicator="info",
     ) == "FAILED"
+    assert module.LIVE_CHAT_PATHS[0].endswith("/naive/chat")
+    assert module.compare_covers_the_three_pipelines(
+        {
+            "results": {"naive": {}, "two-stage": {}, "full": {}},
+            "adjacent_diffs": {"naive_to_two_stage": {}, "two_stage_to_full": {}},
+        }
+    )
+    assert module.compare_covers_the_three_pipelines(
+        {"results": {"naive": {}, "two-stage": {}}, "adjacent_diffs": {"naive_to_two_stage": {}}}
+    ) is False
 
 
 def test_drug_tokens_fold_plurals_and_ignore_april():
