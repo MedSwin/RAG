@@ -1152,6 +1152,44 @@ def test_a_second_drug_caution_stays_in_the_bundle():
     assert "apixaban-repeat" not in kept
 
 
+def test_a_new_drug_caution_replaces_a_filler_passage():
+    from app.scoring.utility import select_bundle
+
+    recommendation = CandidatePassage(
+        chunk_id="rec",
+        doc_id="rec",
+        source_type=SourceType.CPG,
+        text="Apixaban is recommended.",
+        calibrated_score=0.90,
+        fusion_score=0.95,
+        token_count=60,
+    )
+    filler = CandidatePassage(
+        chunk_id="filler",
+        doc_id="filler",
+        source_type=SourceType.LIT,
+        text="A general note about clinic follow-up.",
+        calibrated_score=0.80,
+        fusion_score=0.70,
+        token_count=30,
+    )
+    caution = CandidatePassage(
+        chunk_id="warfarin",
+        doc_id="warfarin",
+        source_type=SourceType.SAFETY,
+        text="Avoid warfarin. Warfarin is contraindicated.",
+        calibrated_score=0.80,
+        fusion_score=0.40,
+        contradiction_score=0.32,
+        token_count=30,
+    )
+    selected = select_bundle([recommendation, filler, caution], token_budget=90, max_chunks=2)
+    kept = [item.chunk_id for item in selected]
+    assert "rec" in kept
+    assert "warfarin" in kept
+    assert "filler" not in kept
+
+
 def test_a_passage_below_inclusion_is_not_packed():
     from app.scoring.utility import select_bundle
 

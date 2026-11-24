@@ -146,6 +146,22 @@ def _adds_a_new_drug_warning(item: CandidatePassage, selected: List[CandidatePas
     return not unnamed and not warned
 
 
+def _make_room(selected: List[CandidatePassage], token_budget: int, needed: int) -> int:
+    """Drop the weakest filler so a new-drug caution can fit. Keep the last passage."""
+    current = sum(token_count(item) for item in selected)
+    while current + needed > token_budget and len(selected) > 1:
+        fillers = [item for item in selected if not _is_critical_caution(item)]
+        if not fillers:
+            break
+        victim = min(
+            fillers,
+            key=lambda item: (item.fusion_score or 0.0, item.calibrated_score or 0.0),
+        )
+        selected.remove(victim)
+        current -= token_count(victim)
+    return current
+
+
 def _preserve_safety(
     selected: List[CandidatePassage],
     remaining: List[CandidatePassage],
@@ -165,6 +181,7 @@ def _preserve_safety(
         if not _adds_a_new_drug_warning(item, selected):
             continue
         tokens = token_count(item)
+        current_tokens = _make_room(selected, token_budget, tokens)
         if current_tokens + tokens <= token_budget and len(selected) < settings.MMR_MAX_EVIDENCE_CHUNKS:
             item.selected_reason = "protected_critical_safety_or_contradiction"
             selected.append(item)
