@@ -129,19 +129,58 @@ def _evidence_heads(content: str, width: int) -> str:
     return "Evidence:\n" + "\n\n".join(blocks)
 
 
+def _passage_heads(content: str, width: int) -> str:
+    """Keep the head of each shared passage. A later caution stays in its own head."""
+    marker = "Shared Evidence Passages:\n"
+    if marker not in content:
+        return ""
+    body = content.split(marker, 1)[1]
+    for stop in ("\n\nSpecialist Instructions:\n", "\n\nPatient chart:\n", "\n\nQuery:"):
+        index = body.find(stop)
+        if index >= 0:
+            body = body[:index]
+    blocks = []
+    for block in body.split("\n\n"):
+        text = block.strip()
+        if not text:
+            continue
+        blocks.append(text[:width])
+        if len(blocks) >= 4:
+            break
+    if not blocks:
+        return ""
+    return marker + "\n\n".join(blocks)
+
+
+def _query_line(content: str) -> str:
+    if "Query:" not in content:
+        return ""
+    rest = content.split("Query:", 1)[1]
+    stop = len(rest)
+    for header in ("\n\nPatient chart:", "\n\nFacet coverage:", "\n\nEvidence:"):
+        index = rest.find(header)
+        if index >= 0:
+            stop = min(stop, index)
+    line = f"Query:{rest[:stop]}".strip()
+    return line[:240]
+
+
 def _compact_user_message(content: str, width: int) -> str:
-    """Keep the chart and the evidence head. Drop the history tail."""
+    """Keep the chart and each passage head. Drop the history tail."""
     chart = _chart_block(content, width)
     evidence = _evidence_heads(content, width)
-    if not chart and not evidence:
+    passages = _passage_heads(content, width)
+    if not chart and not evidence and not passages:
         return content[: max(80, len(content) // 2)]
-    if "Patient chart:\n" in content:
-        question = content.split("Patient chart:\n", 1)[0]
+    if passages:
+        question = _query_line(content)
+    elif "Patient chart:\n" in content:
+        question = content.split("Patient chart:\n", 1)[0].strip()[:240]
     elif "Evidence:\n" in content:
-        question = content.split("Evidence:\n", 1)[0]
+        question = content.split("Evidence:\n", 1)[0].strip()[:240]
     else:
-        question = content
-    parts = [part for part in (question.strip()[:240], chart, evidence) if part]
+        question = content[:240]
+    parts = [part for part in (passages, question, chart, evidence) if part]
     return "\n\n".join(parts)
 
 

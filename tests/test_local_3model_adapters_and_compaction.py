@@ -659,6 +659,7 @@ def test_the_local_window_keeps_the_chart_and_the_caution():
     specialist = (
         "Shared Evidence Passages:\n"
         f"[c1|CPG|doc=d1]\nAvoid apixaban. {history}\n\n"
+        f"[c2|SAFETY|doc=d2]\nAvoid warfarin. {history}\n\n"
         "Query: Which dose?\n\n"
         "Patient chart:\nASA 100mg daily\n"
         "The patient chart is context. Cite only a chunk_id from the evidence."
@@ -682,6 +683,8 @@ def test_the_local_window_keeps_the_chart_and_the_caution():
         text = fitted[-1]["content"]
         assert "ASA 100mg daily" in text
         assert "Avoid apixaban" in text
+        if "Avoid warfarin" in content:
+            assert "Avoid warfarin" in text
         assert "history " * 40 not in text
         assert _estimate_message_tokens(fitted) + 384 <= 1980
 
