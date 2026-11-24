@@ -225,8 +225,19 @@ def filter_ledger(
     return [entry.model_copy(deep=True) for entry in ledger if entry.chunk_id in chunk_ids]
 
 
+def _is_included_order(passage: CandidatePassage) -> bool:
+    """True when the passage orders a drug and can conflict with a warning."""
+    text = passage.text or ""
+    recommendation = _chart_recommendation_text(text)
+    continuation = _chart_continuation_text(text)
+    return bool(
+        (recommendation and intervention_tokens(recommendation))
+        or (continuation and intervention_tokens(continuation))
+    )
+
+
 def audit_chunk_ids(selected: List[CandidatePassage], ranked: List[CandidatePassage]) -> set:
-    """Keep packed passages and included cautions for conflict detection."""
+    """Keep packed passages, included cautions, and included orders."""
     from app.agents.base import _is_prompt_caution
 
     ids = {passage.chunk_id for passage in selected}
@@ -236,7 +247,7 @@ def audit_chunk_ids(selected: List[CandidatePassage], ranked: List[CandidatePass
         score = passage.calibrated_score
         if score is None or float(score) < settings.SUFF_T_INCLUSION:
             continue
-        if _is_prompt_caution(passage):
+        if _is_prompt_caution(passage) or _is_included_order(passage):
             ids.add(passage.chunk_id)
     return ids
 
@@ -246,7 +257,7 @@ def cited_caution_passages(
     ranked: List[CandidatePassage],
     contradictions: List[ContradictionPair],
 ) -> List[CandidatePassage]:
-    """Return included cautions that a conflict cites and the bundle does not show."""
+    """Return included cautions and orders that a conflict cites and the bundle does not show."""
     from app.agents.base import _is_prompt_caution
 
     shown = {passage.chunk_id for passage in selected}
@@ -263,7 +274,7 @@ def cited_caution_passages(
         score = passage.calibrated_score
         if score is None or float(score) < settings.SUFF_T_INCLUSION:
             continue
-        if not _is_prompt_caution(passage):
+        if not _is_prompt_caution(passage) and not _is_included_order(passage):
             continue
         extra.append(passage)
         shown.add(passage.chunk_id)

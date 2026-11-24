@@ -1116,6 +1116,87 @@ def test_a_chart_caution_blocks_the_same_drug_recommendation():
     assert "apixaban" in check.policy_decision.reason
 
 
+def test_an_order_left_out_of_the_bundle_still_conflicts_with_the_warning():
+    import asyncio
+
+    from app.schemas.facets import ClinicalFacet
+
+    class Charts:
+        async def get_by_patient_id(self, patient_id, org_id, **_kwargs):
+            return []
+
+    class Retriever(FakeRetriever):
+        async def retrieve(self, **kwargs):
+            recommendation = CandidatePassage(
+                chunk_id="api",
+                doc_id="api",
+                source_type=SourceType.CPG,
+                text="Apixaban is recommended.",
+                section="Recommendations",
+                calibrated_score=0.9,
+                rerank_score=0.9,
+                fusion_score=0.9,
+                evidence_grade_score=0.95,
+            )
+            order = CandidatePassage(
+                chunk_id="ord",
+                doc_id="ord",
+                source_type=SourceType.CPG,
+                text="Start warfarin.",
+                section="Recommendations",
+                calibrated_score=0.9,
+                rerank_score=0.9,
+                fusion_score=0.9,
+                evidence_grade_score=0.95,
+            )
+            warning = CandidatePassage(
+                chunk_id="war",
+                doc_id="war",
+                source_type=SourceType.SAFETY,
+                text="Avoid warfarin.",
+                section="Contraindications",
+                calibrated_score=0.9,
+                rerank_score=0.9,
+                fusion_score=0.9,
+                evidence_grade_score=0.95,
+            )
+            return [recommendation, order, warning], RetrievalTrace(union_count=3)
+
+        def select(self, candidates, facets=None, agent_weights=None, token_budget=None):
+            return [item for item in candidates if item.chunk_id != "ord"]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.chunk_repo = Charts()
+    orchestrator.retriever = Retriever()
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
+    bundle, check = asyncio.run(
+        orchestrator._retrieve_with_sufficiency(
+            "Which dose?",
+            QuerySpec(
+                canonical_terms=["warfarin"],
+                facets=[
+                    ClinicalFacet(name="guideline_concordance", keywords=["recommended"], required=False, threshold=0.1),
+                    ClinicalFacet(name="safety_contraindications", keywords=["avoid"], required=False, threshold=0.1),
+                ],
+            ),
+            "org",
+            "pt-1",
+            {},
+            trace,
+        )
+    )
+    pairs = [pair for pair in bundle.contradictions if pair.chunk_id_a == "ord"]
+    assert len(pairs) == 1
+    assert pairs[0].chunk_id_b == "war"
+    assert "warfarin" in pairs[0].reason
+    assert "apixaban" not in pairs[0].reason
+    assert check.passed is False
+    assert "warfarin" in check.policy_decision.reason
+    assert any(passage.chunk_id == "ord" for passage in bundle.passages)
+
+
 def test_a_chart_order_conflicts_with_a_warning_left_out_of_the_bundle():
     import asyncio
 
