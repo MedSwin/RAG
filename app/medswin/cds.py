@@ -225,18 +225,25 @@ def _evidence_caution_line(passages: List[Any], decision: Any, contradictions: L
     from app.retrieval.lexical import LexicalRetriever
     from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 
+    from app.medswin.ledger import intervention_tokens
+
     pairs = list(contradictions or [])
     if decision is not None:
         pairs.extend(list(getattr(decision, "contradictions", []) or []))
     cited = set()
+    conflict_ids = set()
+    pair_drugs: set[str] = set()
     for item in pairs:
         if getattr(item, "resolved", False):
             continue
         cited.add(item.chunk_id_a)
         cited.add(item.chunk_id_b)
+        conflict_ids.add(item.chunk_id_b)
+        pair_drugs.update(intervention_tokens(getattr(item, "reason", "") or ""))
     spans: List[str] = []
     for passage in passages or []:
-        if getattr(passage, "chunk_id", None) not in cited:
+        chunk_id = getattr(passage, "chunk_id", None)
+        if chunk_id not in cited:
             continue
         text = getattr(passage, "text", "") or ""
         for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
@@ -245,8 +252,15 @@ def _evidence_caution_line(passages: List[Any], decision: Any, contradictions: L
             if not (_ungoverned_caution(sentence) or _QUALIFY.search(sentence)):
                 continue
             span = LexicalRetriever._caution_span(sentence).strip()
-            if span and span not in spans:
-                spans.append(span)
+            if not span or span in spans:
+                continue
+            drugs = intervention_tokens(span)
+            on_conflict = chunk_id in conflict_ids
+            shares_drug = bool(drugs and pair_drugs and drugs & pair_drugs)
+            conflict_match = on_conflict and (not pair_drugs or not drugs or bool(drugs & pair_drugs))
+            if not conflict_match and not shares_drug:
+                continue
+            spans.append(span)
     return " ".join(spans)
 
 

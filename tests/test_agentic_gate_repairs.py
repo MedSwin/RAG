@@ -306,6 +306,26 @@ def test_a_low_caution_is_named_when_the_gate_abstains():
     )
     assert "Avoid apixaban." in long_text
     assert "clinic visits" not in long_text
+    mixed_source = insufficient_answer(
+        "Which dose?",
+        decision,
+        passages=[
+            CandidatePassage(
+                chunk_id="cpg",
+                doc_id="doc-cpg",
+                source_type=SourceType.CPG,
+                text="Guideline recommendation supports apixaban. Take precautions with the monitoring plan.",
+            ),
+            CandidatePassage(
+                chunk_id="caution",
+                doc_id="doc-caution",
+                source_type=SourceType.SAFETY,
+                text="Avoid apixaban.",
+            ),
+        ],
+    )
+    assert "Avoid apixaban." in mixed_source
+    assert "monitoring plan" not in mixed_source
     from app.medswin.ledger import PATIENT_CHART_ID
 
     chart_decision = PolicyDecision(
