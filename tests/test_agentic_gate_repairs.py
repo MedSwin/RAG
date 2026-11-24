@@ -542,6 +542,88 @@ def test_an_unscored_order_conflicts_with_the_same_drug_warning():
     assert scored[0].chunk_id_b == "war"
 
 
+def test_a_chart_warning_conflicts_with_an_unscored_order():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("Which dose?", QuerySpec(canonical_terms=["dose"]))
+
+    def passage(chunk_id: str, text: str) -> CandidatePassage:
+        return CandidatePassage(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=SourceType.CPG,
+            text=text,
+            section="Recommendations",
+            calibrated_score=0.90,
+            evidence_grade_score=0.95,
+        )
+
+    for text in ("Start warfarin.", "Warfarin is indicated.", "Continue warfarin."):
+        pairs = chart_contradictions(
+            "Avoid warfarin.",
+            build_retrieval_ledger([passage("rec", text)], facets),
+        )
+        assert len(pairs) == 1, text
+        assert pairs[0].chunk_id_a == "rec"
+        assert pairs[0].chunk_id_b == "patient-chart"
+        assert pairs[0].severity == "high"
+        assert pairs[0].reason.startswith("Chart caution:")
+        assert "warfarin" in pairs[0].reason
+        assert "apixaban" not in pairs[0].reason
+    qualified = chart_contradictions(
+        "Use warfarin with caution.",
+        build_retrieval_ledger([passage("rec", "Start warfarin.")], facets),
+    )
+    assert len(qualified) == 1
+    assert qualified[0].severity == "low"
+    assert "warfarin" in qualified[0].reason
+    mixed = build_retrieval_ledger(
+        [passage("rec", "Start warfarin. Avoid apixaban.")],
+        facets,
+    )
+    chart_mixed = chart_contradictions("Avoid warfarin.", mixed)
+    assert len(chart_mixed) == 1
+    assert "warfarin" in chart_mixed[0].reason
+    assert "apixaban" not in chart_mixed[0].reason
+    ledger_mixed = detect_contradictions(
+        mixed
+        + build_retrieval_ledger(
+            [
+                CandidatePassage(
+                    chunk_id="war",
+                    doc_id="war",
+                    source_type=SourceType.SAFETY,
+                    text="Avoid warfarin.",
+                    section="Safety",
+                    calibrated_score=0.90,
+                    evidence_grade_score=0.95,
+                )
+            ],
+            facets,
+        )
+    )
+    assert len(ledger_mixed) == 1
+    assert ledger_mixed[0].chunk_id_b == "war"
+    assert "warfarin" in ledger_mixed[0].reason
+    assert "apixaban" not in ledger_mixed[0].reason
+    for chart, text in (
+        ("Avoid warfarin.", "Start apixaban."),
+        ("Avoid apixaban.", "Start warfarin."),
+        ("Avoid warfarin.", "Consider warfarin."),
+        ("Avoid warfarin.", "Warfarin 5 mg daily."),
+        ("Avoid warfarin.", "Continue monitoring warfarin."),
+        ("Avoid warfarin.", "Add a note about warfarin."),
+        ("Avoid apixaban.", "Start warfarin. Avoid apixaban."),
+    ):
+        quiet = chart_contradictions(chart, build_retrieval_ledger([passage("rec", text)], facets))
+        assert quiet == [], (chart, text)
+    scored = chart_contradictions(
+        "Avoid warfarin.",
+        build_retrieval_ledger([passage("rec", "Warfarin is recommended.")], facets),
+    )
+    assert len(scored) == 1
+
+
 def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning():
     warning = _entry(
         "war",

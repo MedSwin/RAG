@@ -906,18 +906,8 @@ def _unscored_caution(entry: EvidenceLedgerEntry) -> Optional[tuple[str, str]]:
 
 
 def _unscored_order(entry: EvidenceLedgerEntry) -> Optional[tuple[str, str]]:
-    """Return an order sentence when the passage has no support claim."""
+    """Return an order sentence when no support claim covers that order."""
     if any(claim.polarity == EvidencePolarity.SUPPORTS for claim in entry.claims):
-        return None
-    if any(
-        claim.polarity
-        in {
-            EvidencePolarity.QUALIFIES,
-            EvidencePolarity.SAFETY,
-            EvidencePolarity.CONTRADICTS,
-        }
-        for claim in entry.claims
-    ):
         return None
     text = entry.text or ""
     recommendation = _chart_recommendation_text(text)
@@ -984,6 +974,37 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
                         grade_b=0.0,
                     )
                 )
+            order = _unscored_order(entry)
+            if not order:
+                continue
+            _kind, order_text = order
+            if not intervention_tokens(order_text) or not same_intervention(order_text, text):
+                continue
+            if caution:
+                reason = "Same-drug safety warning conflicts with this recommendation."
+                severity = "high" if entry.evidence_grade.score >= 0.80 else "medium"
+            else:
+                reason = "Same-drug caution qualifies this recommendation."
+                severity = "low"
+            key = ("chart-order", entry.chunk_id, severity)
+            if key in seen:
+                continue
+            seen.add(key)
+            span = " ".join(text.split())
+            pairs.append(
+                ContradictionPair(
+                    facet="safety_contraindications",
+                    chunk_id_a=entry.chunk_id,
+                    chunk_id_b=PATIENT_CHART_ID,
+                    severity=severity,
+                    reason=(
+                        f"Chart caution: {span} | "
+                        f"{_reason_with_drug(reason, order_text, text)}"
+                    ),
+                    grade_a=entry.evidence_grade.score,
+                    grade_b=0.0,
+                )
+            )
     orders = []
     if has_continuation:
         orders.append((continuation, "Chart continuation:"))
