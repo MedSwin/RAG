@@ -258,7 +258,51 @@ _DOSE_IN_SENTENCE = re.compile(
     r"\b(?:dose|dosing|mg|tablet|tab|capsule|daily|\d+(?:\.\d+)?(?:mg|mcg|g|ml|units?))\b",
     re.IGNORECASE,
 )
+_DOSE_TOKEN = re.compile(
+    r"^(?:dose|dosing|mg|mcg|tablet|tab|capsule|daily|\d+(?:\.\d+)?(?:mg|mcg|g|ml|units?))$",
+    re.IGNORECASE,
+)
 _ALIAS_CONTEXT_STOP = re.compile(r"\b(?:meeting|conference|society)\b", re.IGNORECASE)
+
+
+def dose_span(sentence: str) -> str:
+    """Keep a drug and its dose. History words around that dose stay out."""
+    if _ALIAS_CONTEXT_STOP.search(sentence or ""):
+        return ""
+    if not _DOSE_IN_SENTENCE.search(sentence or ""):
+        return ""
+    words = (sentence or "").split()
+    dose_at = []
+    drug_at = []
+    for index, word in enumerate(words):
+        token = word.lower().strip(".,;")
+        if _DOSE_TOKEN.fullmatch(token):
+            dose_at.append(index)
+        if token in _SHORT_ALIASES or intervention_tokens(word):
+            drug_at.append(index)
+    windows = []
+    for dose_index in dose_at:
+        nearby = [index for index in drug_at if dose_index - 4 <= index <= dose_index + 4]
+        if not nearby:
+            continue
+        begin = min([dose_index, *nearby])
+        end = max([dose_index, *nearby]) + 1
+        while end < len(words) and end <= dose_index + 3:
+            nxt = words[end].lower().strip(".,;")
+            if _DOSE_TOKEN.fullmatch(nxt):
+                end += 1
+            else:
+                break
+        windows.append((begin, end))
+    if not windows:
+        return ""
+    merged = []
+    for begin, end in windows:
+        if merged and begin <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((begin, end))
+    return " ".join(" ".join(words[begin:end]) for begin, end in merged)
 
 
 def caution_alias_tokens(text: str) -> set[str]:

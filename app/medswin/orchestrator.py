@@ -229,8 +229,16 @@ def _fit_row(text: str, allowance: int) -> List[str]:
     if len(words) <= allowance:
         return words
     sentences = [part.strip() for part in _SENTENCE_SPLIT.split(text) if part.strip()] or [text]
+    from app.medswin.ledger import dose_span
+
     caution_indexes = [index for index, sentence in enumerate(sentences) if _note_priority(sentence)]
     caution_bits: List[str] = []
+    for sentence in sentences:
+        if _note_priority(sentence):
+            continue
+        span = dose_span(sentence)
+        if span:
+            caution_bits.append(span)
     used = 0
     for index in caution_indexes:
         if used >= allowance:

@@ -251,11 +251,19 @@ class LexicalRetriever:
         from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 
         sentences = re.split(r"(?<=[.!?])\s+|\n+", context or "")
-        return [
-            LexicalRetriever._caution_span(sentence)
-            for sentence in sentences
-            if sentence.strip() and (_ungoverned_caution(sentence) or _QUALIFY.search(sentence))
-        ]
+        kept = []
+        for sentence in sentences:
+            if not sentence.strip():
+                continue
+            if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
+                kept.append(LexicalRetriever._caution_span(sentence))
+                continue
+            from app.medswin.ledger import dose_span
+
+            span = dose_span(sentence)
+            if span:
+                kept.append(span)
+        return kept
 
     @staticmethod
     def _caution_terms(context: str) -> List[str]:
