@@ -13,6 +13,7 @@ from app.schemas.evidence import (
     EvidenceClaim,
     EvidenceGrade,
     EvidenceLedgerEntry,
+    QuerySpec,
 )
 from app.schemas.facets import ClinicalFacet
 from app.scoring.coverage import infer_polarity, score_passage_facets
@@ -199,6 +200,58 @@ def test_another_users_session_id_is_not_reused():
     new_id = asyncio.run(_resume_or_create_session(Sessions(), "sess-owned", "dr-chen", "org-1"))
     assert new_id != "sess-owned"
     assert created == [new_id]
+
+
+def test_faiss_and_hnsw_distances_share_one_cosine_scale():
+    from app.indexes.hybrid import ann_similarity
+
+    assert ann_similarity(0.2, "HNSW") == 0.8
+    assert abs(ann_similarity(0.4, "FAISS") - 0.8) < 1e-9
+
+
+def test_a_keyword_does_not_match_inside_another_word():
+    from app.scoring.coverage import keyword_in_text, score_passage_facets
+
+    assert keyword_in_text("age", "management of atrial fibrillation") is False
+    assert keyword_in_text("lab", "available evidence") is False
+    assert keyword_in_text("apixaban", "Start apixaban 5 mg.") is True
+    assert keyword_in_text("first-line", "First-line guideline recommends amoxicillin.") is True
+    facet = ClinicalFacet(name="patient_applicability", keywords=["age"], source_policy="EMR")
+    passage = _passage("emr-1", "Management of atrial fibrillation in clinic.", source_type=SourceType.EMR)
+    assert score_passage_facets(passage, [facet])["patient_applicability"] == 0.0
+
+
+def test_a_passage_below_inclusion_is_not_packed():
+    from app.scoring.utility import select_bundle
+
+    strong = CandidatePassage(
+        chunk_id="strong",
+        doc_id="strong",
+        source_type=SourceType.CPG,
+        text="Guideline recommendation for apixaban.",
+        calibrated_score=0.90,
+        fusion_score=0.90,
+        token_count=40,
+    )
+    weak = CandidatePassage(
+        chunk_id="weak",
+        doc_id="weak",
+        source_type=SourceType.LIT,
+        text="Short note.",
+        calibrated_score=0.30,
+        fusion_score=0.45,
+        token_count=3,
+    )
+    selected = select_bundle([weak, strong], token_budget=400, max_chunks=4)
+    assert [item.chunk_id for item in selected] == ["strong"]
+
+
+def test_outpatient_does_not_force_the_chart_facet():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("outpatient management of nonelderly adults", QuerySpec(canonical_terms=["management"]), {}, None)
+    by_name = {facet.name: facet for facet in facets}
+    assert by_name["patient_applicability"].required is False
 
 
 def test_live_report_status_does_not_pass_when_the_answerable_query_abstains():

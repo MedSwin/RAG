@@ -13,6 +13,15 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def ann_similarity(distance: float, index_kind: str) -> float:
+    """Return cosine similarity. FAISS stores squared L2. HNSW cosine space stores 1 - cosine."""
+    if index_kind == "FAISS":
+        similarity = 1.0 - float(distance) / 2.0
+    else:
+        similarity = 1.0 - float(distance)
+    return max(-1.0, min(1.0, similarity))
+
+
 class HybridIndex:
     """Query HNSW and FAISS IVF, reloading completed artifact generations."""
 
@@ -133,7 +142,7 @@ class HybridIndex:
                     chunk_id = index.mapping.get(str(int(lab)))
                     if not chunk_id:
                         continue
-                    sim = 1.0 - float(distances[i]) if i < len(distances) else 0.0
+                    sim = ann_similarity(float(distances[i]), label) if i < len(distances) else 0.0
                     prev = scores.get(chunk_id)
                     if prev is None or sim > prev:
                         scores[chunk_id] = sim

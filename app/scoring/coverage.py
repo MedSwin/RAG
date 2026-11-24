@@ -35,6 +35,22 @@ def _safety_score(passage: CandidatePassage) -> float:
     return clamp(sum(1 for term in terms if term in text) * 0.18)
 
 
+def keyword_in_text(keyword: str, text: str) -> bool:
+    """Match a keyword as a whole token. A phrase matches as written."""
+    needle = (keyword or "").lower().strip()
+    if not needle:
+        return False
+    lowered = (text or "").lower()
+    if " " in needle or "-" in needle:
+        return needle in lowered
+    tokens = set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+    if needle in tokens:
+        return True
+    if needle.endswith("s") and needle[:-1] in tokens:
+        return True
+    return f"{needle}s" in tokens
+
+
 def score_passage_facets(
     passage: CandidatePassage,
     facets: Iterable[ClinicalFacet],
@@ -48,7 +64,7 @@ def score_passage_facets(
             scores[facet.name] = clamp(explicit_scores[facet.name])
             continue
         source_bonus = _source_policy_score(passage.source_type, facet.source_policy)
-        matched = [keyword for keyword in facet.keywords if keyword.lower() in text]
+        matched = [keyword for keyword in facet.keywords if keyword_in_text(keyword, text)]
         keyword_score = min(0.65, len(matched) * 0.18)
         section_score = passage.section_score if passage.section_score is not None else 0.5
         safety_bonus = 0.25 if facet.name == "safety_contraindications" and _safety_score(passage) > 0 else 0.0

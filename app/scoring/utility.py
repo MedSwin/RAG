@@ -156,6 +156,13 @@ def select_bundle(
     """Greedy max marginal utility per token under budget."""
     if not candidates:
         return []
+    candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.calibrated_score is not None and float(candidate.calibrated_score) >= settings.SUFF_T_INCLUSION
+    ]
+    if not candidates:
+        return []
     max_chunks = max_chunks or settings.MMR_MAX_EVIDENCE_CHUNKS
     token_budget = token_budget or settings.TOKEN_BUDGET_B
     selected: List[CandidatePassage] = []

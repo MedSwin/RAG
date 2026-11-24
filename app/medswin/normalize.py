@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
@@ -108,7 +109,8 @@ class QueryNormalizer:
                 for item in benchmark_required_facets(None, explicit)
             ]
         threshold = settings.SUFF_CRITICAL_FACET_THRESHOLD
-        patient_required = bool(patient_id) or "patient" in query.lower() or "elderly" in query.lower()
+        query_text = (query or "").lower()
+        patient_required = bool(patient_id) or bool(re.search(r"\bpatient\b", query_text)) or bool(re.search(r"\belderly\b", query_text))
         fallback = [
             ClinicalFacet(
                 name="guideline_concordance",
@@ -116,7 +118,7 @@ class QueryNormalizer:
                 threshold=threshold,
                 weight=1.20,
                 source_policy="CPG",
-                keywords=["guideline", "recommendation", "indication", "management", "treatment"],
+                keywords=["guideline", "recommendation", "recommended", "indication", "management", "treatment"],
             ),
             ClinicalFacet(
                 name="safety_contraindications",
@@ -124,7 +126,7 @@ class QueryNormalizer:
                 threshold=threshold,
                 weight=1.35,
                 source_policy="SAFETY",
-                keywords=["contraindication", "avoid", "adverse", "risk", "allergy", "interaction"],
+                keywords=["contraindication", "contraindicated", "avoid", "adverse", "allergy", "interaction"],
             ),
             ClinicalFacet(
                 name="patient_applicability",
@@ -132,7 +134,7 @@ class QueryNormalizer:
                 threshold=settings.SUFF_FACET_THRESHOLD,
                 weight=1.05,
                 source_policy="EMR" if patient_required else "ANY",
-                keywords=["patient", "history", "medication", "lab", "allergy", "comorbidity", "age"],
+                keywords=["patient", "history", "medication", "allergy", "comorbidity"],
             ),
             ClinicalFacet(
                 name="evidence_quality",

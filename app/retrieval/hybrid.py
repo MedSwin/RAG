@@ -52,13 +52,8 @@ class HybridRetriever:
         return list(merged.values())
 
     def _normalize(self, candidates: List[CandidatePassage]) -> None:
-        dense_scores = [c.dense_score for c in candidates if c.dense_score is not None]
         lexical_scores = [c.lexical_score for c in candidates if c.lexical_score is not None]
-        if dense_scores and max(dense_scores) > min(dense_scores):
-            lo, hi = min(dense_scores), max(dense_scores)
-            for c in candidates:
-                if c.dense_score is not None:
-                    c.dense_score = (c.dense_score - lo) / (hi - lo)
+        # Dense scores are already cosine similarities. Min-max would turn 0.91 and 0.90 into 1 and 0.
         if lexical_scores and max(lexical_scores) > min(lexical_scores):
             lo, hi = min(lexical_scores), max(lexical_scores)
             for c in candidates:
