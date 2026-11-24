@@ -929,3 +929,44 @@ def test_the_specialist_sees_the_patient_chart():
     assert all("Patient chart:" in query for query in seen)
     assert all("ASA 100mg daily" in query for query in seen)
 
+
+def test_a_chart_caution_blocks_the_same_drug_recommendation():
+    import asyncio
+
+    from app.medswin.ledger import PATIENT_CHART_ID
+    from app.schemas.facets import ClinicalFacet
+
+    class Charts:
+        async def get_by_patient_id(self, patient_id, org_id, **_kwargs):
+            return [{"source_type": "EMR", "text": "Avoid apixaban."}]
+
+    class Retriever(FakeRetriever):
+        async def retrieve(self, **kwargs):
+            passages, retrieval_trace = await super().retrieve(**kwargs)
+            passages[0].text = "Apixaban is recommended."
+            return passages, retrieval_trace
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.chunk_repo = Charts()
+    orchestrator.retriever = Retriever()
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
+    bundle, check = asyncio.run(
+        orchestrator._retrieve_with_sufficiency(
+            "Which dose?",
+            QuerySpec(
+                canonical_terms=["apixaban"],
+                facets=[ClinicalFacet(name="guideline_concordance", keywords=["apixaban"], required=True)],
+            ),
+            "org",
+            "pt-1",
+            {},
+            trace,
+        )
+    )
+    pairs = bundle.contradictions
+    assert any(pair.chunk_id_b == PATIENT_CHART_ID for pair in pairs)
+    assert check.passed is False
+    assert "apixaban" in check.policy_decision.reason
+

@@ -27,6 +27,7 @@ from app.medswin.ledger import (
     adjudicate_contradictions,
     apply_claim_alignment,
     build_retrieval_ledger,
+    chart_contradictions,
     detect_contradictions,
     filter_ledger,
     merge_agent_claims,
@@ -259,14 +260,19 @@ def _fit_row(text: str, allowance: int) -> List[str]:
     return f"{' '.join(caution_bits)} {' '.join(leading)}".split()[:allowance]
 
 
-def _model_question(question: str, retrieval_query: str) -> str:
-    """Give the model the chart synopsis. The chart is not a citable passage."""
+def _patient_chart(retrieval_query: str) -> str:
+    """Return the chart synopsis stored on the retrieval query."""
     marker = "Patient retrieval context:\n"
     raw = retrieval_query or ""
     index = raw.find(marker)
     if index < 0:
-        return question
-    chart = raw[index + len(marker):].strip()
+        return ""
+    return raw[index + len(marker):].strip()
+
+
+def _model_question(question: str, retrieval_query: str) -> str:
+    """Give the model the chart synopsis. The chart is not a citable passage."""
+    chart = _patient_chart(retrieval_query)
     if not chart:
         return question
     return (
@@ -919,6 +925,10 @@ class MedSwinOrchestrator:
                 adjudicate_contradictions(detected_contradictions, batches)
                 if self.policy.enable_mac
                 else detected_contradictions
+            )
+            contradictions = list(contradictions) + chart_contradictions(
+                _patient_chart(retrieval_query),
+                selected_ledger,
             )
             check = self.gate.check(
                 selected_ledger,

@@ -1,9 +1,11 @@
 from app.medswin.abstain import abstention_matches, citations_match
 from app.medswin.gate import EvidenceGate
 from app.medswin.ledger import (
+    PATIENT_CHART_ID,
     adjudicate_contradictions,
     apply_claim_alignment,
     build_retrieval_ledger,
+    chart_contradictions,
     detect_contradictions,
     intervention_tokens,
     merge_agent_claims,
@@ -1488,6 +1490,40 @@ def test_a_caution_confidence_does_not_outrank_the_recommendation():
     assert caution.facet_scores["guideline_concordance"] < 1.0
     selected = select_bundle([recommendation, caution], token_budget=40, max_chunks=1)
     assert [item.chunk_id for item in selected] == ["rec"]
+
+
+def test_a_chart_caution_conflicts_with_the_same_drug():
+    support = _entry(
+        "rec",
+        "guideline_concordance",
+        "Apixaban is recommended.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.90,
+    )
+    support.text = "Apixaban is recommended."
+    pairs = chart_contradictions("Avoid apixaban.", [support])
+    assert len(pairs) == 1
+    assert pairs[0].chunk_id_b == PATIENT_CHART_ID
+    assert pairs[0].severity == "high"
+    assert "apixaban" in pairs[0].reason
+    assert chart_contradictions("Avoid dabigatran.", [support]) == []
+    assert chart_contradictions("ASA 100mg daily", [support]) == []
+    assert chart_contradictions("The ASA meeting used a 100mg slide.", [support]) == []
+    from app.schemas.enums import ClinicalScope
+
+    gate = EvidenceGate()
+    facet = ClinicalFacet(name="guideline_concordance", required=False, threshold=0.1)
+    decision = gate.decide(
+        [support],
+        [facet],
+        [],
+        2,
+        ClinicalScope.CLINICIAN_CDS,
+        contradictions=pairs,
+        stop_retrieval=True,
+    )
+    assert decision.passed is False
+    assert "apixaban" in decision.reason
 
 
 def test_drug_tokens_fold_plurals_and_ignore_april():

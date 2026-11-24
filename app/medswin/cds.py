@@ -223,6 +223,19 @@ def _caution_drug_name(
         for drug in sorted(intervention_tokens(text)):
             if drug not in found:
                 found.append(drug)
+    if not found:
+        from app.medswin.ledger import PATIENT_CHART_ID
+
+        for item in pairs:
+            if item.resolved or PATIENT_CHART_ID not in {item.chunk_id_a, item.chunk_id_b}:
+                continue
+            if severity == "high" and item.severity != "high":
+                continue
+            if severity != "high" and item.severity == "high":
+                continue
+            for drug in sorted(intervention_tokens(item.reason)):
+                if drug not in found:
+                    found.append(drug)
     return ", ".join(found)
 
 

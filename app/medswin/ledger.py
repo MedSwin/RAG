@@ -387,6 +387,58 @@ def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
     return " ".join(item.claim for item in entry.claims)
 
 
+PATIENT_CHART_ID = "patient-chart"
+
+
+def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[ContradictionPair]:
+    """Pair a chart caution with a selected recommendation for the same drug.
+
+    The chart synopsis is not a retrieved passage. A dose line is not a caution.
+    """
+    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+    text = (chart or "").strip()
+    if not text or not intervention_tokens(text):
+        return []
+    caution = _ungoverned_caution(text)
+    qualify = bool(_QUALIFY.search(text)) and not caution
+    if not caution and not qualify:
+        return []
+    pairs: List[ContradictionPair] = []
+    seen = set()
+    for entry in ledger:
+        if entry.chunk_id == PATIENT_CHART_ID:
+            continue
+        support_text = _pairing_text(entry)
+        if not intervention_tokens(support_text) or not same_intervention(support_text, text):
+            continue
+        for claim in entry.claims:
+            if claim.polarity != EvidencePolarity.SUPPORTS or claim.facet == "safety_contraindications":
+                continue
+            key = (claim.facet, entry.chunk_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            if caution:
+                reason = "Same-drug safety warning conflicts with this recommendation."
+                severity = "high" if entry.evidence_grade.score >= 0.80 else "medium"
+            else:
+                reason = "Same-drug caution qualifies this recommendation."
+                severity = "low"
+            pairs.append(
+                ContradictionPair(
+                    facet=claim.facet,
+                    chunk_id_a=entry.chunk_id,
+                    chunk_id_b=PATIENT_CHART_ID,
+                    severity=severity,
+                    reason=_reason_with_drug(reason, support_text, text),
+                    grade_a=entry.evidence_grade.score,
+                    grade_b=0.0,
+                )
+            )
+    return pairs
+
+
 def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[ContradictionPair]:
     by_facet: Dict[str, Dict[str, List[EvidenceLedgerEntry]]] = {}
     for entry in ledger:
