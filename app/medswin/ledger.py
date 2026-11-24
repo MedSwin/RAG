@@ -529,6 +529,48 @@ def _conflict_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = 
     return named_caution_text(_pairing_text(entry, claim))
 
 
+def _caution_clause(sentence: str) -> tuple[str, str]:
+    """Split one sentence into the recommendation and a caution about another drug."""
+    from app.scoring.coverage import _BENIGN_DO_NOT, _CAUTION, _LOCAL_NEGATION, _QUALIFY
+
+    match = None
+    for item in list(_CAUTION.finditer(sentence or "")) + list(_QUALIFY.finditer(sentence or "")):
+        window = sentence[max(0, item.start() - 48):item.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        phrase = item.group(0).lower()
+        if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(sentence[item.end():]):
+            continue
+        if match is None or item.start() < match.start():
+            match = item
+    if match is None:
+        return sentence, ""
+    words = (sentence or "").split()
+    cursor = 0
+    spans = []
+    for word in words:
+        at = sentence.find(word, cursor)
+        spans.append(at)
+        cursor = at + len(word)
+    anchor = 0
+    for index, begin in enumerate(spans):
+        end = begin + len(words[index])
+        if begin <= match.start() < end or begin < match.end() <= end:
+            anchor = index
+            break
+    drug_at = [index for index, word in enumerate(words) if intervention_tokens(word)]
+    nearby = [index for index in drug_at if anchor - 4 <= index <= anchor + 4]
+    if nearby:
+        clause_begin = min([anchor, *nearby])
+        clause_end = max([anchor, *nearby]) + 1
+    else:
+        clause_begin = anchor
+        clause_end = min(len(words), anchor + 3)
+    recommendation = " ".join(words[:clause_begin] + words[clause_end:])
+    clause = " ".join(words[clause_begin:clause_end])
+    return recommendation, clause
+
+
 def _support_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = None) -> str:
     """Drop a caution sentence that names a different drug from the recommendation."""
     from app.scoring.coverage import _QUALIFY, _ungoverned_caution
@@ -540,7 +582,14 @@ def _support_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
         if not sentence.strip():
             continue
         if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
-            caution.append(sentence.strip())
+            recommendation, clause = _caution_clause(sentence)
+            recommendation_drugs = intervention_tokens(recommendation)
+            clause_drugs = intervention_tokens(clause)
+            if recommendation_drugs and clause_drugs and recommendation_drugs.isdisjoint(clause_drugs):
+                other.append(recommendation)
+                caution.append(clause)
+            else:
+                caution.append(sentence.strip())
         else:
             other.append(sentence.strip())
     other_text = " ".join(other)

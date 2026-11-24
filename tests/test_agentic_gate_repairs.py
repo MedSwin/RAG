@@ -215,6 +215,44 @@ def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
     assert different == []
 
 
+def test_a_caution_clause_in_the_recommendation_does_not_conflict_with_that_warning():
+    support = _entry(
+        "note",
+        "guideline_concordance",
+        "Apixaban is recommended for patients who should not take warfarin.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    same = _entry(
+        "aw",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    later = _entry(
+        "later",
+        "guideline_concordance",
+        "Patients who should not take warfarin can use apixaban.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    pairs = detect_contradictions([support, warning, same])
+    assert all(pair.chunk_id_b != "war" for pair in pairs)
+    assert any(pair.chunk_id_b == "aw" and "apixaban" in pair.reason for pair in pairs)
+    assert all("warfarin" not in pair.reason for pair in pairs)
+    later_pairs = detect_contradictions([later, warning, same])
+    assert all(pair.chunk_id_b != "war" for pair in later_pairs)
+    assert any(pair.chunk_id_b == "aw" for pair in later_pairs)
+
+
 def test_a_warning_sentence_in_the_recommendation_does_not_conflict_with_that_warning():
     support = _entry(
         "note",
