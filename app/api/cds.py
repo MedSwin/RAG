@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.tenant import bind_tenant
 from app.medswin.cds import SERVICE_ID, cards_from_chat, discovery, feedback_documents
 
 router = APIRouter()
@@ -90,10 +91,25 @@ async def cds_discovery() -> Dict[str, Any]:
     return discovery()
 
 
+def _cds_caller(request: Request, body: CdsRequest) -> tuple[str, str]:
+    token_user = str(getattr(request.state, "user_id", "") or "").strip()
+    if token_user:
+        token_org = str(getattr(request.state, "org_id", "") or "").strip()
+        return bind_tenant(
+            request,
+            (body.context.userId or token_user).strip(),
+            (body.context.orgId or token_org).strip(),
+        )
+    user_id = (body.context.userId or "cds-client").strip() or "cds-client"
+    org_id = (body.context.orgId or "cds").strip() or "cds"
+    return user_id, org_id
+
+
 @router.post("/cds-services/{service_id}")
 async def cds_service(
     service_id: str,
     body: CdsRequest,
+    request: Request,
     chat: ChatFunc = Depends(get_cds_chat),
 ) -> Dict[str, Any]:
     if service_id != SERVICE_ID:
@@ -103,10 +119,11 @@ async def cds_service(
     question = " ".join((body.context.question or "").split())
     if not question:
         return {"cards": []}
+    user_id, org_id = _cds_caller(request, body)
     response = await chat(
         question=question,
-        user_id=(body.context.userId or "cds-client").strip() or "cds-client",
-        org_id=(body.context.orgId or "cds").strip() or "cds",
+        user_id=user_id,
+        org_id=org_id,
         patient_id=(body.context.patientId or "").strip() or None,
     )
     return {"cards": cards_from_chat(response)}

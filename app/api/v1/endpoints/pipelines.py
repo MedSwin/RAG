@@ -9,9 +9,10 @@ from hashlib import sha256
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.tenant import bind_org, bind_tenant
 from app.core.config import settings
 from app.medswin.naive import NaiveRAGOrchestrator
 from app.medswin.orchestrator import MedSwinOrchestrator
@@ -110,6 +111,13 @@ def _orchestrator(pipeline: PipelineId):
     return get_full()
 
 
+def _bound_chat(http_request: Request, request: PipelineChatRequest) -> PipelineChatRequest:
+    user_id, org_id = bind_tenant(http_request, request.user_id, request.org_id)
+    if user_id == request.user_id and org_id == request.org_id:
+        return request
+    return request.model_copy(update={"user_id": user_id, "org_id": org_id})
+
+
 async def _chat(pipeline: PipelineId, request: PipelineChatRequest) -> ChatResponse:
     _assert_benchmark_allowed(request)
     instance = _orchestrator(pipeline)
@@ -129,7 +137,8 @@ async def _chat(pipeline: PipelineId, request: PipelineChatRequest) -> ChatRespo
 
 
 @router.post("/{pipeline}/chat", response_model=ChatResponse)
-async def pipeline_chat(pipeline: PipelineId, request: PipelineChatRequest):
+async def pipeline_chat(pipeline: PipelineId, request: PipelineChatRequest, http_request: Request):
+    request = _bound_chat(http_request, request)
     try:
         return await _chat(pipeline, request)
     except HTTPException:
@@ -155,7 +164,8 @@ def _diff(left: ChatResponse, right: ChatResponse) -> Dict[str, Any]:
 
 
 @router.post("/compare", response_model=CompareResponse)
-async def pipeline_compare(request: CompareRequest):
+async def pipeline_compare(request: CompareRequest, http_request: Request):
+    request = _bound_chat(http_request, request)
     requested = list(dict.fromkeys(request.pipelines))
     if not requested:
         raise HTTPException(status_code=400, detail="At least one pipeline is required")
@@ -194,7 +204,8 @@ async def pipelines_ready():
 
 
 @router.get("/traces/{trace_id}")
-async def pipeline_trace(trace_id: str, org_id: str, include_details: bool = False):
+async def pipeline_trace(trace_id: str, org_id: str, http_request: Request, include_details: bool = False):
+    org_id = bind_org(http_request, org_id)
     trace = await TraceRepository().get_by_id(trace_id, org_id)
     if not trace:
         raise HTTPException(status_code=404, detail="Trace not found")
@@ -202,7 +213,8 @@ async def pipeline_trace(trace_id: str, org_id: str, include_details: bool = Fal
 
 
 @router.get("/sessions/{session_id}")
-async def pipeline_session(session_id: str, org_id: str):
+async def pipeline_session(session_id: str, org_id: str, http_request: Request):
+    org_id = bind_org(http_request, org_id)
     session = await SessionRepository().get_by_id(session_id, org_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
