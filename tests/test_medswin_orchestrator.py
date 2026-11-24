@@ -243,6 +243,21 @@ def test_a_chart_warning_stays_when_dose_lines_fill_the_row():
     assert len(synopsis.split()) <= 140
 
 
+def test_a_later_drug_stays_when_repeated_chart_cautions_fill_the_row():
+    from app.medswin.orchestrator import _chart_synopsis
+
+    note = " ".join(
+        ["Avoid warfarin because the bleed risk stays high for this patient today."] * 30
+    ) + " Avoid apixaban."
+    synopsis = _chart_synopsis(
+        [{"text": note}, {"text": "Age 80."}, {"text": "Clinic follow-up."}]
+    )
+    lowered = synopsis.lower()
+    assert "warfarin" in lowered
+    assert "apixaban" in lowered
+    assert len(synopsis.split()) <= 140
+
+
 def test_a_later_drug_stays_when_earlier_chart_cautions_are_long():
     from app.medswin.orchestrator import _chart_synopsis
 

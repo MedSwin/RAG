@@ -224,6 +224,22 @@ def _caution_window(words: List[str], room: int) -> List[str]:
     return words[begin:begin + room]
 
 
+def _drop_repeated_caution_bits(bits: List[str]) -> tuple:
+    """Keep the first warning for a drug. Drop a later copy of that warning."""
+    from app.medswin.ledger import intervention_tokens
+
+    kept: List[str] = []
+    seen: set = set()
+    for bit in bits:
+        drugs = set(intervention_tokens(bit))
+        if drugs and drugs <= seen:
+            continue
+        kept.append(bit)
+        seen |= drugs
+    used = sum(len(bit.split()) for bit in kept)
+    return kept, used
+
+
 def _fit_row(text: str, allowance: int) -> List[str]:
     """Keep a caution sentence before the leading words of a long note."""
     words = text.split()
@@ -232,7 +248,8 @@ def _fit_row(text: str, allowance: int) -> List[str]:
     if len(words) <= allowance:
         return words
     sentences = [part.strip() for part in _SENTENCE_SPLIT.split(text) if part.strip()] or [text]
-    from app.medswin.ledger import dose_span
+    from app.medswin.ledger import dose_span, intervention_tokens
+    from app.retrieval.lexical import LexicalRetriever
 
     caution_indexes = [index for index, sentence in enumerate(sentences) if _note_priority(sentence)]
     dose_bits: List[str] = []
@@ -247,28 +264,26 @@ def _fit_row(text: str, allowance: int) -> List[str]:
     remaining = set(caution_indexes)
     for index in caution_indexes:
         remaining.discard(index)
-        if used >= allowance:
-            break
         piece = sentences[index].split()
-        room = allowance - used
         span_words = piece
         if len(piece) > _CAUTION_KEEP or remaining:
-            from app.medswin.ledger import intervention_tokens
-            from app.retrieval.lexical import LexicalRetriever
-
             span_words = LexicalRetriever._caution_span(sentences[index]).split() or piece
         if len(piece) > _CAUTION_KEEP:
-            window = _caution_window(piece, min(room, _CAUTION_KEEP))
+            window = _caution_window(piece, _CAUTION_KEEP)
             span_drugs = intervention_tokens(" ".join(span_words))
             window_drugs = intervention_tokens(" ".join(window))
             piece = span_words if span_drugs - window_drugs else window
         elif remaining and len(span_words) < len(piece):
             piece = span_words
+        if used + len(piece) > allowance:
+            caution_bits, used = _drop_repeated_caution_bits(caution_bits)
+        room = allowance - used
         if len(piece) > room:
             piece = span_words if len(span_words) <= room else piece[:room]
-        if piece:
-            caution_bits.append(" ".join(piece))
-            used += len(piece)
+        if not piece or used + len(piece) > allowance:
+            continue
+        caution_bits.append(" ".join(piece))
+        used += len(piece)
     for bit in dose_bits:
         bit_words = bit.split()
         if not bit_words or used + len(bit_words) > allowance:
