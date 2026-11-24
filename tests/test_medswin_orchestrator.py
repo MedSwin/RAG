@@ -152,6 +152,39 @@ def test_the_retrieval_query_stores_the_redacted_patient_synopsis():
     assert "[REDACTED_PHONE]" in asked
 
 
+def test_the_stored_synopsis_keeps_chart_words():
+    import asyncio
+
+    class Charts:
+        async def get_by_patient_id(self, patient_id, org_id, **_kwargs):
+            return [
+                {
+                    "chunk_id": "chart-9",
+                    "source_type": "EMR",
+                    "text": "Avoid warfarin. Email nurse@clinic.test. DOB: 01/02/1940.",
+                },
+                {"chunk_id": "chart-2", "source_type": "EMR", "text": "Age 80."},
+                {"chunk_id": "chart-3", "source_type": "EMR", "text": "Creatinine is 1.4."},
+                {"chunk_id": "chart-4", "source_type": "EMR", "text": "Avoid apixaban."},
+            ]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.chunk_repo = Charts()
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
+    returned = asyncio.run(orchestrator._patient_query("Which dose?", "org", "pt-1", {}, trace))
+    assert "Avoid warfarin." in returned
+    assert "Age 80." in returned
+    assert "Creatinine is 1.4." in returned
+    assert "Avoid apixaban." not in returned
+    assert "chart-9" not in returned
+    assert "nurse@clinic.test" not in returned
+    assert "[REDACTED_EMAIL]" in returned
+    assert "01/02/1940" not in returned
+    assert "[REDACTED_DOB]" in returned
+
+
 def test_a_long_chart_note_keeps_the_next_caution():
     import asyncio
 
