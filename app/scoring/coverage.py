@@ -403,7 +403,9 @@ _OFF_DRUG = re.compile(
     re.I,
 )
 _NOT_FOR = re.compile(
-    r"\bnot\s+for\b|\bnot\s+to\s+have\b|\bnot\s+to\s+be\s+given\b",
+    r"\bnot\s+for\b|\bnot\s+to\s+have\b|\bnot\s+to\s+be\s+given\b"
+    r"|\bnot\s+(?:charted|due)\s+for\b|\bnot\s+written\s+up\s+for\b"
+    r"|\bnot\s+(?:need|needs|require|requires|required)\b",
     re.I,
 )
 

@@ -812,7 +812,10 @@ _REMAIN_ON = re.compile(
     re.I,
 )
 _PLANNED_FOR = re.compile(
-    r"\b(?:is|was|were|are|am)\s+for\b|\b(?:is|was|were|are|am)\s+to\s+have\b",
+    r"\b(?:is|was|were|are|am)\s+for\b"
+    r"|\b(?:is|was|were|are|am)\s+to\s+have\b"
+    r"|\b(?:charted|written\s+up|due)\s+for\b"
+    r"|\b(?:needs?|requir(?:e|es|ed))\b",
     re.I,
 )
 _KEEP_VERB = re.compile(
