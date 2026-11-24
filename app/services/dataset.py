@@ -225,7 +225,7 @@ class HuggingFaceDatasetService:
             return {
                 "success": False,
                 "dataset_name": dataset_name,
-                "error": str(e)
+                "error": type(e).__name__
             }
     
     def _download_dataset_sync(self, repo_id: str) -> List[Dict[str, Any]]:

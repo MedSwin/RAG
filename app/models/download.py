@@ -73,7 +73,7 @@ class ModelDownloadService:
             return {
                 "success": False,
                 "model_name": model_name,
-                "error": str(e)
+                "error": type(e).__name__
             }
     
     def _download_model_sync(self, model_config: Dict[str, Any]) -> None:
@@ -185,7 +185,7 @@ class ModelDownloadService:
                 logger.error(f"Error getting info for model {model_name}: {e}")
                 models_info[model_name] = {
                     "name": model_name,
-                    "error": str(e)
+                    "error": type(e).__name__
                 }
         
         return models_info

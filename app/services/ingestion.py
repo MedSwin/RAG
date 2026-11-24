@@ -110,7 +110,7 @@ class IngestionPipelineService:
             await self.hf_service._update_dataset_status(dataset_name, "error", 0)
             return {
                 "success": False,
-                "error": str(e)
+                "error": type(e).__name__
             }
     
     async def _generate_embeddings_for_chunks(self, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -140,7 +140,7 @@ class IngestionPipelineService:
             logger.error(f"Error generating embeddings: {e}")
             return {
                 "success": False,
-                "error": str(e)
+                "error": type(e).__name__
             }
     
     def _generate_embeddings_sync(self, chunks, tokenizer, embed_model, device, embedding_dim):
@@ -246,7 +246,7 @@ class IngestionPipelineService:
                 "dataset_name": dataset_name,
                 "status": "error",
                 "progress": 0,
-                "error": str(e)
+                "error": type(e).__name__
             }
     
     async def get_all_ingestion_statuses(self) -> List[Dict[str, Any]]:

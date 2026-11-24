@@ -690,6 +690,23 @@ def test_embedding_refresh_status_hides_the_exception_text(monkeypatch):
     assert "555-234-5678" not in str(status)
 
 
+def test_ingestion_status_hides_the_exception_text(monkeypatch):
+    from app.services import ingestion as ingestion_module
+
+    def _boom():
+        raise RuntimeError("mongo uri 555-234-5678")
+
+    monkeypatch.setattr(ingestion_module, "get_sync_database", _boom)
+    service = ingestion_module.IngestionPipelineService()
+    try:
+        status = asyncio.run(service.get_ingestion_status("medqa"))
+    finally:
+        service.cleanup()
+    assert status["error"] == "RuntimeError"
+    assert status["status"] == "error"
+    assert "555-234-5678" not in str(status)
+
+
 def test_cloud_dataset_ingest_does_not_embed_or_rebuild(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_MODE", True)
     service = IngestionPipelineService()
