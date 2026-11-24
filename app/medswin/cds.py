@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 from app.schemas.enums import PolicyAction
 from app.schemas.traces import ChatResponse
@@ -24,7 +24,8 @@ def discovery() -> Dict[str, Any]:
                 "description": (
                     "Returns one card from the two-stage evidence gate. "
                     "Send the clinical question in context.question. "
-                    "A request with no question returns no cards."
+                    "A request with no question returns no cards. "
+                    "POST /cds-services/medswin-evidence/feedback records an accepted or overridden card."
                 ),
             }
         ]
@@ -73,6 +74,35 @@ def cards_from_chat(response: ChatResponse) -> List[Dict[str, Any]]:
             "detail": detail,
         }
     ]
+
+
+def feedback_documents(
+    service_id: str,
+    items: Sequence[Any],
+    recorded_at: str,
+) -> List[Dict[str, Any]]:
+    """Shape one CDS Hooks feedback body into audit documents."""
+    documents: List[Dict[str, Any]] = []
+    for item in items:
+        reason = item.overrideReason
+        coded = reason.reason if reason and isinstance(reason.reason, dict) else {}
+        suggestions = []
+        for suggestion in item.acceptedSuggestions or []:
+            if isinstance(suggestion, dict) and suggestion.get("id"):
+                suggestions.append(str(suggestion["id"]))
+        documents.append(
+            {
+                "service_id": service_id,
+                "card": item.card,
+                "outcome": item.outcome,
+                "accepted_suggestions": suggestions,
+                "override_code": coded.get("code"),
+                "override_comment": reason.userComment if reason else None,
+                "outcome_timestamp": item.outcomeTimestamp,
+                "recorded_at": recorded_at,
+            }
+        )
+    return documents
 
 
 def _clip(text: str) -> str:

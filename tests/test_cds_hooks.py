@@ -2,9 +2,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import AuthMiddleware
-from app.api.cds import get_cds_chat, router
+from app.api.cds import get_cds_chat, get_feedback_recorder, router
 from app.core.config import settings
-from app.medswin.cds import cards_from_chat
+from app.medswin.cds import cards_from_chat, feedback_documents
 from app.schemas.enums import PolicyAction, SourceType
 from app.schemas.evidence import AnswerArtifact, CandidatePassage, EvidenceBundle, PolicyDecision
 from app.schemas.traces import ChatResponse
@@ -135,3 +135,82 @@ def test_cds_service_requires_a_token_when_auth_is_on(monkeypatch):
         json={"hook": "patient-view", "hookInstance": "hook-1", "context": {}},
     )
     assert response.status_code == 401
+
+
+def test_feedback_records_an_override_and_does_not_call_chat():
+    calls = []
+    recorded = []
+
+    async def chat(**kwargs):
+        calls.append(kwargs)
+
+    async def record(service_id, documents):
+        recorded.append((service_id, documents))
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_cds_chat] = lambda: chat
+    app.dependency_overrides[get_feedback_recorder] = lambda: record
+    response = TestClient(app).post(
+        "/cds-services/medswin-evidence/feedback",
+        json={
+            "feedback": [
+                {
+                    "card": "card-1",
+                    "outcome": "overridden",
+                    "acceptedSuggestions": [{"id": "sug-1"}],
+                    "overrideReason": {
+                        "reason": {"code": "clinical-judgement"},
+                        "userComment": "The local protocol differs.",
+                    },
+                    "outcomeTimestamp": "2026-11-24T00:00:00Z",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {}
+    assert calls == []
+    service_id, documents = recorded[0]
+    assert service_id == "medswin-evidence"
+    assert documents[0]["card"] == "card-1"
+    assert documents[0]["outcome"] == "overridden"
+    assert documents[0]["override_code"] == "clinical-judgement"
+    assert documents[0]["override_comment"] == "The local protocol differs."
+    assert documents[0]["accepted_suggestions"] == ["sug-1"]
+    assert documents[0]["recorded_at"]
+
+
+def test_feedback_rejects_an_unknown_outcome():
+    response = _app(None).post(
+        "/cds-services/medswin-evidence/feedback",
+        json={"feedback": [{"card": "card-1", "outcome": "ignored"}]},
+    )
+    assert response.status_code == 422
+
+
+def test_feedback_unknown_service_is_not_found():
+    response = _app(None).post(
+        "/cds-services/other/feedback",
+        json={"feedback": [{"card": "card-1", "outcome": "accepted"}]},
+    )
+    assert response.status_code == 404
+
+
+def test_feedback_document_keeps_the_audit_fields():
+    from app.api.cds import FeedbackItem
+
+    item = FeedbackItem(card="card-9", outcome="accepted")
+    documents = feedback_documents("medswin-evidence", [item], "2026-11-24T00:00:00+00:00")
+    assert documents == [
+        {
+            "service_id": "medswin-evidence",
+            "card": "card-9",
+            "outcome": "accepted",
+            "accepted_suggestions": [],
+            "override_code": None,
+            "override_comment": None,
+            "outcome_timestamp": None,
+            "recorded_at": "2026-11-24T00:00:00+00:00",
+        }
+    ]

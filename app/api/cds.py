@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Dict, Optional
+from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.medswin.cds import SERVICE_ID, cards_from_chat, discovery
+from app.medswin.cds import SERVICE_ID, cards_from_chat, discovery, feedback_documents
 
 router = APIRouter()
 
@@ -51,6 +52,39 @@ def get_cds_chat() -> ChatFunc:
     return default_cds_chat
 
 
+class OverrideReason(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    reason: Optional[Dict[str, Any]] = None
+    userComment: Optional[str] = None
+
+
+class FeedbackItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    card: str = Field(min_length=1)
+    outcome: Literal["accepted", "overridden"]
+    acceptedSuggestions: List[Dict[str, Any]] = Field(default_factory=list)
+    overrideReason: Optional[OverrideReason] = None
+    outcomeTimestamp: Optional[str] = None
+
+
+class FeedbackRequest(BaseModel):
+    feedback: List[FeedbackItem] = Field(min_length=1)
+
+
+FeedbackFunc = Callable[[str, List[Dict[str, Any]]], Awaitable[None]]
+
+
+async def default_record_feedback(service_id: str, documents: List[Dict[str, Any]]) -> None:
+    """Store CDS feedback. This path does not call a model."""
+    from app.core.database import get_database
+
+    await get_database().cds_feedback.insert_many(documents)
+
+
+def get_feedback_recorder() -> FeedbackFunc:
+    return default_record_feedback
+
+
 @router.get("/cds-services")
 async def cds_discovery() -> Dict[str, Any]:
     return discovery()
@@ -76,3 +110,17 @@ async def cds_service(
         patient_id=(body.context.patientId or "").strip() or None,
     )
     return {"cards": cards_from_chat(response)}
+
+
+@router.post("/cds-services/{service_id}/feedback")
+async def cds_feedback(
+    service_id: str,
+    body: FeedbackRequest,
+    record: FeedbackFunc = Depends(get_feedback_recorder),
+) -> Dict[str, Any]:
+    if service_id != SERVICE_ID:
+        raise HTTPException(status_code=404, detail="Unknown CDS service")
+    recorded_at = datetime.now(timezone.utc).isoformat()
+    documents = feedback_documents(service_id, body.feedback, recorded_at)
+    await record(service_id, documents)
+    return {}
