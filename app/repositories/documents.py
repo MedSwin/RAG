@@ -103,11 +103,18 @@ class DocumentRepository(BaseRepository):
         return await cursor.to_list(length=None)
 
     async def update(self, doc_id: str, org_id: str, updates: Dict[str, Any]) -> bool:
+        """Update a document without moving its identity or its patient."""
+        if not updates:
+            return False
+        if any(not isinstance(key, str) or "." in key or key.startswith("$") for key in updates):
+            return False
+        if {"doc_id", "org_id", "patient_id", "source_type"} & set(updates):
+            return False
         result = await self.collection.update_one(
             {"doc_id": doc_id, "org_id": org_id},
             {"$set": updates},
         )
-        return result.modified_count > 0
+        return result.matched_count > 0
 
     async def delete(self, doc_id: str, org_id: str) -> bool:
         result = await self.collection.delete_one({"doc_id": doc_id, "org_id": org_id})

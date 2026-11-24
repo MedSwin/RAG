@@ -371,6 +371,47 @@ def test_a_session_trace_list_stays_with_the_owner():
     assert store.queries == [{"session_id": "sess-1", "org_id": "org-a", "user_id": "dr-chen"}]
 
 
+def test_a_chart_update_keeps_the_patient_and_the_identity_fields():
+    import asyncio
+
+    from app.repositories.chunks import ChunkRepository
+    from app.repositories.documents import DocumentRepository
+
+    class _Result:
+        matched_count = 1
+
+    class _Store:
+        def __init__(self):
+            self.calls = []
+
+        async def update_one(self, query, update):
+            self.calls.append((query, update))
+            return _Result()
+
+    chunk_store = _Store()
+    chunks = ChunkRepository()
+    chunks._db = {"chunks": chunk_store}
+    saved = asyncio.run(chunks.update("chunk-1", "org-a", {"text": "held"}))
+    moved = asyncio.run(chunks.update("chunk-1", "org-a", {"patient_id": "pt-2"}))
+    nested = asyncio.run(chunks.update("chunk-1", "org-a", {"metadata.note": "x"}))
+    document_store = _Store()
+    documents = DocumentRepository()
+    documents._db = {"documents": document_store}
+    retitled = asyncio.run(documents.update("doc-1", "org-a", {"title": "held"}))
+    relabelled = asyncio.run(documents.update("doc-1", "org-a", {"source_type": "LIT"}))
+    assert saved is True
+    assert moved is False
+    assert nested is False
+    assert retitled is True
+    assert relabelled is False
+    assert chunk_store.calls == [
+        ({"chunk_id": "chunk-1", "org_id": "org-a"}, {"$set": {"text": "held"}})
+    ]
+    assert document_store.calls == [
+        ({"doc_id": "doc-1", "org_id": "org-a"}, {"$set": {"title": "held"}})
+    ]
+
+
 def test_a_trace_update_keeps_the_owner_and_the_identity_fields():
     import asyncio
 
