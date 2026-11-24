@@ -139,10 +139,10 @@ class RerankerClient:
         """Rerank passages for a query."""
         if not passages:
             return []
-        from app.services.medswin.governance import redact_phi_text
+        from app.services.medswin.governance import lead_with_caution, redact_phi_text
 
         query = redact_phi_text(query or "")
-        passages = [redact_phi_text(text or "") for text in passages]
+        passages = [lead_with_caution(redact_phi_text(text or "")) for text in passages]
         if self.provider == "bedrock":
             return await self._rerank_bedrock(query, passages)
         if self._wants_inprocess_local():

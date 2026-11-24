@@ -160,6 +160,25 @@ async def test_reranker_local_url_and_env_skip_http_and_singular_scores_still_wo
 
 
 @pytest.mark.asyncio
+async def test_the_reranker_sees_a_late_caution(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    monkeypatch.delenv("LOCAL_INPROCESS_MODELS", raising=False)
+    seen = {}
+
+    async def _http(*args, **kwargs):
+        seen["json"] = kwargs["json"]
+        return _JsonResponse({"scores": [0.4]})
+
+    monkeypatch.setattr("app.services.adapters.reranker.request_with_model_rate_limit", _http)
+    filler = "History note. " * 200
+    client = RerankerClient("http://127.0.0.1:8004/rerank")
+    await client.rerank("apixaban dose", [f"{filler} Avoid apixaban."])
+    document = seen["json"]["passages"][0]
+    assert document.startswith("Avoid apixaban.")
+    assert "History note." in document
+
+
+@pytest.mark.asyncio
 async def test_reranker_http_success_stays_on_http_and_status_errors_do_not_stick(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_MODE", False)
     monkeypatch.delenv("LOCAL_INPROCESS_MODELS", raising=False)
