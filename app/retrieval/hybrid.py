@@ -222,9 +222,15 @@ class HybridRetriever:
         ranked_candidates: List[CandidatePassage],
         facets: Optional[List[ClinicalFacet]] = None,
         agent_weights: Optional[Dict[str, float]] = None,
+        token_budget: Optional[int] = None,
     ) -> List[CandidatePassage]:
         """Apply MMR/token selection to an already-ranked candidate pool."""
-        return select_bundle(ranked_candidates, facets=facets, agent_weights=agent_weights)
+        return select_bundle(
+            ranked_candidates,
+            facets=facets,
+            agent_weights=agent_weights,
+            token_budget=token_budget,
+        )
 
     def build_bundle(
         self,

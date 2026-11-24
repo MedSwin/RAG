@@ -505,9 +505,15 @@ class MedSwinOrchestrator:
             if self.policy.enable_mac:
                 ledger = merge_agent_claims(ledger, batches, all_candidates)
                 apply_claim_alignment(all_candidates, batches, facets)
+            budget = self.policy.generation_token_budget
             ranked_candidates = self.retriever.rank(all_candidates, facets=facets)
-            selected = self.retriever.select(ranked_candidates, facets=facets, agent_weights=agent_weights)
-            selected = pack_bundle(selected, facets=facets)
+            selected = self.retriever.select(
+                ranked_candidates,
+                facets=facets,
+                agent_weights=agent_weights,
+                token_budget=budget,
+            )
+            selected = pack_bundle(selected, facets=facets, token_budget=budget)
             selected_ids = {p.chunk_id for p in selected}
             selected_ledger = filter_ledger(ledger, selected_ids)
             detected_contradictions = detect_contradictions(selected_ledger)

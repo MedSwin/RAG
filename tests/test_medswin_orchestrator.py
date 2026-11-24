@@ -37,7 +37,7 @@ class FakeRetriever:
     def rank(self, candidates, facets=None):
         return candidates
 
-    def select(self, candidates, facets=None, agent_weights=None):
+    def select(self, candidates, facets=None, agent_weights=None, token_budget=None):
         return candidates
 
     def build_bundle(self, passages, **kwargs):
@@ -172,3 +172,37 @@ def test_two_stage_skips_mac_but_keeps_gate():
     assert bundle.policy_decision is not None
     assert bundle.policy_decision.passed is False
     assert any(call.tool_name == "pipeline.mac" for call in trace.tool_calls)
+
+
+def test_retrieval_packs_with_the_policy_token_budget(monkeypatch):
+    import asyncio
+
+    seen = {}
+
+    def _pack(selected, facets=None, token_budget=None):
+        seen["token_budget"] = token_budget
+        return selected
+
+    monkeypatch.setattr("app.medswin.orchestrator.pack_bundle", _pack)
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.policy = type(orchestrator.policy)(
+        **{**orchestrator.policy.__dict__, "generation_token_budget": 222}
+    )
+    orchestrator.retriever = FakeRetriever()
+    orchestrator.chunk_repo = EmptyRepo()
+    from app.schemas.traces import AuditTrace
+
+    trace = AuditTrace(trace_id="t5", session_id="s1", user_id="u1", org_id="org1", query="q")
+    asyncio.run(
+        orchestrator._retrieve_with_sufficiency(
+            query="What treatment is safe?",
+            query_spec=QuerySpec(canonical_terms=["treatment"]),
+            org_id="org1",
+            patient_id=None,
+            constraints={},
+            trace=trace,
+        )
+    )
+    assert seen["token_budget"] == 222
