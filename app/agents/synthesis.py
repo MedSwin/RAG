@@ -77,7 +77,7 @@ def _valid_chunk_id_line(
             continue
         seen.add(chunk_id)
         addition = (", " if shown else "") + chunk_id
-        if shown and len(text) + len(addition) > limit:
+        if ordered_ids is None and shown and len(text) + len(addition) > limit:
             break
         shown.append(chunk_id)
         text += addition
