@@ -560,6 +560,23 @@ def test_a_seventh_short_caution_stays_in_the_local_answer():
         assert f"caution-{drug}" in shown
 
 
+def test_a_later_drug_stays_in_the_local_answer_when_earlier_cautions_are_long():
+    from app.agents.synthesis import _bounded_local_evidence
+
+    body = "Avoid warfarin. " + ("monitoring plan details " * 80)
+    passages = [
+        _passage(f"c-{index}", SourceType.EMR, body, calibrated_score=0.2)
+        for index in range(7)
+    ]
+    passages.append(_passage("apix", SourceType.EMR, "Avoid apixaban.", calibrated_score=0.1))
+    evidence, shown = _bounded_local_evidence(passages)
+    lowered = evidence.lower()
+    assert len(evidence) <= 2800
+    assert "avoid warfarin." in lowered
+    assert "avoid apixaban." in lowered
+    assert "apix" in shown
+
+
 @pytest.mark.asyncio
 async def test_a_caution_id_stays_in_the_local_citation_list():
     caution = _passage("caution-apixaban", SourceType.EMR, "Avoid apixaban.", calibrated_score=0.1)

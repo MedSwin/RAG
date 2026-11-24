@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Sequence
 
-from app.agents.base import _is_prompt_caution, prioritize_passages
+from app.agents.base import _caution_head, _is_prompt_caution, prioritize_passages
 from app.schemas.evidence import AnswerArtifact, AnswerProvenance, CandidatePassage, EvidenceBundle
 from app.schemas.facets import FacetCoverage
 from app.services.adapters.llm import LLMClient
@@ -33,29 +33,51 @@ def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> tuple[str, 
     ordered = prioritize_passages(list(passages))
     cautions = [passage for passage in ordered if _is_prompt_caution(passage)]
     others = [passage for passage in ordered if passage not in cautions]
-    blocks: List[str] = []
-    shown: List[str] = []
+    parts: List[tuple] = []
+
+    def _render(items: List[tuple]) -> str:
+        return "\n\n".join(f"[{chunk_id}] {body}" for chunk_id, body, _caution in items)
+
     for passage in cautions + others:
-        if len(blocks) >= 12:
+        if len(parts) >= 12:
             break
-        if len(blocks) >= 6 and not _is_prompt_caution(passage):
+        caution = _is_prompt_caution(passage)
+        if len(parts) >= 6 and not caution:
             break
         body = lead_with_caution(redact_phi_text(passage.text or ""))[:450]
-        block = f"[{passage.chunk_id}] {body}"
-        trial = "\n\n".join(blocks + [block])
-        if len(trial) > 2800:
-            used = len("\n\n".join(blocks))
-            separator = 2 if blocks else 0
-            room = 2800 - used - separator - len(f"[{passage.chunk_id}] ")
-            if room <= 0:
-                break
-            block = f"[{passage.chunk_id}] {lead_with_caution(redact_phi_text(passage.text or ''))[:room]}"
-            trial = "\n\n".join(blocks + [block])
-            if len(trial) > 2800:
-                break
-        blocks.append(block)
-        shown.append(passage.chunk_id)
-    return "\n\n".join(blocks), shown
+        candidate = (passage.chunk_id, body, caution)
+        if len(_render(parts + [candidate])) <= 2800:
+            parts.append(candidate)
+            continue
+        if caution:
+            head = _caution_head(body)
+            shrunk = []
+            for chunk_id, old_body, old_caution in parts:
+                if not old_caution:
+                    shrunk.append((chunk_id, old_body, False))
+                    continue
+                short = _caution_head(old_body)
+                shrunk.append((chunk_id, short if len(short) < len(old_body) else old_body, True))
+            fitted = None
+            for new_body in (body, head):
+                trial = shrunk + [(passage.chunk_id, new_body, True)]
+                if len(_render(trial)) <= 2800:
+                    fitted = trial
+                    break
+            if fitted is not None:
+                parts = fitted
+            continue
+        used = len(_render(parts))
+        separator = 2 if parts else 0
+        room = 2800 - used - separator - len(f"[{passage.chunk_id}] ")
+        if room <= 0:
+            break
+        block_body = lead_with_caution(redact_phi_text(passage.text or ""))[:room]
+        trial = parts + [(passage.chunk_id, block_body, caution)]
+        if len(_render(trial)) > 2800:
+            break
+        parts.append((passage.chunk_id, block_body, caution))
+    return _render(parts), [chunk_id for chunk_id, _body, _caution in parts]
 
 
 def _valid_chunk_id_line(
