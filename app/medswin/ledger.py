@@ -80,11 +80,18 @@ def build_retrieval_ledger(
             matched.append(facet.name)
             for scope, scope_text in _sentence_scopes(passage.text or ""):
                 if scope == "caution":
-                    polarity = (
-                        EvidencePolarity.SAFETY
-                        if facet.name == "safety_contraindications"
-                        else EvidencePolarity.CONTRADICTS
-                    )
+                    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+                    if _ungoverned_caution(scope_text):
+                        polarity = (
+                            EvidencePolarity.SAFETY
+                            if facet.name == "safety_contraindications"
+                            else EvidencePolarity.CONTRADICTS
+                        )
+                    elif _QUALIFY.search(scope_text):
+                        polarity = EvidencePolarity.QUALIFIES
+                    else:
+                        polarity = EvidencePolarity.CONTRADICTS
                     claim_text = scope_text
                 elif scope == "support":
                     from app.scoring.coverage import _QUALIFY

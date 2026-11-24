@@ -268,6 +268,58 @@ def test_a_mixed_note_keeps_the_recommendation_and_the_warning():
     assert EvidencePolarity.SUPPORTS not in {claim.polarity for claim in history_ledger[0].claims}
 
 
+def test_a_caution_qualifier_stays_low_when_the_note_recommends_another_drug():
+    from app.schemas.enums import SourceType
+
+    passage = CandidatePassage(
+        chunk_id="note",
+        doc_id="note",
+        source_type=SourceType.LIT,
+        text="Warfarin is recommended. Use apixaban with caution.",
+        calibrated_score=0.95,
+    )
+    facets = [
+        ClinicalFacet(
+            name="guideline_concordance",
+            keywords=["warfarin", "recommended", "apixaban"],
+            source_policy="LIT",
+        )
+    ]
+    ledger = build_retrieval_ledger([passage], facets)
+    polarities = {claim.polarity for claim in ledger[0].claims}
+    assert EvidencePolarity.SUPPORTS in polarities
+    assert EvidencePolarity.QUALIFIES in polarities
+    assert EvidencePolarity.CONTRADICTS not in polarities
+    grade = EvidenceGrade(score=0.95)
+    apixaban = EvidenceLedgerEntry(
+        chunk_id="cpg",
+        doc_id="cpg",
+        source_type=SourceType.CPG,
+        evidence_grade=grade,
+        text="Apixaban is recommended.",
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Apixaban is recommended.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="cpg",
+                evidence_grade=grade,
+            )
+        ],
+    )
+    pairs = detect_contradictions([*ledger, apixaban])
+    assert len(pairs) == 1
+    assert pairs[0].severity == "low"
+    assert "apixaban" in pairs[0].reason
+    warfarin = apixaban.model_copy(deep=True)
+    warfarin.chunk_id = "war"
+    warfarin.doc_id = "war"
+    warfarin.text = "Warfarin is recommended."
+    warfarin.claims[0].chunk_id = "war"
+    warfarin.claims[0].claim = "Warfarin is recommended."
+    assert detect_contradictions([*ledger, warfarin]) == []
+
+
 def test_a_warfarin_warning_does_not_conflict_with_the_apixaban_sentence():
     from app.schemas.enums import SourceType
 
