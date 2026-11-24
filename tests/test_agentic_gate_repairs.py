@@ -149,6 +149,36 @@ def test_monitoring_does_not_qualify_the_same_drug():
     assert detect_contradictions(ledger) == []
 
 
+def test_a_low_caution_is_named_when_the_gate_abstains():
+    from app.medswin.abstain import insufficient_answer
+    from app.schemas.enums import PolicyAction
+    from app.schemas.evidence import PolicyDecision
+
+    decision = PolicyDecision(
+        passed=False,
+        action=PolicyAction.INSUFFICIENT_EVIDENCE,
+        reason="A caution qualifies the recommendation.",
+        contradictions=[
+            ContradictionPair(
+                facet="guideline_concordance",
+                chunk_id_a="cpg",
+                chunk_id_b="caution",
+                severity="low",
+                reason="Same-drug caution qualifies this recommendation.",
+            )
+        ],
+    )
+    text = insufficient_answer("Which dose?", decision)
+    assert "unresolved caution" in text.lower()
+    assert "high-severity" not in text.lower()
+    clear = PolicyDecision(
+        passed=False,
+        action=PolicyAction.INSUFFICIENT_EVIDENCE,
+        reason="Missing evidence.",
+    )
+    assert "unresolved caution" not in insufficient_answer("Which dose?", clear).lower()
+
+
 def test_same_drug_caution_qualifies_the_recommendation():
     support = _entry(
         "cpg-apixaban",

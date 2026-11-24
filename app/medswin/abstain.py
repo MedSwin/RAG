@@ -65,6 +65,11 @@ def insufficient_answer(
             " Unresolved high-severity contradictions were detected between evidence sources; "
             "these are preserved for clinician review rather than averaged away."
         )
+    if any(item.severity != "high" for item in decision.contradictions if not item.resolved):
+        conflict += (
+            " An unresolved caution qualifies this recommendation. "
+            "Review the paired evidence before a therapy change."
+        )
     body = (
         f"The available evidence is insufficient to provide a grounded clinician decision-support "
         f"answer for the query: {redact_phi_text(query)}. "
