@@ -35,6 +35,7 @@ ir-datasets==0.5.9
 
 # HTTP and networking
 httpx==0.28.1
+boto3==1.40.46
 requests==2.32.5
 aiohttp==3.12.15
 tenacity==9.0.0

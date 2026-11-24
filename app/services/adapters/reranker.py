@@ -43,13 +43,23 @@ class RerankerClient:
         api_key: Optional[str] = None,
         provider: Optional[str] = None,
     ):
-        if settings.CLOUD_MODE:
+        if settings.CLOUD_MODE and settings.cloud_provider() == "bedrock" and provider in {None, "bedrock"}:
+            self.base_url = f"bedrock://{settings.AWS_BEDROCK_RERANK_REGION}"
+            self.model = model or settings.BEDROCK_RERANK_MODEL
+            self.api_key = None
+            self.provider = "bedrock"
+        elif settings.CLOUD_MODE and provider in {None, "cohere"}:
             base_url = settings.cloud_reranker_url() or base_url
-        self.base_url = base_url
+            self.base_url = base_url
+            self.model = model or settings.CLOUD_RERANKER
+            self.api_key = api_key or settings.AZURE_AI_FOUNDRY_API_KEY
+            self.provider = provider or "cohere"
+        else:
+            self.base_url = base_url
+            self.model = model or "default"
+            self.api_key = api_key
+            self.provider = provider or "default"
         self.timeout = timeout or settings.RERANK_TIMEOUT_S
-        self.model = model or (settings.CLOUD_RERANKER if settings.CLOUD_MODE else "default")
-        self.api_key = api_key or (settings.AZURE_AI_FOUNDRY_API_KEY if settings.CLOUD_MODE else None)
-        self.provider = provider or ("cohere" if settings.CLOUD_MODE else "default")
         self.client = httpx.AsyncClient(timeout=self.timeout)
         self.rate_limit_key = f"reranker:{self.base_url}:{self.model}"
 
@@ -63,6 +73,8 @@ class RerankerClient:
         """Rerank passages for a query."""
         if not passages:
             return []
+        if self.provider == "bedrock":
+            return await self._rerank_bedrock(query, passages)
 
         if self.provider == "cohere":
             payload = {
@@ -142,6 +154,17 @@ class RerankerClient:
         except Exception as exc:
             logger.error("Unexpected error in reranker call: %s", exc)
             raise
+
+    async def _rerank_bedrock(self, query: str, passages: List[str]) -> List[Dict[str, Any]]:
+        import asyncio
+
+        from app.services.adapters.bedrock import BedrockRuntime, parse_rerank_response, rerank_request
+
+        body = rerank_request(query, passages)
+        runtime = getattr(self, "bedrock_runtime", None) or BedrockRuntime(settings.AWS_BEDROCK_RERANK_REGION)
+        loop = asyncio.get_running_loop()
+        payload = await loop.run_in_executor(None, lambda: runtime.invoke_model(self.model, body))
+        return parse_rerank_response(payload, len(passages))
 
     async def close(self):
         """Close the HTTP client."""

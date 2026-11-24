@@ -37,8 +37,16 @@ class Settings(BaseSettings):
     RERANKER_URL: str = "http://localhost:8004/rerank"
     EMBEDDING_URL: str = "http://localhost:8005/embeddings"
 
-    # Cloud mode with Azure AI Foundry
+    # Cloud mode. Bedrock is the cloud plane. Foundry remains available when
+    # CLOUD_PROVIDER=foundry.
     CLOUD_MODE: bool = False
+    CLOUD_PROVIDER: str = "bedrock"
+    AWS_BEDROCK_REGION: str = "ap-southeast-2"
+    AWS_BEDROCK_RERANK_REGION: str = "us-east-1"
+    BEDROCK_CHAT_MODEL: str = "global.openai.gpt-6-luna"
+    BEDROCK_EMBED_MODEL: str = "global.cohere.embed-v4:0"
+    BEDROCK_EMBED_DIMENSION: int = 1536
+    BEDROCK_RERANK_MODEL: str = "cohere.rerank-v3-5:0"
     FOUNDRY_MODEL: str = "gpt-5.4"
     CLOUD_MODEL: str = "gpt-5.4"  # Backward-compatible alias
     CLOUD_EMBEDDING: str = "embed-v-4-0"
@@ -84,7 +92,7 @@ class Settings(BaseSettings):
     # Legacy model settings (for backward compatibility)
     EMBEDDING_MODEL_PATH: str = "./models/MedEmbed-large-v0.1"
     RERANKER_MODEL_PATH: str = "./models/bge-reranker-v2-m3"
-    EMBEDDING_DIMENSION: int = 768
+    EMBEDDING_DIMENSION: int = 1024
     MAX_SEQUENCE_LENGTH: int = 512
 
     # Storage settings
@@ -223,6 +231,49 @@ class Settings(BaseSettings):
             return False
         return True
 
+    def cloud_provider(self) -> str:
+        """Return ``bedrock`` or ``foundry``."""
+        value = (self.CLOUD_PROVIDER or "bedrock").strip().lower()
+        aliases = {
+            "aws": "bedrock",
+            "bedrock": "bedrock",
+            "azure": "foundry",
+            "foundry": "foundry",
+        }
+        resolved = aliases.get(value)
+        if resolved is None:
+            raise ValueError(f"Unsupported CLOUD_PROVIDER={value}")
+        return resolved
+
+    def resolved_generation_backend(self) -> str:
+        """Return the generator the process will call.
+
+        ``GENERATION_BACKEND=foundry`` follows ``CLOUD_PROVIDER``. A Bedrock
+        deployment therefore does not keep posting to Azure under the old name.
+        The local MedSwin server stays local.
+        """
+        value = (os.getenv("GENERATION_BACKEND") or self.GENERATION_BACKEND or "").strip().lower()
+        aliases = {
+            "medswin": "medswin_local",
+            "local": "medswin_local",
+            "local_medswin": "medswin_local",
+            "azure": "foundry",
+            "cloud": "foundry",
+            "aws": "bedrock",
+            "bedrock": "bedrock",
+        }
+        if value:
+            resolved = aliases.get(value, value)
+        elif self.CLOUD_MODE and self.cloud_provider() == "bedrock":
+            resolved = "bedrock"
+        elif self.CLOUD_MODE:
+            resolved = "foundry"
+        else:
+            resolved = "local_http"
+        if resolved == "foundry" and self.cloud_provider() == "bedrock":
+            return "bedrock"
+        return resolved
+
     def cloud_account_base_url(self) -> str:
         """Return the Azure AI Foundry account root without API-specific suffixes."""
         endpoint = (self.AZURE_AI_FOUNDRY_ENDPOINT or "").strip().rstrip("/")
@@ -262,7 +313,12 @@ class Settings(BaseSettings):
         return f"{base}/providers/cohere/v2/rerank" if base else ""
 
     def active_generation_model(self) -> str:
-        if self.CLOUD_MODE:
+        backend = self.resolved_generation_backend()
+        if backend == "medswin_local":
+            return (self.MEDSWIN_LLM_MODEL or "").strip()
+        if backend == "bedrock":
+            return (self.BEDROCK_CHAT_MODEL or "").strip()
+        if backend == "foundry" or self.CLOUD_MODE:
             return (self.FOUNDRY_MODEL or self.CLOUD_MODEL).strip()
         return "default"
 
@@ -276,6 +332,8 @@ class Settings(BaseSettings):
         return self.cloud_reranker_url() if self.CLOUD_MODE else self.RERANKER_URL
 
     def active_embedding_model(self) -> str:
+        if self.CLOUD_MODE and self.cloud_provider() == "bedrock":
+            return self.BEDROCK_EMBED_MODEL
         return self.CLOUD_EMBEDDING if self.CLOUD_MODE else self.EMBEDDING_MODEL_PATH
 
     def active_embedding_space(self) -> str:
@@ -283,12 +341,25 @@ class Settings(BaseSettings):
         return f"{mode}:{self.active_embedding_model()}"
 
     def active_embedding_dimension(self) -> int:
+        if self.CLOUD_MODE and self.cloud_provider() == "bedrock":
+            return self.BEDROCK_EMBED_DIMENSION
         if self.CLOUD_MODE:
             if self.CLOUD_EMBEDDING_DIMENSION:
                 return self.CLOUD_EMBEDDING_DIMENSION
-            known_cloud_dims = {"embed-v-4-0": 1536}
+            known_cloud_dims = {
+                "embed-v-4-0": 1536,
+                "global.cohere.embed-v4:0": 1536,
+                "cohere.embed-v4:0": 1536,
+            }
             return known_cloud_dims.get(self.CLOUD_EMBEDDING, self.EMBEDDING_DIMENSION)
         return self.EMBEDDING_DIMENSION
+
+    def active_reranker_model(self) -> str:
+        if self.CLOUD_MODE and self.cloud_provider() == "bedrock":
+            return self.BEDROCK_RERANK_MODEL
+        if self.CLOUD_MODE:
+            return self.CLOUD_RERANKER
+        return self.RERANKER_MODEL_PATH
 
 
 def _path_is_under_app_root(path_value: str) -> bool:

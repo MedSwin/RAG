@@ -46,6 +46,8 @@ def _active_generation_identity() -> tuple[str, str]:
     backend = _generation_backend()
     if backend == "medswin_local":
         return backend, os.getenv("MEDSWIN_LLM_MODEL") or settings.MEDSWIN_LLM_MODEL
+    if backend == "bedrock":
+        return backend, os.getenv("BEDROCK_CHAT_MODEL") or settings.BEDROCK_CHAT_MODEL
     if backend == "foundry":
         return backend, os.getenv("FOUNDRY_MODEL") or settings.FOUNDRY_MODEL or settings.CLOUD_MODEL
     return backend, "default"
@@ -58,6 +60,26 @@ def _validate_cloud_configuration() -> None:
     quota. ``system-eval`` performs the stronger live profile probes.
     """
     if not settings.CLOUD_MODE:
+        return
+    if settings.cloud_provider() == "bedrock":
+        missing = []
+        if not str(settings.AWS_BEDROCK_REGION or "").strip():
+            missing.append("AWS_BEDROCK_REGION")
+        if not str(settings.AWS_BEDROCK_RERANK_REGION or "").strip():
+            missing.append("AWS_BEDROCK_RERANK_REGION")
+        if not str(settings.BEDROCK_EMBED_MODEL or "").strip():
+            missing.append("BEDROCK_EMBED_MODEL")
+        if not str(settings.BEDROCK_RERANK_MODEL or "").strip():
+            missing.append("BEDROCK_RERANK_MODEL")
+        if settings.BEDROCK_EMBED_DIMENSION not in {256, 512, 1024, 1536}:
+            raise RuntimeError("BEDROCK_EMBED_DIMENSION must be 256, 512, 1024, or 1536")
+        backend, model = _active_generation_identity()
+        if backend == "bedrock" and not str(model or "").strip():
+            missing.append("BEDROCK_CHAT_MODEL")
+        if missing:
+            raise RuntimeError(
+                "Cloud mode is missing required configuration: " + ", ".join(sorted(set(missing)))
+            )
         return
     missing = []
     if not str(settings.AZURE_AI_FOUNDRY_API_KEY or "").strip():

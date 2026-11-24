@@ -187,7 +187,85 @@ def warm_trec(dataset_name: str, force: bool) -> dict[str, Any]:
 
 
 async def warm_foundry() -> dict[str, Any]:
-    """Probe the exact requested Foundry services through production adapters."""
+    """Probe the active cloud plane through the production adapters."""
+    from app.core.config import settings
+
+    if settings.cloud_provider() == "bedrock":
+        return await warm_bedrock()
+    return await _warm_foundry_azure()
+
+
+async def warm_bedrock() -> dict[str, Any]:
+    """Probe GPT-6 Luna, Cohere Embed v4, and Cohere Rerank 3.5 on Bedrock."""
+    from app.core.config import settings
+    from app.services.adapters.embedding import EmbeddingClient
+    from app.services.adapters.llm import LLMClient
+    from app.services.adapters.reranker import RerankerClient
+
+    chat_model = settings.BEDROCK_CHAT_MODEL
+    embed_model = settings.BEDROCK_EMBED_MODEL
+    rerank_model = settings.BEDROCK_RERANK_MODEL
+    if chat_model != "global.openai.gpt-6-luna":
+        raise RuntimeError(f"Expected BEDROCK_CHAT_MODEL=global.openai.gpt-6-luna; got {chat_model}")
+    if embed_model != "global.cohere.embed-v4:0":
+        raise RuntimeError(f"Expected BEDROCK_EMBED_MODEL=global.cohere.embed-v4:0; got {embed_model}")
+    if rerank_model != "cohere.rerank-v3-5:0":
+        raise RuntimeError(f"Expected BEDROCK_RERANK_MODEL=cohere.rerank-v3-5:0; got {rerank_model}")
+
+    embedding = EmbeddingClient(settings.active_embedding_url())
+    reranker = RerankerClient(settings.active_reranker_url())
+    previous_backend = os.environ.get("GENERATION_BACKEND")
+    os.environ["GENERATION_BACKEND"] = "bedrock"
+    llm = LLMClient(settings.active_llm_url("http://127.0.0.1:8000/v1/chat/completions"))
+    marker = "MEDSWIN_BEDROCK_OK"
+    try:
+        query_vec = (await embedding.embed(["aspirin myocardial infarction"], input_type="query"))[0]
+        doc_vec = (await embedding.embed(["Aspirin reduces platelet aggregation."], input_type="document"))[0]
+        expected_dim = settings.active_embedding_dimension()
+        if len(query_vec) != expected_dim or len(doc_vec) != expected_dim:
+            raise RuntimeError(
+                f"Embedding dimension mismatch: query={len(query_vec)} document={len(doc_vec)} expected={expected_dim}"
+            )
+        ranks = await reranker.rerank(
+            "aspirin antiplatelet therapy",
+            ["Aspirin inhibits platelet aggregation.", "The moon orbits Earth."],
+        )
+        if int(ranks[0].get("index", -1)) != 0:
+            raise RuntimeError("Bedrock reranker did not rank the relevant passage first")
+        completion = await llm.call_llm(
+            [{"role": "user", "content": f"Reply with exactly: {marker}"}],
+            max_tokens=16,
+            temperature=0.0,
+        )
+        completion_text = str(completion.get("content") or "").strip()
+        if completion_text != marker:
+            raise RuntimeError(f"Bedrock probe returned {completion_text!r}; expected {marker!r}")
+    finally:
+        await embedding.close()
+        await reranker.close()
+        await llm.close()
+        if previous_backend is None:
+            os.environ.pop("GENERATION_BACKEND", None)
+        else:
+            os.environ["GENERATION_BACKEND"] = previous_backend
+
+    payload = {
+        "provider": "bedrock",
+        "region": settings.AWS_BEDROCK_REGION,
+        "chat_model": chat_model,
+        "embedding_model": embed_model,
+        "embedding_dimension": expected_dim,
+        "reranker_model": rerank_model,
+        "probe_marker": marker,
+        "complete": True,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_json(MANIFEST_DIR / "bedrock-services.json", payload)
+    print(f"[warmup] Bedrock verified: LLM={chat_model}, embed={embed_model}/{expected_dim}, rerank={rerank_model}")
+    return payload
+
+
+async def _warm_foundry_azure() -> dict[str, Any]:
     from app.core.config import settings
     from app.services.adapters.embedding import EmbeddingClient
     from app.services.adapters.llm import LLMClient

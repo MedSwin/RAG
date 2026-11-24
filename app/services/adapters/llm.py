@@ -1,5 +1,6 @@
-"""LLM client adapter with Foundry/local-MedSwin generation profiles."""
+"""LLM client adapter for Bedrock, Foundry, and the local MedSwin server."""
 
+import asyncio
 import httpx
 import logging
 import os
@@ -18,17 +19,7 @@ def _generation_backend() -> str:
     # Process-level override is intentional: the strict matrix swaps generator
     # profiles between API subprocesses while using the same cloud retrieval
     # configuration. Direct uvicorn/.env launches use the first-class setting.
-    value = (os.getenv("GENERATION_BACKEND") or settings.GENERATION_BACKEND or "").strip().lower()
-    if value:
-        aliases = {
-            "medswin": "medswin_local",
-            "local": "medswin_local",
-            "local_medswin": "medswin_local",
-            "azure": "foundry",
-            "cloud": "foundry",
-        }
-        return aliases.get(value, value)
-    return "foundry" if settings.CLOUD_MODE else "local_http"
+    return settings.resolved_generation_backend()
 
 
 def _default_max_tokens() -> Optional[int]:
@@ -53,8 +44,8 @@ class LLMClient:
     """Client for OpenAI-compatible LLM endpoints.
 
     Retrieval can remain in CLOUD_MODE while generation is switched between the
-    local MedSwin 7B server and GPT-5.4 in Azure Foundry. This decoupling is
-    required for a fair generator ablation on the same corpus/index.
+    local MedSwin 7B server and the cloud model. The cloud model is GPT-6 Luna
+    on Bedrock, or the Foundry deployment when CLOUD_PROVIDER=foundry.
     """
 
     def __init__(
@@ -68,6 +59,10 @@ class LLMClient:
         if self.backend == "medswin_local":
             base_url = os.getenv("MEDSWIN_LLM_URL") or settings.MEDSWIN_LLM_URL
             model = os.getenv("MEDSWIN_LLM_MODEL") or settings.MEDSWIN_LLM_MODEL or MEDSWIN_MODEL_ID
+            api_key = None
+        elif self.backend == "bedrock":
+            base_url = f"bedrock://{settings.AWS_BEDROCK_REGION}"
+            model = os.getenv("BEDROCK_CHAT_MODEL") or settings.BEDROCK_CHAT_MODEL or model
             api_key = None
         elif self.backend == "foundry":
             model = os.getenv("FOUNDRY_MODEL") or settings.active_generation_model() or model
@@ -104,6 +99,13 @@ class LLMClient:
         if json_schema:
             system_msg = {"role": "system", "content": schema_instruction(json_schema)}
             payload["messages"] = [system_msg] + messages
+
+        if self.backend == "bedrock":
+            return await self._call_bedrock(
+                payload["messages"],
+                max_tokens=effective_max_tokens,
+                temperature=temperature,
+            )
 
         headers = {}
         if self.api_key:
@@ -150,6 +152,28 @@ class LLMClient:
         except Exception as exc:
             logger.error("Unexpected error in LLM call: %s", exc)
             raise
+
+    async def _call_bedrock(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: Optional[int],
+        temperature: float,
+    ) -> Dict[str, Any]:
+        from app.services.adapters.bedrock import BedrockRuntime, converse_request, parse_converse_response
+
+        request = converse_request(
+            messages,
+            max_tokens=max_tokens,
+            temperature=None if "gpt-6" in (self.model or "") else temperature,
+        )
+        runtime = getattr(self, "bedrock_runtime", None) or BedrockRuntime(settings.AWS_BEDROCK_REGION)
+        loop = asyncio.get_running_loop()
+        try:
+            payload = await loop.run_in_executor(None, lambda: runtime.converse(self.model, request))
+        except Exception as exc:
+            logger.error("Bedrock Converse failed: %s", type(exc).__name__)
+            raise
+        return parse_converse_response(payload)
 
     async def close(self):
         await self.client.aclose()

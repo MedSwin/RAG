@@ -186,9 +186,9 @@ async def pipelines_ready():
         "pipelines": [item.value for item in PipelineId],
         "cloud_mode": settings.CLOUD_MODE,
         "embedding_model": settings.active_embedding_model(),
-        "reranker_model": settings.CLOUD_RERANKER if settings.CLOUD_MODE else None,
-        "generation_backend": os.getenv("GENERATION_BACKEND") or settings.GENERATION_BACKEND,
-        "generation_model": settings.active_generation_model() if (os.getenv("GENERATION_BACKEND") or settings.GENERATION_BACKEND) != "medswin_local" else settings.MEDSWIN_LLM_MODEL,
+        "reranker_model": settings.active_reranker_model() if settings.CLOUD_MODE else None,
+        "generation_backend": settings.resolved_generation_backend(),
+        "generation_model": settings.active_generation_model(),
         "system_eval_mode": settings.SYSTEM_EVAL_MODE,
     }
 

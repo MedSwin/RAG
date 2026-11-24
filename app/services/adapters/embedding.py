@@ -86,13 +86,23 @@ class EmbeddingClient:
         model: Optional[str] = None,
         api_key: Optional[str] = None,
     ):
-        if settings.CLOUD_MODE:
+        if settings.CLOUD_MODE and settings.cloud_provider() == "bedrock":
+            self.base_url = f"bedrock://{settings.AWS_BEDROCK_REGION}"
+            self.model = model or settings.BEDROCK_EMBED_MODEL
+            self.api_key = None
+            self.protocol = "bedrock"
+        elif settings.CLOUD_MODE:
             base_url = settings.cloud_embedding_url() or base_url
-        self.base_url = base_url
+            self.base_url = base_url
+            self.model = model or settings.CLOUD_EMBEDDING
+            self.api_key = api_key or settings.AZURE_AI_FOUNDRY_API_KEY
+            self.protocol = _embedding_protocol(self.base_url)
+        else:
+            self.base_url = base_url
+            self.model = model or "default"
+            self.api_key = api_key
+            self.protocol = "local"
         self.timeout = timeout or settings.EMBED_TIMEOUT_S
-        self.model = model or (settings.CLOUD_EMBEDDING if settings.CLOUD_MODE else "default")
-        self.api_key = api_key or (settings.AZURE_AI_FOUNDRY_API_KEY if settings.CLOUD_MODE else None)
-        self.protocol = _embedding_protocol(self.base_url) if settings.CLOUD_MODE else "local"
         self.client = httpx.AsyncClient(timeout=self.timeout)
         self.rate_limit_key = f"embedding:{self.protocol}:{self.base_url}:{self.model}"
 
@@ -140,6 +150,8 @@ class EmbeddingClient:
         """
         if not texts:
             return []
+        if self.protocol == "bedrock":
+            return await self._embed_bedrock(texts, input_type)
         if settings.CLOUD_MODE and input_type is None:
             configured_default = (settings.CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE or "").strip().lower()
             input_type = configured_default or "query"
@@ -195,12 +207,38 @@ class EmbeddingClient:
             logger.error("Embedding request failed: %s", exc)
             raise
 
+    async def _embed_bedrock(self, texts: List[str], input_type: Optional[str]) -> List[np.ndarray]:
+        from app.services.adapters.bedrock import (
+            MAX_EMBED_BATCH,
+            BedrockRuntime,
+            embed_request,
+            parse_embed_response,
+        )
+
+        intent = input_type or (settings.CLOUD_EMBEDDING_DEFAULT_INPUT_TYPE or "").strip().lower() or "query"
+        if intent == "text":
+            raise ValueError("Bedrock Cohere embed does not accept input_type=text")
+        dimension = settings.active_embedding_dimension()
+        runtime = getattr(self, "bedrock_runtime", None) or BedrockRuntime(settings.AWS_BEDROCK_REGION)
+        loop = asyncio.get_running_loop()
+        vectors: List[np.ndarray] = []
+        for start in range(0, len(texts), MAX_EMBED_BATCH):
+            batch = texts[start : start + MAX_EMBED_BATCH]
+            body = embed_request(batch, intent, dimension)
+
+            def _invoke(body=body):
+                return runtime.invoke_model(self.model, body)
+
+            payload = await loop.run_in_executor(None, _invoke)
+            rows = parse_embed_response(payload, len(batch), dimension)
+            vectors.extend(np.array(row, dtype=np.float32) for row in rows)
+        return vectors
+
     async def _local_embed(self, texts: List[str]) -> Optional[List[np.ndarray]]:
         """Use the process-local embedding model when the HTTP endpoint is down."""
         try:
             from app.core.state import get_model_manager
             import torch
-            import torch.nn.functional as F
 
             tokenizer, embed_model, device, _dim = get_model_manager().get_embedding_model()
         except Exception as exc:  # noqa: BLE001
@@ -220,9 +258,7 @@ class EmbeddingClient:
             inputs = {key: value.to(device) for key, value in inputs.items()}
             with torch.no_grad():
                 outputs = embed_model(**inputs)
-                mask = inputs["attention_mask"]
-                pooled = _mean_pool(outputs.last_hidden_state, mask)
-                pooled = F.normalize(pooled, p=2, dim=1)
+                pooled = _cls_pool(outputs.last_hidden_state)
             return [row.astype(np.float32) for row in pooled.cpu().numpy()]
 
         return await loop.run_in_executor(None, _encode)
@@ -252,8 +288,7 @@ def _parse_embedding_response(data) -> List[np.ndarray]:
     return embeddings
 
 
-def _mean_pool(token_embeddings, attention_mask):
-    import torch
+def _cls_pool(token_embeddings, attention_mask=None):
+    from app.models.pooling import cls_pool
 
-    expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    return torch.sum(token_embeddings * expanded, 1) / torch.clamp(expanded.sum(1), min=1e-9)
+    return cls_pool(token_embeddings, attention_mask)

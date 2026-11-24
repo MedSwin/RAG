@@ -29,8 +29,10 @@ class FakeResponse:
 
 
 @pytest.mark.asyncio
-async def test_llm_client_injects_schema_once_and_uses_cloud_headers():
+async def test_llm_client_injects_schema_once_and_uses_cloud_headers(monkeypatch):
     seen = {}
+    monkeypatch.setattr(settings, "CLOUD_PROVIDER", "foundry")
+    monkeypatch.setenv("GENERATION_BACKEND", "foundry")
     client = LLMClient("https://example.test/openai/v1/chat/completions", model="gpt-5.4", api_key="key")
 
     async def fake_post(url, json, headers):
@@ -85,6 +87,7 @@ async def test_cloud_embedding_payload_uses_deployment_model_and_api_key(monkeyp
 async def test_foundry_embedding_payload_preserves_document_intent(monkeypatch):
     seen = {}
     monkeypatch.setattr(settings, "CLOUD_MODE", True)
+    monkeypatch.setattr(settings, "CLOUD_PROVIDER", "foundry")
     monkeypatch.setattr(settings, "CLOUD_EMBEDDING", "embed-v-4-0")
     monkeypatch.setattr(settings, "CLOUD_EMBEDDING_DIMENSION", 3)
     monkeypatch.setattr(settings, "CLOUD_EMBEDDING_URI", "https://example.test/models/embeddings?api-version=2024-05-01-preview")
@@ -183,6 +186,7 @@ def test_settings_accept_azure_and_cloud_defaults_without_env_file(monkeypatch):
     # Ignore process/.env cloud profile so this asserts constructor defaults only.
     for key in (
         "CLOUD_MODE",
+        "CLOUD_PROVIDER",
         "CLOUD_MODEL",
         "FOUNDRY_MODEL",
         "CLOUD_EMBEDDING",
@@ -201,15 +205,26 @@ def test_settings_accept_azure_and_cloud_defaults_without_env_file(monkeypatch):
     )
 
     assert config.CLOUD_MODE is False
+    assert config.CLOUD_PROVIDER == "bedrock"
+    assert config.BEDROCK_CHAT_MODEL == "global.openai.gpt-6-luna"
+    assert config.BEDROCK_EMBED_MODEL == "global.cohere.embed-v4:0"
+    assert config.BEDROCK_RERANK_MODEL == "cohere.rerank-v3-5:0"
     assert config.CLOUD_MODEL == "gpt-5.4"
     assert config.CLOUD_EMBEDDING == "embed-v-4-0"
-    assert config.cloud_chat_url() == "https://example.services.ai.azure.com/openai/v1/chat/completions"
-    assert config.cloud_embedding_url().startswith("https://example.services.ai.azure.com/models/embeddings")
-    assert config.cloud_reranker_url() == "https://example.services.ai.azure.com/providers/cohere/v2/rerank"
+    foundry = Settings(
+        _env_file=None,
+        CLOUD_PROVIDER="foundry",
+        AZURE_AI_FOUNDRY_ENDPOINT="https://example.services.ai.azure.com",
+        AZURE_AI_FOUNDRY_API_KEY="secret",
+    )
+    assert foundry.cloud_chat_url() == "https://example.services.ai.azure.com/openai/v1/chat/completions"
+    assert foundry.cloud_embedding_url().startswith("https://example.services.ai.azure.com/models/embeddings")
+    assert foundry.cloud_reranker_url() == "https://example.services.ai.azure.com/providers/cohere/v2/rerank"
 
 
 def test_storage_filters_stale_cloud_embedding_space(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_MODE", True)
+    monkeypatch.setattr(settings, "CLOUD_PROVIDER", "foundry")
     monkeypatch.setattr(settings, "CLOUD_EMBEDDING", "embed-v-4-0")
     monkeypatch.setattr(settings, "CLOUD_EMBEDDING_DIMENSION", 1536)
 
