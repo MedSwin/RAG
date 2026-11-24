@@ -1025,6 +1025,46 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
     assert "warfarin" in kept_dose[0].reason
     assert pairs_for("Hold apixaban.", "Warfarin is recommended.") == []
     assert pairs_for("Do not hold warfarin.", "Warfarin is recommended.") == []
+    for note in (
+        "Warfarin should be held.",
+        "Warfarin should be discontinued.",
+        "Warfarin should be stopped.",
+        "The morning dose of warfarin should be held.",
+        "Hold the patient's morning dose of warfarin.",
+        "Please hold the morning dose of warfarin.",
+    ):
+        pairs = pairs_for(note, "Warfarin is recommended.")
+        assert len(pairs) == 1, note
+        assert pairs[0].severity == "high"
+        assert "warfarin" in pairs[0].reason
+        chart = chart_contradictions(
+            note,
+            build_retrieval_ledger([passage("other", "Start warfarin.")], facets),
+        )
+        assert len(chart) == 1, note
+        assert "warfarin" in chart[0].reason
+    mixed = "Hold aspirin and start warfarin."
+    assert pairs_for(mixed, "Warfarin is recommended.") == []
+    aspirin = pairs_for(mixed, "Aspirin is recommended.")
+    assert len(aspirin) == 1
+    assert aspirin[0].severity == "high"
+    assert "aspirin" in aspirin[0].reason
+    assert "warfarin" not in aspirin[0].reason
+    ordered = pairs_for(mixed, "Avoid warfarin.")
+    assert len(ordered) == 1
+    assert "warfarin" in ordered[0].reason
+    assert pairs_for(mixed, "Avoid aspirin.") == []
+    chart_mixed = chart_contradictions(
+        mixed,
+        build_retrieval_ledger([passage("other", "Warfarin is recommended.")], facets),
+    )
+    assert chart_mixed == []
+    chart_order = chart_contradictions(
+        mixed,
+        build_retrieval_ledger([passage("other", "Avoid warfarin.", SourceType.SAFETY)], facets),
+    )
+    assert len(chart_order) == 1
+    assert "warfarin" in chart_order[0].reason
     assert pairs_for("Sensitive to warfarin.", "Warfarin is recommended.") == []
     assert pairs_for("Increased bleeding on warfarin.", "Warfarin is recommended.") == []
 

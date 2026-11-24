@@ -218,7 +218,7 @@ _NAMED_SAFETY = re.compile(
     re.I,
 )
 _STOP_ORDER = re.compile(
-    r"\b(?:stop|withhold|hold|discontinue|cease|suspend)\b",
+    r"\b(?:stop(?:ped)?|withh(?:old|eld)|hold|held|discontinue[d]?|cease[d]?|suspend(?:ed)?)\b",
     re.I,
 )
 _SAFETY_LIST = re.compile(r"^\s+list\b", re.I)
@@ -279,7 +279,7 @@ def _named_safety_caution(text: str) -> bool:
             if begin <= match.start() < begin + len(words[index]):
                 anchor = index
                 break
-        near = words[max(0, anchor - 4): min(len(words), anchor + 6)]
+        near = words[max(0, anchor - 4): min(len(words), anchor + 9)]
         if any(_token_names_drug(word) for word in near):
             return True
     return False

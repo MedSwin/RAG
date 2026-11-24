@@ -541,6 +541,8 @@ def named_caution_text(text: str) -> str:
                 span = order or recommendation
             elif order and disjoint:
                 span = clause
+            elif clause_drugs and _ungoverned_caution(clause) and not recommendation_drugs:
+                span = clause
             else:
                 span = LexicalRetriever._caution_span(sentence).strip()
             if span:
@@ -560,13 +562,29 @@ def _conflict_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = 
     return named_caution_text(paired)
 
 
+def _order_boundary_word(word: str) -> bool:
+    """True when this word starts an order for a later drug."""
+    token = (word or "").strip(".,;:").lower()
+    if token in {"use", "give", "continue", "continuing", "resume", "restart", "recommence"}:
+        return True
+    return bool(_RECOMMEND_VERB.fullmatch(token) or _START_VERB.fullmatch(token))
+
+
 def _caution_clause(sentence: str) -> tuple[str, str]:
     """Split one sentence into the recommendation and a caution about another drug."""
-    from app.scoring.coverage import _BENIGN_DO_NOT, _CAUTION, _LOCAL_NEGATION, _QUALIFY
+    from app.scoring.coverage import (
+        _BENIGN_DO_NOT,
+        _CAUTION,
+        _LOCAL_NEGATION,
+        _QUALIFY,
+        _STOP_ORDER,
+    )
 
     hard_matches = []
     soft_matches = []
-    for item in list(_CAUTION.finditer(sentence or "")) + list(_QUALIFY.finditer(sentence or "")):
+    for item in list(_CAUTION.finditer(sentence or "")) + list(_QUALIFY.finditer(sentence or "")) + list(
+        _STOP_ORDER.finditer(sentence or "")
+    ):
         window = sentence[max(0, item.start() - 48):item.start()]
         if _LOCAL_NEGATION.search(window):
             continue
@@ -634,6 +652,29 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
     ):
         clause_begin = after_near[0]
         clause_end = max(after_near) + 1
+    elif _STOP_ORDER.fullmatch(match.group(0) or "") and not before and after:
+        limit = min(len(words), anchor + 9)
+        split_at = None
+        for index in range(anchor + 1, limit):
+            earlier_object = any(anchor < drug_index < index for drug_index in drug_at)
+            later_drug = any(index < drug_index < limit for drug_index in drug_at)
+            if earlier_object and later_drug and _order_boundary_word(words[index]):
+                split_at = index
+                break
+        objects = [
+            drug_index
+            for drug_index in drug_at
+            if anchor < drug_index < (split_at if split_at is not None else limit)
+        ]
+        if objects:
+            clause_begin = anchor
+            clause_end = objects[-1] + 1
+        elif nearby:
+            clause_begin = min([anchor, *nearby])
+            clause_end = max([anchor, *nearby]) + 1
+        else:
+            clause_begin = anchor
+            clause_end = min(len(words), anchor + 3)
     elif hard_caution and not after and len(before) >= 2:
         nearest = before[-1]
         nearest_drugs = set(intervention_tokens(words[nearest]))
@@ -960,14 +1001,17 @@ def _chart_continuation_text(chart: str) -> str:
 def _chart_caution_text(chart: str) -> str:
     """Keep caution sentences from a chart note. A later drug sentence stays out."""
     from app.retrieval.lexical import LexicalRetriever
-    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+    from app.scoring.coverage import _QUALIFY, _STOP_ORDER, _ungoverned_caution
 
     kept = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", chart or ""):
         if not sentence.strip():
             continue
         if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
-            kept.append(LexicalRetriever._caution_span(sentence))
+            if _STOP_ORDER.search(sentence):
+                kept.append(named_caution_text(sentence))
+            else:
+                kept.append(LexicalRetriever._caution_span(sentence))
     return " ".join(kept).strip()
 
 
