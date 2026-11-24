@@ -353,6 +353,55 @@ def test_a_chart_order_to_resume_or_switch_conflicts_with_that_drug():
         assert chart_contradictions(chart, [warning, other]) == [], chart
 
 
+def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():
+    from app.medswin.cds import _chart_caution_line
+
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    other = _entry(
+        "aw",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    for chart in (
+        "Add warfarin.",
+        "Increase warfarin.",
+        "Increase the dose of warfarin.",
+        "Up-titrate warfarin.",
+        "Up titrate warfarin.",
+        "Add warfarin 5 mg daily.",
+    ):
+        pairs = chart_contradictions(chart, [warning, other])
+        assert len(pairs) == 1, chart
+        assert pairs[0].chunk_id_b == "war", chart
+        assert "apixaban" not in pairs[0].reason
+        assert _chart_caution_line(None, pairs).startswith("Chart recommendation:")
+    for chart in ("Ongoing warfarin.", "Warfarin ongoing."):
+        pairs = chart_contradictions(chart, [warning, other])
+        assert len(pairs) == 1, chart
+        assert pairs[0].chunk_id_b == "war", chart
+        assert _chart_caution_line(None, pairs).startswith("Chart continuation:")
+    switched = chart_contradictions("Add apixaban instead of warfarin.", [warning, other])
+    assert len(switched) == 1
+    assert switched[0].chunk_id_b == "aw"
+    assert "warfarin" not in switched[0].reason
+    for chart in (
+        "Add a note about warfarin.",
+        "Add warfarin to the allergy list.",
+        "Increase the INR on warfarin.",
+        "Ongoing monitoring of warfarin.",
+        "Increased bleeding on warfarin.",
+    ):
+        assert chart_contradictions(chart, [warning, other]) == [], chart
+
+
 def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning():
     warning = _entry(
         "war",

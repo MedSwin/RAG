@@ -654,6 +654,7 @@ _BE_CONTINUED = re.compile(r"\b(?:be|was|is|were|been)\s+continued\b", re.I)
 _TO_CONTINUE = re.compile(r"\bto\s+(?:be\s+)?continued?\b", re.I)
 _REMAIN_ON = re.compile(r"\b(?:remain|remains|stay|stays)\s+on\b", re.I)
 _KEEP_VERB = re.compile(r"\b(?:resume|restart|recommence|keep|maintain)\b", re.I)
+_ONGOING = re.compile(r"\bongoing\b", re.I)
 _MONITOR_NEXT = re.compile(
     r"^(?:to\s+)?(?:monitor(?:ing|ed)?|checks?|checking|observ(?:e|ing|ation)|follow-?up|surveillance|inr|labs?)\b",
     re.I,
@@ -681,6 +682,23 @@ def _content_words(text: str) -> list[str]:
         if len(content) >= 4:
             break
     return content
+
+
+def _direct_drug_object(text: str) -> bool:
+    """True when the next phrase names the drug, not a note or a lab."""
+    content = _content_words(text)
+    if not content or _MONITOR_NEXT.match(" ".join(content)):
+        return False
+    if intervention_tokens(content[0]):
+        if len(content) >= 2 and _MONITOR_NOUN.match(content[1]):
+            return False
+        return True
+    return (
+        content[0].lower() == "dose"
+        and len(content) >= 3
+        and content[1].lower() == "of"
+        and bool(intervention_tokens(content[2]))
+    )
 
 
 def _object_is_drug(text: str) -> bool:
@@ -729,6 +747,9 @@ def _is_continuation_sentence(sentence: str) -> bool:
     to_continue = _TO_CONTINUE.search(sentence or "")
     if to_continue and _subject_is_drug(sentence[: to_continue.start()]):
         return True
+    for match in _ONGOING.finditer(sentence or ""):
+        if _direct_drug_object(sentence[match.end():]) or _subject_is_drug(sentence[: match.start()]):
+            return True
     return False
 
 
@@ -746,6 +767,14 @@ _START_VERB = re.compile(
 )
 _SWITCH_TO = re.compile(r"\b(?:switch|change)\b(?:\s+\w+){0,6}\s+to\b", re.I)
 _DRUG_OF_CHOICE = re.compile(r"\b(?:drug of choice|first choice)\b", re.I)
+_DOSE_CHANGE = re.compile(
+    r"\b(?:add(?:ed|ing)?|increase[ds]?|increasing|up-?titrates?|up\s+titrates?)\b",
+    re.I,
+)
+_RECORD_NOT_ORDER = re.compile(
+    r"\b(?:allerg(?:y|ies|ic)|intolerance|adverse reaction|problem list)\b",
+    re.I,
+)
 
 
 def _rejected_drugs(text: str) -> set[str]:
@@ -774,6 +803,15 @@ def _has_recommendation_verb(text: str) -> bool:
             return True
     for match in _SWITCH_TO.finditer(text or ""):
         if _object_is_drug(text[match.end():]):
+            return True
+    for match in _DOSE_CHANGE.finditer(text or ""):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        tail = text[match.end():]
+        if _RECORD_NOT_ORDER.search(tail):
+            continue
+        if _direct_drug_object(tail):
             return True
     if _DRUG_OF_CHOICE.search(text or "") and intervention_tokens(text) and not _MONITOR_WORD.search(text or ""):
         return True
