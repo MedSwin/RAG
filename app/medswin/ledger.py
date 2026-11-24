@@ -316,10 +316,8 @@ def _supports_facet(claim: EvidenceClaim, facet: str) -> bool:
         return False
     if _contradicts_facet(claim, facet):
         return False
-    return claim.polarity in {
-        EvidencePolarity.SUPPORTS,
-        EvidencePolarity.SAFETY,
-    }
+    # A safety warning covers the safety facet. It is not a recommendation.
+    return claim.polarity == EvidencePolarity.SUPPORTS
 
 
 _DRUG_WORDS = {

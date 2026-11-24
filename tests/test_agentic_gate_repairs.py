@@ -651,6 +651,56 @@ def test_a_low_caution_is_named_when_the_gate_abstains():
     assert "qualifies apixaban" not in mixed_text.lower()
 
 
+def test_two_safety_warnings_do_not_conflict():
+    warning = _entry(
+        "warn",
+        "safety_contraindications",
+        "Avoid apixaban when bleeding is active.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    other_warning = _entry(
+        "clash",
+        "safety_contraindications",
+        "Apixaban is contraindicated in active bleeding.",
+        EvidencePolarity.CONTRADICTS,
+        grade=0.95,
+    )
+    unrelated = _entry(
+        "other",
+        "guideline_concordance",
+        "Metformin is first-line.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    assert detect_contradictions([warning, other_warning, unrelated]) == []
+
+    recommendation = _entry(
+        "apix",
+        "guideline_concordance",
+        "Apixaban is recommended.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    pairs = detect_contradictions([warning, other_warning, recommendation])
+    assert {pair.chunk_id_a for pair in pairs} == {"apix"}
+    assert {pair.chunk_id_b for pair in pairs} == {"warn", "clash"}
+    assert {pair.severity for pair in pairs} == {"high"}
+
+    same_facet = _entry(
+        "rec",
+        "safety_contraindications",
+        "Apixaban is appropriate.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    direct = detect_contradictions([same_facet, other_warning])
+    assert len(direct) == 1
+    assert direct[0].chunk_id_a == "rec"
+    assert direct[0].chunk_id_b == "clash"
+    assert direct[0].severity == "high"
+
+
 def test_a_caution_qualifier_does_not_conflict_with_an_avoid():
     qualifier = _entry(
         "qual",
