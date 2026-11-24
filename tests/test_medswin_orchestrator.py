@@ -429,4 +429,7 @@ def test_failed_request_does_not_leak_previous_ranked_evidence():
     third = asyncio.run(orchestrator.chat(query="q3", user_id="u3", org_id="org-c"))
     assert third.ranked_evidence == []
     assert third.degraded_mode.get("error") is True
+    assert third.policy_decision is not None
+    assert third.policy_decision.passed is False
+    assert third.answer_artifact.abstained is True
 

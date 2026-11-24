@@ -48,7 +48,12 @@ def missing_question_card(patient_id: str | None = None) -> Dict[str, Any]:
     }
 
 
-def cards_from_chat(response: ChatResponse) -> List[Dict[str, Any]]:
+def cards_from_chat(
+    response: ChatResponse,
+    *,
+    hook_instance: str | None = None,
+    patient_id: str | None = None,
+) -> List[Dict[str, Any]]:
     """Map one chat decision to zero or one CDS card."""
     decision = response.policy_decision
     passages = list(response.evidence_bundle.passages or [])
@@ -57,15 +62,20 @@ def cards_from_chat(response: ChatResponse) -> List[Dict[str, Any]]:
     contradictions = list(response.contradictions or [])
     unresolved = bool(decision and decision.unresolved_critical_conflicts)
     abstained = bool(response.answer_artifact and response.answer_artifact.abstained)
+    crashed = bool((response.degraded_mode or {}).get("error")) or decision is None
     accepted = bool(
         decision
+        and not crashed
         and decision.passed
         and decision.action == PolicyAction.ACCEPT
         and passages
         and not abstained
         and not unresolved
     )
-    if accepted:
+    if crashed:
+        indicator = "critical"
+        summary = "MedSwin could not complete the evidence check."
+    elif accepted:
         indicator = "info"
         summary = _clinical_summary(response.answer)
     elif unresolved:
@@ -81,15 +91,20 @@ def cards_from_chat(response: ChatResponse) -> List[Dict[str, Any]]:
         passage_ids=passage_ids,
         contradiction_count=len(contradictions),
     )
-    return [
-        {
-            "uuid": str(uuid.uuid4()),
-            "summary": summary,
-            "indicator": indicator,
-            "source": {"label": SOURCE_LABEL},
-            "detail": detail,
-        }
-    ]
+    card: Dict[str, Any] = {
+        "uuid": response.trace_id or str(uuid.uuid4()),
+        "summary": summary,
+        "indicator": indicator,
+        "source": {"label": SOURCE_LABEL},
+        "detail": detail,
+    }
+    extension = {
+        "trace_id": response.trace_id,
+        "hookInstance": hook_instance,
+        "patientId": patient_id,
+    }
+    card["extension"] = {key: value for key, value in extension.items() if value}
+    return [card]
 
 
 def feedback_documents(

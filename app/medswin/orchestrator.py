@@ -380,15 +380,24 @@ class MedSwinOrchestrator:
         except Exception as exc:  # noqa: BLE001
             logger.error("Orchestration failed: %s", exc, exc_info=True)
             degraded["error"] = True
+            failure = "The evidence check failed before a decision was recorded."
+            decision = PolicyDecision(
+                passed=False,
+                action=PolicyAction.INSUFFICIENT_EVIDENCE,
+                reason=failure,
+                missing_facets=[],
+            )
+            trace.policy_decisions.append(decision)
+            trace.final_answer = failure
             trace.completed_at = datetime.utcnow()
             trace.degraded_mode = degraded
             trace.timing_ms["total"] = round((time.perf_counter() - started) * 1000.0, 2)
             await self._persist_trace(trace, org_id, degraded)
             return ChatResponse(
-                answer="I encountered an error processing your query. Please try again or contact support.",
+                answer=failure,
                 answer_artifact=AnswerArtifact(
                     content="",
-                    rendered_text="I encountered an error processing your query. Please try again or contact support.",
+                    rendered_text=failure,
                     abstained=True,
                 ),
                 evidence_bundle=EvidenceBundle(
@@ -396,6 +405,7 @@ class MedSwinOrchestrator:
                 ),
                 trace_id=trace_id,
                 degraded_mode=degraded,
+                policy_decision=decision,
                 citations=[],
                 uncertainty_level="high",
                 pipeline=self.pipeline,

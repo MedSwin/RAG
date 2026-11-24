@@ -123,6 +123,13 @@ def _truncate_context(
     return kept or passages[:1]
 
 
+def _response_abstained(response: ChatResponse, decision) -> bool:
+    artifact = response.answer_artifact
+    if artifact is not None and artifact.abstained:
+        return True
+    return bool(decision and not decision.passed)
+
+
 def compare_responses(
     naive: ChatResponse,
     medswin: ChatResponse,
@@ -147,8 +154,8 @@ def compare_responses(
         "jaccard": (len(overlap) / len(naive_set | medswin_set)) if (naive_set or medswin_set) else 0.0,
         "naive_passage_count": len(naive_ids),
         "medswin_passage_count": len(medswin_ids),
-        "naive_always_generated": True,
-        "medswin_abstained": bool(medswin_decision and not medswin_decision.passed),
+        "naive_always_generated": not _response_abstained(naive, naive_decision),
+        "medswin_abstained": _response_abstained(medswin, medswin_decision) or medswin_decision is None,
         "medswin_policy_action": medswin_decision.action.value if medswin_decision else None,
         "naive_policy_action": naive_decision.action.value if naive_decision else None,
         "naive_backend": naive.retrieval_backend,

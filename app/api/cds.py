@@ -121,13 +121,14 @@ async def cds_service(
     question = " ".join((body.context.question or str(extra.get("clinicalQuestion") or "")).split())
     if not question:
         return {"cards": [missing_question_card(fhir_id(body.context.patientId or "") or None)]}
+    patient_id = fhir_id(body.context.patientId or "") or None
     response = await chat(
         question=question,
         user_id=user_id,
         org_id=org_id,
-        patient_id=fhir_id(body.context.patientId or "") or None,
+        patient_id=patient_id,
     )
-    return {"cards": cards_from_chat(response)}
+    return {"cards": cards_from_chat(response, hook_instance=body.hookInstance, patient_id=patient_id)}
 
 
 @router.post("/cds-services/{service_id}/feedback")

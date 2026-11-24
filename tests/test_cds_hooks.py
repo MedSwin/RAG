@@ -126,6 +126,25 @@ def test_accepted_decision_returns_an_info_card():
     assert "Clinician decision support only" in card["detail"]
 
 
+def test_a_crashed_check_returns_a_critical_card():
+    response = _response(accepted=False).model_copy(
+        update={
+            "policy_decision": None,
+            "degraded_mode": {"error": True},
+            "trace_id": "trace-crash",
+        }
+    )
+    card = cards_from_chat(response, hook_instance="hook-9", patient_id="pt-1")[0]
+    assert card["indicator"] == "critical"
+    assert card["uuid"] == "trace-crash"
+    assert card["summary"] == "MedSwin could not complete the evidence check."
+    assert card["extension"] == {
+        "trace_id": "trace-crash",
+        "hookInstance": "hook-9",
+        "patientId": "pt-1",
+    }
+
+
 def test_insufficient_decision_returns_a_warning_card():
     cards = cards_from_chat(_response(accepted=False))
     assert cards[0]["indicator"] == "warning"
