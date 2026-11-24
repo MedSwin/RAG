@@ -214,7 +214,11 @@ _BENIGN_DO_NOT = re.compile(
 )
 _QUALIFY = re.compile(r"\b(?:unless|except|cautions?|precautions?|monitor)\b", re.I)
 _NAMED_SAFETY = re.compile(
-    r"\b(?:allerg(?:y|ic|ies)|anaphylaxis|anaphylactic|hypersensitivity|adverse|toxicity|interactions?|interacts?|intoleran(?:t|ce))\b",
+    r"\b(?:allerg(?:y|ic|ies)|anaphylaxis|anaphylactic|hypersensitivity|adverse|toxicity|interactions?|interacts?|intoleran(?:t|ce)|reactions?|cross-?reactivit(?:y|ies))\b",
+    re.I,
+)
+_STOP_ORDER = re.compile(
+    r"\b(?:stop|withhold|hold|discontinue|cease|suspend)\b",
     re.I,
 )
 _SAFETY_LIST = re.compile(r"^\s+list\b", re.I)
@@ -257,6 +261,18 @@ def _named_safety_caution(text: str) -> bool:
         if _LOCAL_NEGATION.search(window):
             continue
         if _SAFETY_LIST.match(raw[match.end():]):
+            continue
+        anchor = 0
+        for index, begin in enumerate(spans):
+            if begin <= match.start() < begin + len(words[index]):
+                anchor = index
+                break
+        near = words[max(0, anchor - 4): min(len(words), anchor + 5)]
+        if any(_token_names_drug(word) for word in near):
+            return True
+    for match in _STOP_ORDER.finditer(raw):
+        window = raw[max(0, match.start() - 48):match.start()]
+        if _LOCAL_NEGATION.search(window):
             continue
         anchor = 0
         for index, begin in enumerate(spans):
