@@ -90,6 +90,36 @@ def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
     assert different == []
 
 
+def test_same_drug_caution_qualifies_the_recommendation():
+    support = _entry(
+        "cpg-apixaban",
+        "guideline_concordance",
+        "Apixaban is recommended for nonvalvular atrial fibrillation.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.90,
+    )
+    caution = _entry(
+        "safety-ckd",
+        "safety_contraindications",
+        "Use apixaban with caution in CKD.",
+        EvidencePolarity.QUALIFIES,
+        grade=0.80,
+    )
+    other = _entry(
+        "safety-dabi",
+        "safety_contraindications",
+        "Use dabigatran with caution when clearance is low.",
+        EvidencePolarity.QUALIFIES,
+        grade=0.80,
+    )
+    same = detect_contradictions([support, caution])
+    different = detect_contradictions([support, other])
+    assert len(same) == 1
+    assert same[0].severity == "low"
+    assert same[0].chunk_id_b == "safety-ckd"
+    assert different == []
+
+
 def test_critic_must_cite_both_chunks_before_a_medium_conflict_clears():
     pair = ContradictionPair(
         facet="guideline_concordance",

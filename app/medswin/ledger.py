@@ -283,7 +283,13 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
     pairs: List[ContradictionPair] = []
     seen = set()
 
-    def _add(facet: str, support: EvidenceLedgerEntry, conflict: EvidenceLedgerEntry, reason: str) -> None:
+    def _add(
+        facet: str,
+        support: EvidenceLedgerEntry,
+        conflict: EvidenceLedgerEntry,
+        reason: str,
+        severity: str | None = None,
+    ) -> None:
         key = (facet, support.chunk_id, conflict.chunk_id)
         if support.chunk_id == conflict.chunk_id or key in seen:
             return
@@ -293,7 +299,7 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 facet=facet,
                 chunk_id_a=support.chunk_id,
                 chunk_id_b=conflict.chunk_id,
-                severity=_pair_severity(support, conflict),
+                severity=severity or _pair_severity(support, conflict),
                 reason=reason,
                 grade_a=support.evidence_grade.score,
                 grade_b=conflict.evidence_grade.score,
@@ -336,5 +342,26 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 support_entry,
                 warning_entry,
                 "Same-drug safety warning conflicts with this recommendation.",
+            )
+    qualifies: List[tuple[EvidenceLedgerEntry, EvidenceClaim]] = []
+    plain_supports: List[tuple[EvidenceLedgerEntry, EvidenceClaim]] = []
+    for entry in ledger:
+        for claim in entry.claims:
+            if claim.polarity == EvidencePolarity.QUALIFIES:
+                qualifies.append((entry, claim))
+            elif claim.polarity == EvidencePolarity.SUPPORTS:
+                plain_supports.append((entry, claim))
+    for support_entry, support_claim in plain_supports:
+        for qualify_entry, qualify_claim in qualifies:
+            if not intervention_tokens(support_claim.claim) or not intervention_tokens(qualify_claim.claim):
+                continue
+            if not same_intervention(support_claim.claim, qualify_claim.claim):
+                continue
+            _add(
+                support_claim.facet,
+                support_entry,
+                qualify_entry,
+                "Same-drug caution qualifies this recommendation.",
+                severity="low",
             )
     return pairs
