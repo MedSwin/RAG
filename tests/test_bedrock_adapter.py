@@ -196,6 +196,78 @@ def test_runtime_uses_cli_login_when_the_default_chain_is_empty(monkeypatch):
     assert created == {"name": "bedrock-runtime", "region": "ap-southeast-2", "has_key": True}
 
 
+class _Body:
+    def read(self):
+        return b'{"embeddings":{"float":[[0.1,0.2]]}}'
+
+    def close(self):
+        return None
+
+
+class _FlakyBedrock:
+    def __init__(self, errors):
+        self.errors = list(errors)
+        self.calls = 0
+
+    def invoke_model(self, **kwargs):
+        self.calls += 1
+        if self.errors:
+            raise self.errors.pop(0)
+        return {"body": _Body()}
+
+    def converse(self, **kwargs):
+        self.calls += 1
+        if self.errors:
+            raise self.errors.pop(0)
+        return {"output": {"message": {"content": [{"text": "ok"}]}}}
+
+
+def _client_error(status: int):
+    from botocore.exceptions import ClientError
+
+    return ClientError(
+        {
+            "Error": {"Code": "InternalServerException", "Message": "patient phone 555-234-5678"},
+            "ResponseMetadata": {"HTTPStatusCode": status},
+        },
+        "Converse",
+    )
+
+
+def test_a_bedrock_generation_server_error_does_not_send_a_second_call(monkeypatch):
+    monkeypatch.setattr("app.services.adapters.bedrock.time.sleep", lambda _delay: None)
+    from app.services.adapters.bedrock import BedrockRuntime
+
+    client = _FlakyBedrock([_client_error(500), _client_error(500)])
+    runtime = BedrockRuntime("ap-southeast-2", client=client, attempts=4)
+    with pytest.raises(Exception) as caught:
+        runtime.converse("model", {"messages": [{"role": "user", "content": [{"text": "q"}]}]})
+    assert client.calls == 1
+    assert type(caught.value).__name__ == "ClientError"
+
+
+def test_a_bedrock_embedding_server_error_can_retry(monkeypatch):
+    monkeypatch.setattr("app.services.adapters.bedrock.time.sleep", lambda _delay: None)
+    from app.services.adapters.bedrock import BedrockRuntime
+
+    client = _FlakyBedrock([_client_error(500)])
+    runtime = BedrockRuntime("ap-southeast-2", client=client, attempts=4)
+    result = runtime.invoke_model("embed", {"texts": ["dose"]})
+    assert "embeddings" in result
+    assert client.calls == 2
+
+
+def test_a_bedrock_admission_retries_the_generation_once(monkeypatch):
+    monkeypatch.setattr("app.services.adapters.bedrock.time.sleep", lambda _delay: None)
+    from app.services.adapters.bedrock import BedrockRuntime
+
+    client = _FlakyBedrock([_client_error(503)])
+    runtime = BedrockRuntime("ap-southeast-2", client=client, attempts=4)
+    result = runtime.converse("model", {"messages": [{"role": "user", "content": [{"text": "q"}]}]})
+    assert result["output"]["message"]["content"][0]["text"] == "ok"
+    assert client.calls == 2
+
+
 def test_foundry_backend_follows_the_bedrock_provider():
     config = Settings(_env_file=None, CLOUD_MODE=True, CLOUD_PROVIDER="bedrock", GENERATION_BACKEND="foundry")
     assert config.resolved_generation_backend() == "bedrock"

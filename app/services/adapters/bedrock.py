@@ -161,6 +161,25 @@ def parse_converse_response(payload: dict[str, Any]) -> dict[str, Any]:
     return {"content": text, "token_count": total, "raw_response": payload}
 
 
+def _request_already_running(exc: Exception) -> bool:
+    name = type(exc).__name__
+    return "ReadTimeout" in name or "WriteTimeout" in name
+
+
+def _should_retry(exc: Exception, attempt: int, *, replay_safe: bool, attempts: int) -> bool:
+    """A generation whose outcome is unknown does not start a second call."""
+    if attempt >= attempts - 1 or _request_already_running(exc):
+        return False
+    status = _status_of(exc)
+    if status in {500, 502, 504}:
+        return replay_safe
+    if status in {429, 503}:
+        return True if replay_safe else attempt == 0
+    if status == 0:
+        return True if replay_safe else attempt == 0
+    return False
+
+
 def _status_of(exc: Exception) -> Optional[int]:
     try:
         from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
@@ -240,7 +259,7 @@ class BedrockRuntime:
             self._client = boto3.client("bedrock-runtime", **kwargs)
         return self._client
 
-    def _call(self, fn):
+    def _call(self, fn, *, replay_safe: bool = True):
         delay = 0.4
         last: Optional[Exception] = None
         for attempt in range(self.attempts):
@@ -248,9 +267,7 @@ class BedrockRuntime:
                 return fn()
             except Exception as exc:  # noqa: BLE001 - status decides retry; the body is not logged
                 last = exc
-                status = _status_of(exc)
-                retriable = status in {0, 429, 500, 502, 503, 504}
-                if not retriable or attempt >= self.attempts - 1:
+                if not _should_retry(exc, attempt, replay_safe=replay_safe, attempts=self.attempts):
                     raise
                 time.sleep(delay)
                 delay = min(delay * 2, 8.0)
@@ -280,7 +297,7 @@ class BedrockRuntime:
                 raise RuntimeError("Bedrock InvokeModel did not return a JSON object")
             return parsed
 
-        return self._call(_once)
+        return self._call(_once, replay_safe=True)
 
     def converse(self, model_id: str, request: dict[str, Any]) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
@@ -297,4 +314,4 @@ class BedrockRuntime:
                 raise RuntimeError("Bedrock Converse did not return an object")
             return response
 
-        return self._call(_once)
+        return self._call(_once, replay_safe=False)
