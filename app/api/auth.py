@@ -1,9 +1,14 @@
-"""Optional JWT auth middleware scaffold (disabled unless ENABLE_AUTH)."""
+"""Bearer JWT gate. It runs only when ENABLE_AUTH is true."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import logging
-from typing import Callable, Optional
+import time
+from typing import Any, Callable, Dict
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -13,27 +18,77 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+_PUBLIC_PREFIXES = ("/health", "/docs", "/openapi", "/redoc")
+
+
+def _b64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def verify_hs256(token: str, secret: str, *, now: float | None = None) -> Dict[str, Any]:
+    """Verify one HS256 JWT. Reject every other algorithm, including none."""
+    parts = token.split(".")
+    if len(parts) != 3 or any(not part for part in parts):
+        raise ValueError("malformed")
+    try:
+        header = json.loads(_b64url_decode(parts[0]))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ValueError("header") from exc
+    if not isinstance(header, dict) or header.get("alg") != "HS256":
+        raise ValueError("algorithm")
+    signing_input = f"{parts[0]}.{parts[1]}".encode("ascii")
+    expected = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    try:
+        actual = _b64url_decode(parts[2])
+    except ValueError as exc:
+        raise ValueError("signature") from exc
+    if len(actual) != len(expected) or not hmac.compare_digest(actual, expected):
+        raise ValueError("signature")
+    try:
+        claims = json.loads(_b64url_decode(parts[1]))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ValueError("claims") from exc
+    if not isinstance(claims, dict):
+        raise ValueError("claims")
+    current = time.time() if now is None else now
+    expires = claims.get("exp")
+    if expires is not None and current >= float(expires):
+        raise ValueError("expired")
+    not_before = claims.get("nbf")
+    if not_before is not None and current < float(not_before):
+        raise ValueError("not_before")
+    return claims
+
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Bearer JWT gate when ENABLE_AUTH is true. No IdP — validates structure only."""
+    """Require a signed HS256 bearer token when ENABLE_AUTH is true."""
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         if not settings.ENABLE_AUTH:
             return await call_next(request)
-        path = request.url.path
-        if path.startswith("/health") or path.startswith("/docs") or path.startswith("/openapi"):
+        if request.url.path.startswith(_PUBLIC_PREFIXES):
             return await call_next(request)
-        auth = request.headers.get("Authorization") or ""
-        if not auth.startswith("Bearer "):
+        header = request.headers.get("Authorization") or ""
+        if not header.startswith("Bearer "):
             return JSONResponse(status_code=401, content={"detail": "Missing Bearer token"})
-        token = auth[7:].strip()
+        token = header[7:].strip()
         if not token:
             return JSONResponse(status_code=401, content={"detail": "Empty Bearer token"})
-        # Scaffold: accept any non-empty token when secret unset; otherwise require match prefix.
-        secret = settings.AUTH_JWT_SECRET
-        if secret and not token.startswith(secret[:8]) and token != secret:
-            # Lightweight stub — production should use PyJWT verification.
-            logger.warning("AUTH_JWT_SECRET set but token not verified with full JWT stack")
-        request.state.user_id = request.headers.get("X-User-Id")
-        request.state.org_id = request.headers.get("X-Org-Id")
+        secret = (settings.AUTH_JWT_SECRET or "").strip()
+        if not secret:
+            return JSONResponse(status_code=401, content={"detail": "Authentication is not configured"})
+        algorithm = (settings.AUTH_JWT_ALGORITHM or "").strip().upper()
+        if algorithm != "HS256":
+            return JSONResponse(status_code=401, content={"detail": "Unsupported JWT algorithm"})
+        try:
+            claims = verify_hs256(token, secret)
+        except (ValueError, OverflowError):
+            return JSONResponse(status_code=401, content={"detail": "Invalid Bearer token"})
+        subject = str(claims.get("sub") or "").strip()
+        if not subject:
+            return JSONResponse(status_code=401, content={"detail": "Invalid Bearer token"})
+        request.state.user_id = subject
+        org = claims.get("org_id") if claims.get("org_id") is not None else claims.get("org")
+        request.state.org_id = str(org).strip() if org else None
         return await call_next(request)
