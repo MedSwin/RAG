@@ -93,6 +93,44 @@ def fit_local_messages(messages: List[Dict[str, Any]], completion_tokens: int) -
     return fitted
 
 
+def _drug_bearing(body: str) -> str:
+    """Keep the words around a named drug. A history run stays out."""
+    from app.medswin.ledger import intervention_tokens
+
+    words = (body or "").split()
+    spans = []
+    for index, word in enumerate(words):
+        if not intervention_tokens(word):
+            continue
+        spans.append((max(0, index - 12), min(len(words), index + 1)))
+    if not spans:
+        return ""
+    merged = []
+    for begin, end in spans:
+        if merged and begin <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((begin, end))
+    return " ".join(" ".join(words[begin:end]) for begin, end in merged)
+
+
+def _with_named_drugs(kept: str, body: str, room: int) -> str:
+    """Keep each named drug when the head cut would drop it."""
+    from app.medswin.ledger import intervention_tokens
+
+    if room <= 0:
+        return ""
+    drugs = sorted(intervention_tokens(body))
+    visible = kept if len(kept) <= room else kept[:room]
+    missing = [drug for drug in drugs if drug not in visible.lower()]
+    if not missing:
+        return visible
+    tail = " " + " ".join(missing)
+    if len(tail) >= room:
+        return " ".join(missing)[:room]
+    return (kept[: room - len(tail)].rstrip() + tail).strip()
+
+
 def _fit_block(text: str, width: int) -> str:
     """Keep a caution span when a prefix cut would drop its drug."""
     if width <= 0 or not text:
@@ -112,12 +150,12 @@ def _fit_block(text: str, width: int) -> str:
     from app.retrieval.lexical import LexicalRetriever
 
     spans = [span.strip() for span in LexicalRetriever._caution_sentences(body) if span.strip()]
-    kept = " ".join(spans) if spans else body
+    kept = " ".join(spans) if spans else (_drug_bearing(body) or body)
     prefix = f"{header}{gap}" if header else ""
     room = width - len(prefix)
     if room < 8:
         return text[:width]
-    return prefix + (kept if len(kept) <= room else kept[:room])
+    return prefix + _with_named_drugs(kept, body, room)
 
 
 def _chart_block(content: str, width: int) -> str:

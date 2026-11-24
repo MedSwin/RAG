@@ -753,6 +753,42 @@ def test_the_local_window_keeps_a_drug_past_the_first_eighty_characters():
         assert _estimate_message_tokens(fitted) + 384 <= 1980
 
 
+def test_the_local_window_keeps_a_recommended_drug_past_the_first_eighty_characters():
+    line = (
+        "The guideline recommends continued oral anticoagulation for nonvalvular "
+        "atrial fibrillation with apixaban."
+    )
+    assert "apixaban" not in line[:80]
+    history = "history " * 1500
+    prompts = [
+        (
+            "Shared Evidence Passages:\n"
+            f"[c1|CPG|doc=d1]\n{history}\n{line}\n\n"
+            "Query: Which anticoagulant?\n"
+        ),
+        (
+            "Query: Which anticoagulant?\n\n"
+            "Evidence:\n"
+            f"[c1] {history} {line}\n\n"
+            "Valid chunk_ids: c1\n"
+        ),
+    ]
+    for content in prompts:
+        fitted = fit_local_messages(
+            [
+                {"role": "system", "content": "Return one JSON object. " * 40},
+                {"role": "user", "content": content},
+            ],
+            384,
+        )
+        text = fitted[-1]["content"].lower()
+        assert "apixaban" in text
+        assert "recommends" in text
+        assert "history " * 40 not in text
+        assert "aspirin" not in text
+        assert _estimate_message_tokens(fitted) + 384 <= 1980
+
+
 def test_nist_download_sends_a_browser_user_agent(monkeypatch, tmp_path):
     seen = {}
 
