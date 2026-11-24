@@ -22,6 +22,8 @@ jobs:
       - run: npm --prefix web install
       - run: npm --prefix web run build
       - run: docker compose config
+        env:
+          MONGO_ROOT_PASSWORD: ci-contract-placeholder
       - name: Assert v2 evaluator surface
         run: |
           ! rg 'disable_mac|disable_gate' app/api/v1 benchmarks/system_eval
