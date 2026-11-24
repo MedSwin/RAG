@@ -22,6 +22,7 @@ import numpy as np
 from app.core.config import settings
 from app.core.database import get_database
 from app.medswin.ledger import build_retrieval_ledger
+from app.services.medswin.governance import ensure_cds_language
 from app.repositories.sessions import SessionRepository
 from app.repositories.traces import TraceRepository
 from app.retrieval.dense import DenseRetriever
@@ -553,6 +554,7 @@ class NaiveRAGOrchestrator:
         decision: Optional[PolicyDecision] = None,
         abstained: bool = False,
     ) -> ChatResponse:
+        answer = ensure_cds_language(answer) if answer else answer
         if answer and not any(message.content == answer for message in trace.messages):
             trace.messages.append(AgentMessage(role="user", agent_id="naive_rag", content=trace.query))
             trace.messages.append(AgentMessage(role="assistant", agent_id="naive_rag", content=answer))

@@ -105,7 +105,8 @@ def test_naive_retrieves_dense_top_k_and_always_generates():
     assert response.policy_decision.passed is True
     assert response.policy_decision.action == PolicyAction.ACCEPT
     assert "sufficiency" in (response.safety_notes or "").lower()
-    assert response.answer == "Naive answer from top-K passages."
+    assert response.answer.startswith("Clinician decision support only:")
+    assert response.answer.endswith("Naive answer from top-K passages.")
     assert llm.calls
     assert dense.calls[0]["k"] == 20
     assert len(response.ranked_evidence) == 2
