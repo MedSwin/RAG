@@ -216,6 +216,18 @@ def test_a_sentence_period_does_not_hide_a_chart_drug():
     assert _matching_indexes(index, query, 2) == [0]
 
 
+def test_a_long_chart_keeps_the_question_drug_in_the_lexical_query():
+    from app.retrieval.lexical import LexicalRetriever
+
+    context = "Avoid apixaban. " + " ".join(f"history{i}" for i in range(80))
+    query = f"Which metformin dose?\n\nPatient retrieval context:\n{context}"
+    terms = LexicalRetriever._fts_query(query).split(" OR ")
+    assert '"avoid"' in terms[:8]
+    assert '"apixaban"' in terms[:8]
+    assert '"metformin"' in terms
+    assert len(terms) <= 64
+
+
 def test_a_long_question_keeps_the_chart_caution_in_the_lexical_query():
     from app.retrieval.lexical import LexicalRetriever
 

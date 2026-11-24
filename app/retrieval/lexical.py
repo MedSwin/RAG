@@ -165,9 +165,15 @@ class LexicalRetriever:
             question, context = raw, ""
         # Legacy BM25 is an any-term scorer, so use OR rather than requiring all
         # clinical terms to occur in one passage.
+        context_terms = LexicalRetriever._fts_terms(context)
+        question_terms = LexicalRetriever._fts_terms(question)
+        # The caution is at the front of the chart note. Keep that front, then
+        # the question, then the rest of the chart. A long note must not push
+        # the question drug past the term cap.
+        ordered = context_terms[:16] + question_terms + context_terms[16:]
         chosen = []
         seen = set()
-        for term in LexicalRetriever._fts_terms(context) + LexicalRetriever._fts_terms(question):
+        for term in ordered:
             if term in seen:
                 continue
             seen.add(term)
