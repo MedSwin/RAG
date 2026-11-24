@@ -28,6 +28,11 @@ type Contradiction = {
   resolved?: boolean;
 };
 
+function evidenceLabel(id: string): string {
+  if (id === "patient-chart") return "Patient chart";
+  return id;
+}
+
 function ResultPanel({
   title,
   response,
@@ -142,7 +147,7 @@ function ResultPanel({
                   {c.resolved ? " · resolved" : " · unresolved"}
                 </strong>
                 <span className="meta">
-                  {c.chunk_id_a} ↔ {c.chunk_id_b}
+                  {evidenceLabel(c.chunk_id_a)} ↔ {evidenceLabel(c.chunk_id_b)}
                 </span>
                 <p style={{ margin: "6px 0 0" }}>{c.reason}</p>
               </div>
