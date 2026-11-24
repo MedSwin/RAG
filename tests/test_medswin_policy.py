@@ -130,3 +130,22 @@ def test_passage_below_inclusion_abstains_on_the_last_loop(monkeypatch):
     assert check.action_taken == "insufficient_evidence"
     assert "inclusion threshold" in check.policy_decision.reason.lower()
     assert check.policy_decision.retrieval_hints["inclusion_passed"] is False
+
+
+def test_reported_mean_keeps_a_zero_calibrated_score():
+    from app.medswin.gate import EvidenceGate
+    from app.schemas.enums import SourceType as SchemaSource
+    from app.schemas.evidence import CandidatePassage as SchemaPassage
+
+    passage = SchemaPassage(
+        chunk_id="c1",
+        doc_id="d1",
+        source_type=SchemaSource.CPG,
+        text="Guideline recommendation supports treatment.",
+        calibrated_score=0.0,
+        dense_score=0.95,
+    )
+    check = EvidenceGate().check([], [], [passage], contradictions=[])
+    assert check.mean_confidence == 0.0
+    assert check.policy_decision.retrieval_hints["mean_confidence"] == 0.0
+    assert check.policy_decision.retrieval_hints["inclusion_passed"] is False

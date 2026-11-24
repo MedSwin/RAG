@@ -237,12 +237,8 @@ class EvidenceGate:
         )
         cpg = [p for p in passages if p.source_type == SourceType.CPG]
         emr = [p for p in passages if p.source_type == SourceType.EMR]
-        confidences = [
-            p.calibrated_score or p.rerank_score or p.fusion_score or p.dense_score
-            for p in passages
-            if (p.calibrated_score or p.rerank_score or p.fusion_score or p.dense_score) is not None
-        ]
-        mean_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+        recorded_mean = (decision.retrieval_hints or {}).get("mean_confidence")
+        mean_confidence = float(recorded_mean) if recorded_mean is not None else 0.0
         return SufficiencyCheck(
             iteration=iteration,
             kappa_cpg=len(cpg) / max(settings.SUFF_T_CPG, 1),
