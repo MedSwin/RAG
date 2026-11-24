@@ -51,6 +51,24 @@ def test_a_low_caution_is_named_in_the_gate_reason():
         stop_retrieval=True,
     )
     assert named.reason == "An unresolved caution qualifies apixaban."
+    high = ContradictionPair(
+        facet="guideline_concordance",
+        chunk_id_a="c1",
+        chunk_id_b="caution",
+        severity="high",
+        reason="The sources conflict on apixaban.",
+    )
+    critical = EvidenceGate().decide(
+        [],
+        [],
+        [passage, caution],
+        iteration=2,
+        clinical_scope=ClinicalScope.CLINICIAN_CDS,
+        contradictions=[high],
+        stop_retrieval=True,
+    )
+    assert critical.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert critical.reason == "Unresolved evidence conflicts for apixaban need clinician review."
 
 
 def test_the_policy_shim_uses_the_query_text():

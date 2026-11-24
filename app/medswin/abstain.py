@@ -62,8 +62,14 @@ def insufficient_answer(
     missing_text = ", ".join(missing) if missing else "required clinical facets"
     conflict = ""
     if decision.unresolved_critical_conflicts:
+        from app.medswin.cds import _caution_drug_name
+
+        drug = _caution_drug_name(
+            passages or [], decision, decision.contradictions, severity="high"
+        )
+        named = f" for {drug}" if drug else ""
         conflict = (
-            " Unresolved high-severity contradictions were detected between evidence sources; "
+            f" Unresolved high-severity contradictions{named} were detected between evidence sources; "
             "these are preserved for clinician review rather than averaged away."
         )
     if any(item.severity != "high" for item in decision.contradictions if not item.resolved):

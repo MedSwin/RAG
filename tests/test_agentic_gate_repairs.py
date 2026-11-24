@@ -192,6 +192,22 @@ def test_a_low_caution_is_named_when_the_gate_abstains():
         ],
     )
     assert "apixaban" in named.lower()
+    decision.unresolved_critical_conflicts = True
+    decision.contradictions[0].severity = "high"
+    high_text = insufficient_answer(
+        "Which dose?",
+        decision,
+        passages=[
+            CandidatePassage(
+                chunk_id="caution",
+                doc_id="doc-caution",
+                source_type=SourceType.SAFETY,
+                text="Avoid apixaban.",
+            )
+        ],
+    )
+    assert "high-severity" in high_text.lower()
+    assert "apixaban" in high_text.lower()
 
 
 def test_same_drug_caution_qualifies_the_recommendation():

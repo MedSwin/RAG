@@ -174,6 +174,18 @@ class EvidenceGate:
         )
         if caution_blocks and missing:
             caution_reason = f"{caution_reason} Required facets remain open."
+        high_name = (
+            _caution_drug_name(passages, None, contradictions or [], severity="high")
+            if unresolved_critical
+            else ""
+        )
+        high_reason = (
+            f"Unresolved evidence conflicts for {high_name} need clinician review."
+            if high_name
+            else "Unresolved evidence conflicts need clinician review."
+        )
+        if unresolved_critical and missing:
+            high_reason = f"{high_reason} Required facets remain open."
         if bundle_ok and confidence_gap is None:
             action = PolicyAction.ACCEPT
             reason = (
@@ -197,6 +209,8 @@ class EvidenceGate:
                 if provenance_only
                 else caution_reason
                 if caution_blocks
+                else high_reason
+                if unresolved_critical
                 else "Required facets, contradiction adjudication, or marginal utility justify targeted retrieval."
             )
             passed = False
@@ -209,6 +223,8 @@ class EvidenceGate:
                 if provenance_only
                 else caution_reason
                 if caution_blocks
+                else high_reason
+                if unresolved_critical
                 else "Evidence remains insufficient for clinician CDS after policy-bounded retrieval."
             )
             passed = False

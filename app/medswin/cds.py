@@ -83,7 +83,12 @@ def cards_from_chat(
         summary = _clinical_summary(response.answer)
     elif unresolved:
         indicator = "critical"
-        summary = "Unresolved evidence conflicts need clinician review."
+        conflict_drug = _caution_drug_name(passages, decision, contradictions, severity="high")
+        summary = (
+            _clip(f"Unresolved evidence conflicts for {conflict_drug} need clinician review.")
+            if conflict_drug
+            else "Unresolved evidence conflicts need clinician review."
+        )
     elif synthesis_failed:
         indicator = "warning"
         summary = "The model did not return a structured clinical answer."
@@ -104,6 +109,7 @@ def cards_from_chat(
         contradiction_count=len(contradictions),
         qualifying=_has_unresolved_caution(decision, contradictions),
         caution_name=_caution_drug_name(passages, decision, contradictions),
+        conflict_drug=_caution_drug_name(passages, decision, contradictions, severity="high"),
     )
     card: Dict[str, Any] = {
         "uuid": response.trace_id or str(uuid.uuid4()),
@@ -184,7 +190,12 @@ def _caution_summary(drug_name: str) -> str:
     return "An unresolved caution qualifies this recommendation."
 
 
-def _caution_drug_name(passages: List[Any], decision: Any, contradictions: List[Any]) -> str:
+def _caution_drug_name(
+    passages: List[Any],
+    decision: Any,
+    contradictions: List[Any],
+    severity: str = "low",
+) -> str:
     """Return the drugs named by an unresolved caution passage."""
     from app.medswin.ledger import intervention_tokens
     from app.scoring.coverage import _QUALIFY, _ungoverned_caution
@@ -194,7 +205,11 @@ def _caution_drug_name(passages: List[Any], decision: Any, contradictions: List[
     if decision is not None:
         pairs.extend(list(getattr(decision, "contradictions", []) or []))
     for item in pairs:
-        if item.resolved or item.severity == "high":
+        if item.resolved:
+            continue
+        if severity == "high" and item.severity != "high":
+            continue
+        if severity != "high" and item.severity == "high":
             continue
         ids.add(item.chunk_id_a)
         ids.add(item.chunk_id_b)
@@ -229,6 +244,7 @@ def _detail(
     synthesis_failed: bool = False,
     qualifying: bool = False,
     caution_name: str = "",
+    conflict_drug: str = "",
 ) -> str:
     missing_text = ", ".join(missing) if missing else "none"
     passage_text = ", ".join(passage_ids) if passage_ids else "none"
@@ -244,6 +260,8 @@ def _detail(
     lead = outcome if synthesis_failed else f"{outcome} {reason}"
     if qualifying and "unresolved caution" not in reason.lower():
         lead = f"{lead} {_caution_summary(caution_name)}"
+    if conflict_drug and conflict_drug.lower() not in reason.lower():
+        lead = f"{lead} Unresolved evidence conflicts for {conflict_drug} need clinician review."
     return (
         f"{lead} "
         f"Missing facets: {missing_text}. "
