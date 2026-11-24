@@ -207,6 +207,20 @@ def test_a_missing_calibrated_score_fails_inclusion():
     assert check.mean_confidence == 0.0
 
 
+def test_a_second_expansion_does_not_change_the_query():
+    from app.retrieval.hints import expand_query
+
+    hints = {"expand_synonyms": True, "missing_facets": ["safety_contraindications"]}
+    once = expand_query("metformin renal dose", hints)
+    twice = expand_query(once, hints)
+    assert "biguanide" in once
+    assert "kidney" in once
+    assert "avoid" in once
+    assert once.count("biguanide") == 1
+    assert once.count("avoid") == 1
+    assert twice == once
+
+
 def test_a_duplicate_page_abstains_at_the_real_iteration():
     from app.medswin.orchestrator import retrieve_stall_action
 

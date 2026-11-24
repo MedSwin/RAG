@@ -28,17 +28,32 @@ def resolve_k(hints: Optional[Dict[str, Any]], top_k: Optional[int] = None) -> i
 def expand_query(query: str, hints: Optional[Dict[str, Any]]) -> str:
     if not hints or not hints.get("expand_synonyms"):
         return query
-    extras: List[str] = []
-    lower = query.lower()
-    for term, syns in SYNONYM_MAP.items():
-        if term in lower:
-            extras.extend(syns)
     missing = hints.get("missing_facets") or []
-    for facet in missing:
-        extras.extend(str(facet).replace("_", " ").split())
-    if not extras:
-        return query
-    return f"{query} {' '.join(sorted(set(extras)))}"
+    current = query
+    seen: set[str] = set()
+    for _ in range(8):
+        lower = current.lower()
+        extras: List[str] = []
+        for term, syns in SYNONYM_MAP.items():
+            if term not in lower:
+                continue
+            for syn in syns:
+                key = syn.lower()
+                if key in lower or key in seen:
+                    continue
+                seen.add(key)
+                extras.append(syn)
+        for facet in missing:
+            for word in str(facet).replace("_", " ").split():
+                key = word.lower()
+                if key in lower or key in seen:
+                    continue
+                seen.add(key)
+                extras.append(word)
+        if not extras:
+            return current
+        current = f"{current} {' '.join(sorted(set(extras)))}"
+    return current
 
 
 def apply_hints(
