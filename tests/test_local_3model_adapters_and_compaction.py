@@ -786,6 +786,28 @@ async def test_local_llm_defaults_and_clamps_completion_inside_2048(monkeypatch)
     assert "max_tokens" not in seen["json"]
 
 
+def test_the_chart_window_keeps_every_drug_that_fits():
+    from app.services.adapters.llm import _chart_block
+
+    drugs = [
+        "apixaban",
+        "warfarin",
+        "heparin",
+        "enoxaparin",
+        "metformin",
+        "aspirin",
+        "dabigatran",
+        "rivaroxaban",
+    ]
+    chart = " ".join(f"Avoid {drug}." for drug in drugs)
+    content = f"Which dose?\n\nPatient chart:\n{chart}\n\nEvidence:\n[c1] A note."
+    block = _chart_block(content, 80)
+    lowered = block.lower()
+    assert len(block.split("Patient chart:\n", 1)[1]) <= 80
+    for drug in drugs:
+        assert drug in lowered
+
+
 def test_the_local_window_keeps_a_caution_after_a_long_passage_header():
     history = "history " * 1500
     chunk_id = "caution-apixaban-" + ("x" * 80)

@@ -121,14 +121,35 @@ def _with_named_drugs(kept: str, body: str, room: int) -> str:
     if room <= 0:
         return ""
     drugs = sorted(intervention_tokens(body))
-    visible = kept if len(kept) <= room else kept[:room]
-    missing = [drug for drug in drugs if drug not in visible.lower()]
-    if not missing:
-        return visible
-    tail = " " + " ".join(missing)
-    if len(tail) >= room:
-        return " ".join(missing)[:room]
-    return (kept[: room - len(tail)].rstrip() + tail).strip()
+    source = (kept or "").strip()
+    if not drugs:
+        return source if len(source) <= room else source[:room].rstrip()
+
+    def _fitted(prefix_len: int) -> str:
+        prefix = source[:prefix_len].rstrip() if prefix_len > 0 else ""
+        missing = [drug for drug in drugs if drug not in prefix.lower()]
+        tail = (" " + " ".join(missing)) if missing else ""
+        return f"{prefix}{tail}".strip()
+
+    names = []
+    for drug in drugs:
+        trial = " ".join(names + [drug])
+        if len(trial) > room:
+            break
+        names.append(drug)
+    best = " ".join(names)
+    if len(" ".join(drugs)) <= room:
+        low = 0
+        high = min(len(source), room)
+        while low <= high:
+            mid = (low + high) // 2
+            candidate = _fitted(mid)
+            if len(candidate) <= room and all(drug in candidate.lower() for drug in drugs):
+                best = candidate
+                low = mid + 1
+            else:
+                high = mid - 1
+    return best
 
 
 def _fit_block(text: str, width: int) -> str:
