@@ -19,6 +19,16 @@ def _candidate(chunk_id, text, source_type=SourceType.CPG, rerank=0.70, dense=0.
     )
 
 
+def test_the_retrieval_response_shows_a_late_caution():
+    from app.api.v1.endpoints.retrieval import _to_response
+
+    filler = "History note. " * 40
+    passage = _candidate("emr-late", f"{filler} Avoid apixaban.", source_type=SourceType.EMR)
+    document = _to_response(passage)
+    assert document.content.startswith("Avoid apixaban.")
+    assert "History note." in document.content
+
+
 def test_the_retrieval_response_drops_a_phone_number():
     from app.api.v1.endpoints.retrieval import _public_text, _to_response
 

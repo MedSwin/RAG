@@ -18,7 +18,7 @@ from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage
 from app.services.adapters.embedding import EmbeddingClient
 from app.services.adapters.reranker import RerankerClient
-from app.services.medswin.governance import redact_phi_text
+from app.services.medswin.governance import lead_with_caution, redact_phi_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -85,9 +85,10 @@ def _public_metadata(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _to_response(passage: CandidatePassage) -> DocumentResponse:
-    text = _public_text(passage.text)
+    redacted = _public_text(passage.text)
+    text = lead_with_caution(redacted)
     metadata = _public_metadata(passage.metadata)
-    qca = _extract_qca_from_text(text, metadata)
+    qca = _extract_qca_from_text(redacted, metadata)
     # DenseRetriever exposes cosine-like relevance, while the historical API
     # called the field distance. Preserve the response field but return a
     # distance-like value so old clients still sort ascending if they need to.
