@@ -2,8 +2,11 @@ from app.medswin.abstain import abstention_matches, citations_match
 from app.medswin.gate import EvidenceGate
 from app.medswin.ledger import (
     adjudicate_contradictions,
+    apply_claim_alignment,
+    build_retrieval_ledger,
     detect_contradictions,
     intervention_tokens,
+    merge_agent_claims,
     same_intervention,
 )
 from app.schemas.agents import AgentClaimBatch
@@ -17,7 +20,7 @@ from app.schemas.evidence import (
     QuerySpec,
 )
 from app.schemas.facets import ClinicalFacet
-from app.scoring.coverage import infer_polarity, score_passage_facets
+from app.scoring.coverage import compute_facet_coverage, infer_polarity, score_passage_facets
 
 
 def _passage(chunk_id: str, text: str, source_type: SourceType = SourceType.CPG) -> CandidatePassage:
@@ -705,6 +708,46 @@ def test_live_report_status_does_not_pass_when_the_answerable_query_abstains():
     assert module.compare_covers_the_three_pipelines(
         {"results": {"naive": {}, "two-stage": {}}, "adjacent_diffs": {"naive_to_two_stage": {}}}
     ) is False
+
+
+def test_a_specialist_confidence_cannot_cover_a_facet_the_passage_does_not_support():
+    passage = _passage("cpg-1", "Metformin is first-line for type 2 diabetes.")
+    passage.calibrated_score = 1.0
+    passage.evidence_grade_score = 1.0
+    facets = [
+        ClinicalFacet(name="guideline_concordance", keywords=["metformin", "first-line"], threshold=0.70),
+        ClinicalFacet(name="safety_contraindications", keywords=["contraindicated"], threshold=0.70),
+    ]
+    score_passage_facets(passage, facets)
+    ledger = build_retrieval_ledger([passage], facets)
+    batch = AgentClaimBatch(
+        agent_id="safety",
+        claims=[
+            EvidenceClaim(
+                facet="safety_contraindications",
+                claim="Metformin is contraindicated.",
+                chunk_id="cpg-1",
+                confidence=1.0,
+                calibrated_relevance=1.0,
+                evidence_grade=EvidenceGrade(score=1.0),
+            ),
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Metformin is first-line.",
+                chunk_id="cpg-1",
+                confidence=0.9,
+            ),
+        ],
+    )
+    merged = merge_agent_claims(ledger, [batch], [passage])
+    apply_claim_alignment([passage], [batch], facets)
+    entry = merged[0]
+    assert "safety_contraindications" not in entry.facets
+    assert "guideline_concordance" in entry.facets
+    assert passage.facet_scores["safety_contraindications"] == 0.0
+    coverage = {row.facet: row.status for row in compute_facet_coverage(facets, merged)}
+    assert coverage["safety_contraindications"] == "missing"
+    assert coverage["guideline_concordance"] == "satisfied"
 
 
 def test_drug_tokens_fold_plurals_and_ignore_april():

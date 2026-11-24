@@ -95,11 +95,14 @@ def merge_agent_claims(
     passage_map = {p.chunk_id: p for p in passages}
     for batch in batches:
         for claim in batch.claims:
+            passage = passage_map.get(claim.chunk_id)
+            if passage is None:
+                continue
+            text_score = float((passage.facet_scores or {}).get(claim.facet, 0.0) or 0.0)
+            if text_score <= 0.0:
+                continue
             entry = by_chunk.get(claim.chunk_id)
             if entry is None:
-                passage = passage_map.get(claim.chunk_id)
-                if not passage:
-                    continue
                 entry = EvidenceLedgerEntry(
                     chunk_id=passage.chunk_id,
                     doc_id=passage.doc_id,
@@ -116,8 +119,6 @@ def merge_agent_claims(
             entry.claims.append(claim)
             if claim.facet not in entry.facets:
                 entry.facets.append(claim.facet)
-            # Attach agent score onto passage for MAC utility
-            passage = passage_map.get(claim.chunk_id)
             if passage is not None:
                 passage.agent_scores[batch.agent_id] = max(
                     passage.agent_scores.get(batch.agent_id, 0.0),
@@ -151,6 +152,8 @@ def apply_claim_alignment(
                 if passage.chunk_id != claim.chunk_id:
                     continue
                 current = passage.facet_scores.get(claim.facet, 0.0)
+                if current <= 0.0:
+                    continue
                 passage.facet_scores[claim.facet] = max(current, clamp(claim.confidence))
 
 
