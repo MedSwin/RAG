@@ -122,7 +122,7 @@ def _evidence_heads(content: str, width: int) -> str:
         if not text:
             continue
         blocks.append(text[:width])
-        if len(blocks) >= 4:
+        if len(blocks) >= 12:
             break
     if not blocks:
         return ""
@@ -145,7 +145,7 @@ def _passage_heads(content: str, width: int) -> str:
         if not text:
             continue
         blocks.append(text[:width])
-        if len(blocks) >= 4:
+        if len(blocks) >= 12:
             break
     if not blocks:
         return ""
