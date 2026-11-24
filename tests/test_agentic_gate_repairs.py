@@ -70,6 +70,45 @@ def test_a_required_abstention_fails_when_the_answer_gives_a_dose():
     assert abstention_matches(dose, False) is True
 
 
+def test_a_chart_continuation_conflicts_with_an_avoid_warning():
+    from app.medswin.cds import _chart_caution_line
+
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    other = _entry(
+        "aw",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    for chart in ("Do not hold warfarin.", "Continue warfarin."):
+        pairs = chart_contradictions(chart, [warning, other])
+        assert len(pairs) == 1, chart
+        assert pairs[0].chunk_id_a == PATIENT_CHART_ID
+        assert pairs[0].chunk_id_b == "war"
+        assert pairs[0].severity == "high"
+        assert "warfarin" in pairs[0].reason
+        assert "apixaban" not in pairs[0].reason
+        assert _chart_caution_line(None, pairs).startswith("Chart continuation:")
+    support = _entry(
+        "rec",
+        "guideline_concordance",
+        "Do not hold warfarin.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    kept = chart_contradictions("Avoid warfarin.", [support])
+    assert kept
+    assert kept[0].chunk_id_b == PATIENT_CHART_ID
+    assert "warfarin" in kept[0].reason
+
+
 def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning():
     warning = _entry(
         "war",

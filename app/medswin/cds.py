@@ -212,7 +212,9 @@ def _chart_caution_line(decision: Any, contradictions: List[Any]) -> str:
         if PATIENT_CHART_ID not in {item.chunk_id_a, item.chunk_id_b}:
             continue
         reason = item.reason or ""
-        if " | " not in reason or not reason.startswith("Chart caution:"):
+        if " | " not in reason or not (
+            reason.startswith("Chart caution:") or reason.startswith("Chart continuation:")
+        ):
             continue
         return reason.split(" | ", 1)[0].strip()
     return ""

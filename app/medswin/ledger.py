@@ -645,6 +645,36 @@ def _support_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
 PATIENT_CHART_ID = "patient-chart"
 
 
+_CHART_CONTINUE = re.compile(
+    r"\b(?:continue|continuing|remains on|stay on)\b",
+    re.I,
+)
+
+
+def _is_continuation_sentence(sentence: str) -> bool:
+    """True when the sentence says to keep a drug."""
+    from app.scoring.coverage import _BENIGN_DO_NOT, _CAUTION, _QUALIFY, _ungoverned_caution
+
+    if not intervention_tokens(sentence):
+        return False
+    if _ungoverned_caution(sentence) or _QUALIFY.search(sentence or ""):
+        return False
+    for match in _CAUTION.finditer(sentence or ""):
+        phrase = match.group(0).lower()
+        if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(sentence[match.end():]):
+            return True
+    return bool(_CHART_CONTINUE.search(sentence or ""))
+
+
+def _chart_continuation_text(chart: str) -> str:
+    """Keep chart sentences that say to continue a drug."""
+    kept = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", chart or ""):
+        if _is_continuation_sentence(sentence):
+            kept.append(sentence.strip())
+    return " ".join(kept).strip()
+
+
 def _chart_caution_text(chart: str) -> str:
     """Keep caution sentences from a chart note. A later drug sentence stays out."""
     from app.retrieval.lexical import LexicalRetriever
@@ -668,48 +698,79 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
     from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 
     text = _chart_caution_text(chart)
-    if not text or not intervention_tokens(text):
+    continuation = _chart_continuation_text(chart)
+    has_caution = bool(text and intervention_tokens(text))
+    has_continuation = bool(continuation and intervention_tokens(continuation))
+    if not has_caution and not has_continuation:
         return []
-    caution = _ungoverned_caution(text)
-    qualify = bool(_QUALIFY.search(text)) and not caution
-    if not caution and not qualify:
-        return []
+    caution = _ungoverned_caution(text) if has_caution else False
+    qualify = bool(_QUALIFY.search(text)) and not caution if has_caution else False
     pairs: List[ContradictionPair] = []
     seen = set()
-    for entry in ledger:
-        if entry.chunk_id == PATIENT_CHART_ID:
-            continue
-        for claim in entry.claims:
-            if claim.polarity != EvidencePolarity.SUPPORTS or claim.facet == "safety_contraindications":
+    if has_caution and (caution or qualify):
+        for entry in ledger:
+            if entry.chunk_id == PATIENT_CHART_ID:
                 continue
-            support_text = _support_text(entry, claim)
-            if not intervention_tokens(support_text) or not same_intervention(support_text, text):
-                continue
-            key = (claim.facet, entry.chunk_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            if caution:
-                reason = "Same-drug safety warning conflicts with this recommendation."
-                severity = "high" if entry.evidence_grade.score >= 0.80 else "medium"
-            else:
-                reason = "Same-drug caution qualifies this recommendation."
-                severity = "low"
-            span = " ".join(text.split())
-            pairs.append(
-                ContradictionPair(
-                    facet=claim.facet,
-                    chunk_id_a=entry.chunk_id,
-                    chunk_id_b=PATIENT_CHART_ID,
-                    severity=severity,
-                    reason=(
-                        f"Chart caution: {span} | "
-                        f"{_reason_with_drug(reason, support_text, text)}"
-                    ),
-                    grade_a=entry.evidence_grade.score,
-                    grade_b=0.0,
+            for claim in entry.claims:
+                if claim.polarity != EvidencePolarity.SUPPORTS or claim.facet == "safety_contraindications":
+                    continue
+                support_text = _support_text(entry, claim)
+                if not intervention_tokens(support_text) or not same_intervention(support_text, text):
+                    continue
+                key = (claim.facet, entry.chunk_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if caution:
+                    reason = "Same-drug safety warning conflicts with this recommendation."
+                    severity = "high" if entry.evidence_grade.score >= 0.80 else "medium"
+                else:
+                    reason = "Same-drug caution qualifies this recommendation."
+                    severity = "low"
+                span = " ".join(text.split())
+                pairs.append(
+                    ContradictionPair(
+                        facet=claim.facet,
+                        chunk_id_a=entry.chunk_id,
+                        chunk_id_b=PATIENT_CHART_ID,
+                        severity=severity,
+                        reason=(
+                            f"Chart caution: {span} | "
+                            f"{_reason_with_drug(reason, support_text, text)}"
+                        ),
+                        grade_a=entry.evidence_grade.score,
+                        grade_b=0.0,
+                    )
                 )
-            )
+    if has_continuation:
+        for entry in ledger:
+            if entry.chunk_id == PATIENT_CHART_ID:
+                continue
+            for claim in entry.claims:
+                if claim.polarity not in {EvidencePolarity.SAFETY, EvidencePolarity.CONTRADICTS}:
+                    continue
+                conflict_text = _conflict_text(entry, claim)
+                if not intervention_tokens(conflict_text) or not same_intervention(continuation, conflict_text):
+                    continue
+                key = (claim.facet, entry.chunk_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                span = " ".join(continuation.split())
+                pairs.append(
+                    ContradictionPair(
+                        facet=claim.facet,
+                        chunk_id_a=PATIENT_CHART_ID,
+                        chunk_id_b=entry.chunk_id,
+                        severity="high" if entry.evidence_grade.score >= 0.80 else "medium",
+                        reason=(
+                            f"Chart continuation: {span} | "
+                            f"{_reason_with_drug('Same-drug safety warning conflicts with this recommendation.', continuation, conflict_text)}"
+                        ),
+                        grade_a=0.0,
+                        grade_b=entry.evidence_grade.score,
+                    )
+                )
     return pairs
 
 
