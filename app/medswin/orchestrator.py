@@ -481,24 +481,28 @@ class MedSwinOrchestrator:
         constraints: Dict[str, Any],
         trace: AuditTrace,
     ) -> str:
+        def remember(value: str) -> str:
+            trace.retrieval_query = redact_phi_text(value)
+            return value
+
         if not patient_id or constraints.get("disable_patient_retrieval_context"):
-            return query
+            return remember(query)
         try:
             chunks = await self.chunk_repo.get_by_patient_id(patient_id, org_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Patient retrieval-context lookup failed: %s", exc)
-            return query
+            return remember(query)
         emr_chunks = [
             c for c in chunks
             if str(c.get("source_type", "")).upper() == SourceType.EMR.value
             and (c.get("text") or c.get("content"))
         ]
         if not emr_chunks:
-            return query
+            return remember(query)
         text = " ".join(" ".join(str(c.get("text") or c.get("content") or "").split()) for c in emr_chunks[:3])
         synopsis = " ".join(text.split()[:140])
         if not synopsis:
-            return query
+            return remember(query)
         trace.messages.append(
             AgentMessage(
                 role="system",
@@ -507,7 +511,7 @@ class MedSwinOrchestrator:
                 content=f"Built retrieval-only patient synopsis from {len(emr_chunks)} EMR chunks.",
             )
         )
-        return f"{query}\n\nPatient retrieval context:\n{redact_phi_text(synopsis)}"
+        return remember(f"{query}\n\nPatient retrieval context:\n{redact_phi_text(synopsis)}")
 
     async def _dispatch_agents(
         self,
@@ -595,6 +599,7 @@ class MedSwinOrchestrator:
         ranked_out: Optional[List[RankedEvidenceItem]] = None,
     ):
         retrieval_query = await self._patient_query(query, org_id, patient_id, constraints, trace)
+        trace.retrieval_query = redact_phi_text(retrieval_query)
         embeddings = await self.embedding_client.embed([retrieval_query])
         query_embedding = embeddings[0] if embeddings else None
         if query_embedding is None:
@@ -632,6 +637,7 @@ class MedSwinOrchestrator:
                 constraints=constraints,
             )
             retrieval_trace.iteration = iteration
+            retrieval_trace.query = redact_phi_text(loop_query)
             trace.retrieval_traces.append(retrieval_trace)
             trace.retrieval_backend = _name_retrieval_backend(retrieval_trace)
             if retrieval_trace.error:

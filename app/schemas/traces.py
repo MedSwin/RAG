@@ -68,6 +68,7 @@ class RetrievalTrace(BaseModel):
     lexical_count: int = 0
     union_count: int = 0
     hints: Dict[str, Any] = Field(default_factory=dict)
+    query: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -138,6 +139,7 @@ class AuditTrace(BaseModel):
     answer_provenance: Optional[AnswerProvenance] = None
     pipeline: PipelineId = PipelineId.FULL
     retrieval_backend: Optional[str] = None
+    retrieval_query: Optional[str] = None
     generator_profile: Optional[str] = None
     hook_instance: Optional[str] = None
     error_type: Optional[str] = None

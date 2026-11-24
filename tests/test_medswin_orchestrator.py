@@ -4,7 +4,7 @@ from app.agents.base import parse_claims
 from app.medswin.normalize import QueryNormalizer
 from app.models.medswin import CandidatePassage, ClinicalFacet, ClinicalScope, QuerySpec, SourceType
 from app.schemas.enums import PipelineId, PolicyAction
-from app.schemas.traces import RerankTrace, RetrievalTrace
+from app.schemas.traces import AuditTrace, RerankTrace, RetrievalTrace
 from app.services.medswin.orchestrator import MedSwinOrchestrator
 
 
@@ -64,6 +64,25 @@ class EmptyRepo:
 
 async def _noop_agents(*args, **kwargs):
     return []
+
+
+def test_the_retrieval_query_stores_the_redacted_patient_synopsis():
+    import asyncio
+
+    class Charts:
+        async def get_by_patient_id(self, patient_id, org_id):
+            return [{"source_type": "EMR", "text": "Call 555-234-5678. Creatinine is 1.4."}]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.chunk_repo = Charts()
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
+    asyncio.run(orchestrator._patient_query("Which dose?", "org", "pt-1", {}, trace))
+    assert "555-234-5678" not in (trace.retrieval_query or "")
+    assert "Creatinine is 1.4." in trace.retrieval_query
+    assert "[REDACTED_PHONE]" in trace.retrieval_query
+    assert trace.messages[-1].content.startswith("Built retrieval-only patient synopsis")
 
 
 def test_query_spec_coercion_recovers_malformed_llm_fields():
@@ -526,5 +545,7 @@ def test_failed_request_does_not_leak_previous_ranked_evidence():
     assert stored[-1].error_type == "RuntimeError"
     assert stored[-1].generator_profile == third.generator_profile
     assert stored[-1].hook_instance == "hook-9"
+    assert stored[0].retrieval_query == "q1"
+    assert stored[0].retrieval_traces[0].query == "q1"
     assert "normalizer failed" not in (stored[-1].final_answer or "")
 
