@@ -18,6 +18,7 @@ from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage
 from app.services.adapters.embedding import EmbeddingClient
 from app.services.adapters.reranker import RerankerClient
+from app.services.medswin.governance import redact_phi_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -66,8 +67,27 @@ class IndexInfo(BaseModel):
     mapping_backend: str
 
 
+_METADATA_ID_KEYS = {"patient_id", "chunk_id", "doc_id", "org_id", "user_id"}
+
+
+def _public_text(value: Optional[str]) -> str:
+    return redact_phi_text(value or "")
+
+
+def _public_metadata(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    cleaned: Dict[str, Any] = {}
+    for key, value in (metadata or {}).items():
+        if isinstance(value, str) and key not in _METADATA_ID_KEYS:
+            cleaned[key] = redact_phi_text(value)
+        else:
+            cleaned[key] = value
+    return cleaned
+
+
 def _to_response(passage: CandidatePassage) -> DocumentResponse:
-    qca = _extract_qca_from_text(passage.text, passage.metadata or {})
+    text = _public_text(passage.text)
+    metadata = _public_metadata(passage.metadata)
+    qca = _extract_qca_from_text(text, metadata)
     # DenseRetriever exposes cosine-like relevance, while the historical API
     # called the field distance. Preserve the response field but return a
     # distance-like value so old clients still sort ascending if they need to.
@@ -77,13 +97,13 @@ def _to_response(passage: CandidatePassage) -> DocumentResponse:
         chunk_id=passage.chunk_id,
         doc_id=passage.doc_id,
         source_type=passage.source_type.value,
-        content=passage.text,
-        metadata=passage.metadata or {},
+        content=text,
+        metadata=metadata,
         distance=distance,
         rerank_score=passage.rerank_score,
-        question=qca.get("question"),
-        context=qca.get("context"),
-        answer=qca.get("answer"),
+        question=_public_text(qca.get("question")) or None,
+        context=_public_text(qca.get("context")) or None,
+        answer=_public_text(qca.get("answer")) or None,
     )
 
 
@@ -148,7 +168,7 @@ async def _search(request: QueryRequest) -> RetrievalResponse:
 
         documents = [_to_response(candidate) for candidate in candidates]
         return RetrievalResponse(
-            query=request.query,
+            query=_public_text(request.query),
             org_id=request.org_id,
             documents=documents,
             total_documents=len(documents),

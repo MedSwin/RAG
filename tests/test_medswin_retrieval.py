@@ -19,6 +19,33 @@ def _candidate(chunk_id, text, source_type=SourceType.CPG, rerank=0.70, dense=0.
     )
 
 
+def test_the_retrieval_response_drops_a_phone_number():
+    from app.api.v1.endpoints.retrieval import _public_text, _to_response
+
+    passage = _candidate(
+        "emr-1",
+        "Call 555-234-5678. Creatinine is 1.4. Continue metformin.",
+        source_type=SourceType.EMR,
+    )
+    passage.metadata = {
+        "patient_id": "pt-1",
+        "note": "Call 555-234-5678 about the creatinine result.",
+        "question": "Call 555-234-5678",
+        "context": "Creatinine is 1.4.",
+        "answer": "Continue metformin.",
+    }
+    document = _to_response(passage)
+    assert "555-234-5678" not in document.content
+    assert "[REDACTED_PHONE]" in document.content
+    assert "Creatinine is 1.4." in document.content
+    assert "metformin" in document.content
+    assert document.metadata["patient_id"] == "pt-1"
+    assert "555-234-5678" not in document.metadata["note"]
+    assert document.question == "Call [REDACTED_PHONE]"
+    assert document.context == "Creatinine is 1.4."
+    assert _public_text("dose for 555-234-5678") == "dose for [REDACTED_PHONE]"
+
+
 def test_fusion_scores_are_bounded_and_use_calibrated_reranker_signal():
     pipeline = RetrievalPipeline()
     candidates = [
