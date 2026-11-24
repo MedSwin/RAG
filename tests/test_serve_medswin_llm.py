@@ -33,6 +33,22 @@ def _import_serve_module():
     return module
 
 
+def test_the_medswin_prompt_drops_a_phone_number():
+    serve = _import_serve_module()
+
+    class _Tokenizer:
+        chat_template = None
+
+    prompt = serve._render_prompt(
+        _Tokenizer(),
+        [{"role": "user", "content": "Call 555-234-5678. Creatinine is 1.4. Continue metformin."}],
+    )
+    assert "555-234-5678" not in prompt
+    assert "[REDACTED_PHONE]" in prompt
+    assert "Creatinine is 1.4." in prompt
+    assert "metformin" in prompt
+
+
 @pytest.fixture
 def serve():
     mod = _import_serve_module()

@@ -500,7 +500,14 @@ async def test_local_llm_defaults_and_clamps_completion_inside_2048(monkeypatch)
     monkeypatch.setattr("app.services.adapters.llm.request_with_model_rate_limit", _http)
     client = LLMClient("http://127.0.0.1:8000/v1/chat/completions")
     assert client.backend == "medswin_local"
-    await client.call_llm([{"role": "user", "content": "short question"}])
+    await client.call_llm(
+        [{"role": "user", "content": "Call 555-234-5678. Creatinine is 1.4. Continue metformin."}]
+    )
+    sent = seen["json"]["messages"][0]["content"]
+    assert "555-234-5678" not in sent
+    assert "[REDACTED_PHONE]" in sent
+    assert "Creatinine is 1.4." in sent
+    assert "metformin" in sent
     assert seen["json"]["max_tokens"] == 384
 
     await client.call_llm([{"role": "user", "content": "short question"}], max_tokens=32)

@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import os
+import sys
 import threading
 import time
 import uuid
@@ -256,9 +257,23 @@ def _context_window(model: Any, tokenizer: Any) -> int:
     return window
 
 
+def _redact_prompt_text(text: str) -> str:
+    """Drop a phone, an email, an MRN, or a labelled date of birth before the tokenizer."""
+    root = Path(__file__).resolve().parents[1]
+    root_text = str(root)
+    if root_text not in sys.path:
+        sys.path.insert(0, root_text)
+    from app.services.medswin.governance import redact_phi_text
+
+    return redact_phi_text(text)
+
+
 def _render_prompt(tokenizer: Any, messages: list[dict[str, Any]]) -> str:
     cleaned = [
-        {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
+        {
+            "role": str(item.get("role") or "user"),
+            "content": _redact_prompt_text(str(item.get("content") or "")),
+        }
         for item in messages
     ]
     if getattr(tokenizer, "chat_template", None):

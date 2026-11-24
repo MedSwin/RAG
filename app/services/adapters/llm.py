@@ -68,6 +68,20 @@ def _clamp_local_completion_tokens(requested: int, prompt_tokens: int) -> int:
     return 1
 
 
+def _redact_local_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop a phone, an email, an MRN, or a labelled date of birth before MedSwin."""
+    from app.services.medswin.governance import redact_phi_text
+
+    redacted: List[Dict[str, Any]] = []
+    for message in messages:
+        item = dict(message)
+        content = item.get("content")
+        if isinstance(content, str):
+            item["content"] = redact_phi_text(content)
+        redacted.append(item)
+    return redacted
+
+
 def fit_local_messages(messages: List[Dict[str, Any]], completion_tokens: int) -> List[Dict[str, Any]]:
     """Shrink the last user message until the prompt leaves room for the completion."""
     fitted = [dict(message) for message in messages]
@@ -152,14 +166,16 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        local_budget = self.backend in {"medswin_local", "local_http"} and (
+            not settings.CLOUD_MODE or self.backend == "medswin_local"
+        )
+        if local_budget:
+            messages = _redact_local_messages(messages)
         payload = {"model": self.model, "messages": messages}
         if not self.model.lower().startswith("gpt-5"):
             payload["temperature"] = temperature
 
         supplied_max_tokens = max_tokens if max_tokens is not None else _default_max_tokens()
-        local_budget = self.backend in {"medswin_local", "local_http"} and (
-            not settings.CLOUD_MODE or self.backend == "medswin_local"
-        )
         if local_budget and supplied_max_tokens is None:
             supplied_max_tokens = int(os.getenv("MEDSWIN_DEFAULT_MAX_TOKENS", "384"))
         effective_max_tokens = supplied_max_tokens
