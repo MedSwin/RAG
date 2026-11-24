@@ -259,6 +259,32 @@ def _passage_heads(content: str, width: int) -> str:
     return marker + "\n\n".join(blocks)
 
 
+def _fit_caution_chars(spans: List[str], limit: int) -> str:
+    """Keep one short warning for each drug inside the question line."""
+    from app.medswin.ledger import intervention_tokens
+
+    drugs: List[str] = []
+    seen: set = set()
+    for span in spans:
+        for token in span.split():
+            for drug in intervention_tokens(token.strip(".,;:")):
+                if drug not in seen:
+                    seen.add(drug)
+                    drugs.append(drug)
+    if not drugs:
+        return " ".join(spans)[:limit]
+    short = " ".join(f"Avoid {drug}" for drug in drugs)
+    if len(short) <= limit:
+        return short
+    kept: List[str] = []
+    for drug in drugs:
+        trial = " ".join(kept + [drug])
+        if len(trial) > limit:
+            break
+        kept.append(drug)
+    return " ".join(kept)
+
+
 def _clip_question(text: str, limit: int = 240) -> str:
     """Keep a warning when a long question is cut."""
     raw = " ".join((text or "").split())
@@ -272,6 +298,8 @@ def _clip_question(text: str, limit: int = 240) -> str:
         if span and span not in kept:
             kept.append(span)
     caution = " ".join(kept)
+    if len(caution) > limit:
+        caution = _fit_caution_chars(kept, limit) or caution[:limit]
     head = raw[:limit]
     if not caution or caution.lower() in head.lower():
         return head
