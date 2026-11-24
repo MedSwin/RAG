@@ -55,6 +55,44 @@ logger = logging.getLogger(__name__)
 CACHE_DIR = Path(settings.DATA_DIR) / "bm25"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+/-]*")
+_QUERY_STOP = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "do",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "its",
+    "not",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "these",
+    "this",
+    "those",
+    "to",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "whom",
+    "why",
+    "with",
+}
 _SAFE_ORG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _MEMORY_CACHE_MAX = 32
 
@@ -198,6 +236,8 @@ class LexicalRetriever:
         chosen = []
         seen = set()
         for term in ordered:
+            if term in _QUERY_STOP:
+                continue
             if term in seen:
                 continue
             seen.add(term)

@@ -216,6 +216,24 @@ def test_a_sentence_period_does_not_hide_a_chart_drug():
     assert _matching_indexes(index, query, 2) == [0]
 
 
+def test_a_question_word_does_not_outrank_the_question_drug():
+    from app.retrieval.lexical import BM25Okapi, LexicalRetriever, _matching_indexes
+
+    terms = LexicalRetriever._lexical_terms("Which metformin dose for this patient?")
+    assert "which" not in terms
+    assert "for" not in terms
+    assert "this" not in terms
+    assert "metformin" in terms
+    assert "dose" in terms
+    filler = LexicalRetriever._bm25_tokens("Which form is this for.")
+    drug = LexicalRetriever._bm25_tokens("Metformin is first-line treatment.")
+    docs = [filler, drug]
+    docs += [LexicalRetriever._bm25_tokens(f"Unrelated topic number {i} about diet.") for i in range(8)]
+    order = _matching_indexes(BM25Okapi(docs), terms, 3)
+    assert 0 not in order
+    assert order[0] == 1
+
+
 def test_a_long_chart_keeps_the_question_drug_in_the_lexical_query():
     from app.retrieval.lexical import BM25Okapi, LexicalRetriever, _matching_indexes
 
