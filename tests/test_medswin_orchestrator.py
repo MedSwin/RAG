@@ -1115,3 +1115,72 @@ def test_a_chart_caution_blocks_the_same_drug_recommendation():
     assert check.passed is False
     assert "apixaban" in check.policy_decision.reason
 
+
+def test_a_chart_order_conflicts_with_a_warning_left_out_of_the_bundle():
+    import asyncio
+
+    from app.schemas.facets import ClinicalFacet
+
+    class Charts:
+        async def get_by_patient_id(self, patient_id, org_id, **_kwargs):
+            return [{"source_type": "EMR", "text": "Warfarin is recommended."}]
+
+    class Retriever(FakeRetriever):
+        async def retrieve(self, **kwargs):
+            recommendation = CandidatePassage(
+                chunk_id="rec",
+                doc_id="rec",
+                source_type=SourceType.CPG,
+                text="Apixaban is recommended.",
+                section="Recommendations",
+                calibrated_score=0.9,
+                rerank_score=0.9,
+                fusion_score=0.9,
+                evidence_grade_score=0.95,
+            )
+            warning = CandidatePassage(
+                chunk_id="war",
+                doc_id="war",
+                source_type=SourceType.SAFETY,
+                text="Avoid warfarin.",
+                section="Contraindications",
+                calibrated_score=0.9,
+                rerank_score=0.9,
+                fusion_score=0.9,
+                evidence_grade_score=0.95,
+            )
+            return [recommendation, warning], RetrievalTrace(union_count=2)
+
+        def select(self, candidates, facets=None, agent_weights=None, token_budget=None):
+            return [item for item in candidates if item.chunk_id != "war"]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.chunk_repo = Charts()
+    orchestrator.retriever = Retriever()
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
+    bundle, check = asyncio.run(
+        orchestrator._retrieve_with_sufficiency(
+            "Which dose?",
+            QuerySpec(
+                canonical_terms=["warfarin"],
+                facets=[
+                    ClinicalFacet(name="guideline_concordance", keywords=["recommended"], required=False, threshold=0.1),
+                    ClinicalFacet(name="safety_contraindications", keywords=["avoid"], required=False, threshold=0.1),
+                ],
+            ),
+            "org",
+            "pt-1",
+            {},
+            trace,
+        )
+    )
+    pairs = [pair for pair in bundle.contradictions if pair.chunk_id_b == "war"]
+    assert pairs
+    assert pairs[0].chunk_id_a == "patient-chart"
+    assert "warfarin" in pairs[0].reason
+    assert "apixaban" not in pairs[0].reason
+    assert check.passed is False
+    assert "warfarin" in check.policy_decision.reason
+

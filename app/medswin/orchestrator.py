@@ -997,9 +997,8 @@ class MedSwinOrchestrator:
             selected = pack_bundle(selected, facets=facets, token_budget=budget)
             selected_ids = {p.chunk_id for p in selected}
             selected_ledger = filter_ledger(ledger, selected_ids)
-            detected_contradictions = detect_contradictions(
-                filter_ledger(ledger, audit_chunk_ids(selected, ranked_candidates))
-            )
+            audited_ledger = filter_ledger(ledger, audit_chunk_ids(selected, ranked_candidates))
+            detected_contradictions = detect_contradictions(audited_ledger)
             contradictions = (
                 adjudicate_contradictions(detected_contradictions, batches)
                 if self.policy.enable_mac
@@ -1007,7 +1006,7 @@ class MedSwinOrchestrator:
             )
             contradictions = list(contradictions) + chart_contradictions(
                 _patient_chart(retrieval_query),
-                selected_ledger,
+                audited_ledger,
             )
             check = self.gate.check(
                 selected_ledger,
