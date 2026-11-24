@@ -58,6 +58,21 @@ def test_a_long_sentence_shows_the_later_drug_first():
     assert lead_with_caution("Avoid apixaban.").lower().count("avoid apixaban") == 1
 
 
+def test_a_later_sentence_shows_the_caution_drug_first():
+    from app.services.medswin.governance import lead_with_caution
+
+    gap = (
+        "this treatment immediately whenever the haematology service confirms "
+        "persistent gastrointestinal bleeding after a recent major procedure involving"
+    )
+    caution = f"Avoid {gap} apixaban."
+    history = " ".join(f"history{i}." for i in range(5))
+    for text in (f"{history} {caution}", f"{caution} {history}"):
+        shown = lead_with_caution(text)
+        assert "apixaban" in shown[:80].lower()
+        assert shown.lower().find("apixaban") < shown.lower().find("history0")
+
+
 def test_the_chat_response_drops_a_phone_number():
     from app.schemas.evidence import EvidenceBundle, EvidenceClaim, EvidenceLedgerEntry
     from app.schemas.traces import ChatResponse

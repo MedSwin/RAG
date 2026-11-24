@@ -64,17 +64,25 @@ def lead_with_caution(text: str) -> str:
     def _is_caution(sentence: str) -> bool:
         return bool(_ungoverned_caution(sentence) or _QUALIFY.search(sentence))
 
-    if len(sentences) > 1:
-        cautions = [sentence for sentence in sentences if _is_caution(sentence)]
-        if cautions and not _is_caution(sentences[0]):
-            rest = [sentence for sentence in sentences if not _is_caution(sentence)]
-            ordered = " ".join(cautions + rest)
-        else:
-            ordered = raw
+    def _lead_sentence(sentence: str) -> str:
+        span = LexicalRetriever._caution_span(sentence)
+        index = sentence.lower().find(span.lower()) if span else 0
+        if span and (index < 0 or index > 80):
+            return f"{span} {sentence}"
+        return sentence
+
+    cautions = [sentence for sentence in sentences if _is_caution(sentence)]
+    if len(sentences) > 1 and cautions and not _is_caution(sentences[0]):
+        rest = [sentence for sentence in sentences if not _is_caution(sentence)]
+        ordered = " ".join([_lead_sentence(sentence) for sentence in cautions] + rest)
+    elif len(sentences) > 1 and cautions:
+        ordered = " ".join(
+            _lead_sentence(sentence) if _is_caution(sentence) else sentence for sentence in sentences
+        )
+    elif len(sentences) > 1:
+        ordered = raw
     else:
-        span = LexicalRetriever._caution_span(raw)
-        index = raw.lower().find(span.lower()) if span else 0
-        ordered = f"{span} {raw}" if span and (index < 0 or index > 80) else raw
+        ordered = _lead_sentence(raw)
     return _prepend_dose(ordered)
 
 
