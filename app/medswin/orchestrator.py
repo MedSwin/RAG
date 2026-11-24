@@ -320,7 +320,24 @@ def _model_question(question: str, retrieval_query: str) -> str:
 
 def _specialist_candidates(ranked: List, limit: int = 40) -> List:
     """Show specialists the ranked cautions, not the first retrieved rows."""
-    return prioritize_passages(list(ranked))[:limit]
+    from app.agents.base import _make_room_for_new_drug
+
+    kept = []
+    for item in prioritize_passages(list(ranked)):
+        if len(kept) >= limit:
+            kept = [
+                part[0]
+                for part in _make_room_for_new_drug(
+                    [(part,) for part in kept],
+                    lambda part: part[0].text or "",
+                    item.text or "",
+                    True,
+                )
+            ]
+        if len(kept) >= limit:
+            continue
+        kept.append(item)
+    return kept
 
 
 def rejected_chunk_ids(candidates: List, selected_ids: set, limit: int = 50) -> List[str]:

@@ -607,6 +607,35 @@ def test_retrieval_packs_with_the_policy_token_budget(monkeypatch):
     assert seen["token_budget"] == 222
 
 
+def test_a_later_drug_stays_when_repeated_cautions_fill_the_specialist_list():
+    from app.medswin.orchestrator import _specialist_candidates
+
+    repeated = [
+        CandidatePassage(
+            chunk_id=f"w-{index}",
+            doc_id=f"w-{index}",
+            source_type=SourceType.SAFETY,
+            text=f"Avoid warfarin. note {index}",
+            calibrated_score=0.90,
+            safety_score=0.90,
+        )
+        for index in range(40)
+    ]
+    later = CandidatePassage(
+        chunk_id="apix",
+        doc_id="apix",
+        source_type=SourceType.SAFETY,
+        text="Avoid apixaban.",
+        calibrated_score=0.60,
+        safety_score=0.40,
+    )
+    shown = _specialist_candidates([*repeated, later])
+    ids = [item.chunk_id for item in shown]
+    assert "apix" in ids
+    assert any(chunk_id.startswith("w-") for chunk_id in ids)
+    assert len(shown) <= 40
+
+
 def test_a_dropped_caution_stays_on_the_rejected_list():
     from app.medswin.orchestrator import rejected_chunk_ids
 
