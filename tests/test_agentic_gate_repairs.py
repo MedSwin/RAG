@@ -316,6 +316,11 @@ def test_a_chart_order_to_resume_or_switch_conflicts_with_that_drug():
         "Keep the patient on warfarin.",
         "Maintain warfarin.",
         "Warfarin to continue.",
+        "Warfarin was restarted.",
+        "Warfarin was resumed.",
+        "Warfarin was maintained.",
+        "The patient was recommenced on warfarin.",
+        "The patient was kept on warfarin.",
     ):
         pairs = chart_contradictions(chart, [warning, other])
         assert len(pairs) == 1, chart
@@ -349,6 +354,9 @@ def test_a_chart_order_to_resume_or_switch_conflicts_with_that_drug():
         "Maintain the INR on warfarin.",
         "Begin monitoring warfarin.",
         "Consider warfarin.",
+        "Warfarin was not restarted.",
+        "The patient was not recommenced on warfarin.",
+        "Warfarin was kept on hold.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
 

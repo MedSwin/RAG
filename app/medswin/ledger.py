@@ -802,7 +802,11 @@ _CONTINUE_VERB = re.compile(r"\b(?:continue|continuing|continued)\b", re.I)
 _BE_CONTINUED = re.compile(r"\b(?:be|was|is|were|been)\s+continued\b", re.I)
 _TO_CONTINUE = re.compile(r"\bto\s+(?:be\s+)?continued?\b", re.I)
 _REMAIN_ON = re.compile(r"\b(?:remain|remains|stay|stays|still)\s+on\b", re.I)
-_KEEP_VERB = re.compile(r"\b(?:resume|restart|recommence|keep|maintain)\b", re.I)
+_KEEP_VERB = re.compile(
+    r"\b(?:resume[ds]?|resuming|restart(?:ed|s|ing)?|recommence[ds]?|recommencing|"
+    r"keep|keeps|kept|keeping|maintain(?:ed|s|ing)?)\b",
+    re.I,
+)
 _ONGOING = re.compile(r"\bongoing\b", re.I)
 _MONITOR_NEXT = re.compile(
     r"^(?:to\s+)?(?:monitor(?:ing|ed)?|checks?|checking|observ(?:e|ing|ation)|follow-?up|surveillance|inr|labs?)\b",
@@ -916,6 +920,7 @@ def _is_continuation_sentence(sentence: str) -> bool:
     from app.scoring.coverage import (
         _BENIGN_DO_NOT,
         _CAUTION,
+        _LOCAL_NEGATION,
         _negated_off_keep,
         _negated_source_keep,
         _ungoverned_caution,
@@ -943,7 +948,21 @@ def _is_continuation_sentence(sentence: str) -> bool:
         if _object_is_drug(sentence[match.end():]):
             return True
     for match in _KEEP_VERB.finditer(sentence or ""):
-        if _object_is_drug(sentence[match.end():]):
+        window = sentence[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        tail = sentence[match.end():]
+        prefix = sentence[: match.start()]
+        prefix_drugs = intervention_tokens(prefix)
+        tail_drugs = intervention_tokens(tail)
+        if _object_is_drug(tail) and (not prefix_drugs or not prefix_drugs.isdisjoint(tail_drugs)):
+            return True
+        if (
+            prefix_drugs
+            and not tail_drugs
+            and _subject_is_drug(prefix)
+            and not re.search(r"\b(?:hold|held|stop(?:ped)?)\b", tail or "", re.I)
+        ):
             return True
     to_continue = _TO_CONTINUE.search(sentence or "")
     if to_continue and _subject_is_drug(sentence[: to_continue.start()]):
