@@ -787,7 +787,10 @@ class MedSwinOrchestrator:
                 )
             )
 
-            candidates, rerank_trace = await self.retriever.rerank(loop_query, candidates)
+            candidates, rerank_trace = await self.retriever.rerank(
+                LexicalRetriever.focus_query(loop_query),
+                candidates,
+            )
             rerank_trace.iteration = iteration
             trace.rerank_traces.append(rerank_trace)
             trace.tool_calls.append(

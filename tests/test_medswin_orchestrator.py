@@ -81,11 +81,25 @@ def test_the_dense_query_drops_the_chart_history():
             note = "Avoid apixaban. " + " ".join(f"history{i}" for i in range(40))
             return [{"source_type": "EMR", "text": note}]
 
+    class RecordingRetriever(FakeRetriever):
+        def __init__(self):
+            self.rerank_queries = []
+            self.retrieve_queries = []
+
+        async def rerank(self, query, candidates):
+            self.rerank_queries.append(query)
+            return await super().rerank(query, candidates)
+
+        async def retrieve(self, **kwargs):
+            self.retrieve_queries.append(kwargs.get("query") or "")
+            return await super().retrieve(**kwargs)
+
+    retriever = RecordingRetriever()
     orchestrator = MedSwinOrchestrator(
         embedding_client=Embedder(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
     )
     orchestrator.chunk_repo = Charts()
-    orchestrator.retriever = FakeRetriever()
+    orchestrator.retriever = retriever
     trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which metformin dose?")
     asyncio.run(
         orchestrator._retrieve_with_sufficiency(
@@ -102,6 +116,11 @@ def test_the_dense_query_drops_the_chart_history():
     assert "metformin" in seen[0].lower()
     assert "history39" not in seen[0]
     assert "history39" in trace.retrieval_query
+    assert retriever.rerank_queries
+    assert "Avoid apixaban." in retriever.rerank_queries[0]
+    assert "metformin" in retriever.rerank_queries[0].lower()
+    assert "history39" not in retriever.rerank_queries[0]
+    assert "history39" in retriever.retrieve_queries[0]
 
 
 def test_the_retrieval_query_stores_the_redacted_patient_synopsis():
