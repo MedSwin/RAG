@@ -46,8 +46,14 @@ def retrieval_filter(
     elif patient_id:
         filter_dict["$and"] = filter_dict.get("$and", []) + [
             {"$or": [
-                {"source_type": {"$ne": SourceType.EMR.value}},
                 {"patient_id": patient_id},
+                {"$and": [
+                    {"source_type": {"$ne": SourceType.EMR.value}},
+                    {"$or": [
+                        {"patient_id": {"$in": [None, ""]}},
+                        {"patient_id": {"$exists": False}},
+                    ]},
+                ]},
             ]}
         ]
     elif emr_requested:

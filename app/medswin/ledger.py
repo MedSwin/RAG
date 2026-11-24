@@ -155,26 +155,28 @@ def apply_claim_alignment(
                 passage.facet_scores[claim.facet] = max(current, clamp(claim.confidence))
 
 
+_STALE_TERMS = ("outdated", "obsolete", "superseded", "population mismatch")
+
+
 def adjudicate_contradictions(
     pairs: List[ContradictionPair],
     batches: List[AgentClaimBatch],
 ) -> List[ContradictionPair]:
-    """Resolve low/medium conflicts when the critic cites outdated or mismatched evidence."""
-    notes = " ".join(
-        " ".join(batch.notes) for batch in batches if batch.agent_id == "critic"
-    ).lower()
-    critic_text = notes + " " + " ".join(
-        claim.claim.lower()
-        for batch in batches if batch.agent_id == "critic"
-        for claim in batch.claims
-    )
-    stale = any(term in critic_text for term in ("outdated", "obsolete", "superseded", "population mismatch"))
+    """Resolve one medium conflict only when the critic cites both chunks."""
+    cited_stale: set[str] = set()
+    for batch in batches:
+        if batch.agent_id != "critic":
+            continue
+        for claim in batch.claims:
+            text = f"{claim.claim} {claim.chunk_id}".lower()
+            if claim.chunk_id and any(term in text for term in _STALE_TERMS):
+                cited_stale.add(claim.chunk_id)
     for pair in pairs:
         if pair.resolved or pair.severity == "high":
             continue
-        if stale or abs(pair.grade_a - pair.grade_b) >= 0.25:
+        if pair.chunk_id_a in cited_stale and pair.chunk_id_b in cited_stale:
             pair.resolved = True
-            pair.adjudication = "critic: outdated, population mismatch, or evidence-grade dominance"
+            pair.adjudication = "critic cited both chunks as outdated or mismatched"
     return pairs
 
 
@@ -229,14 +231,23 @@ _DRUG_SUFFIXES = (
     "nib",
 )
 _WORD = re.compile(r"[a-z][a-z0-9-]{3,}")
+_NOT_DRUGS = {"april"}
 
 
 def intervention_tokens(text: str) -> set[str]:
     """Return named drugs in one passage. Class words such as anticoagulant stay out."""
     found: set[str] = set()
-    for word in _WORD.findall((text or "").lower()):
-        if word in _DRUG_WORDS or word.endswith(_DRUG_SUFFIXES):
-            found.add(word)
+    for raw in _WORD.findall((text or "").lower()):
+        for word in raw.split("-"):
+            if len(word) < 4 or word in _NOT_DRUGS:
+                continue
+            if word.endswith("s") and word[:-1] in _DRUG_WORDS:
+                word = word[:-1]
+            listed = next((drug for drug in _DRUG_WORDS if len(drug) >= 6 and word.startswith(drug)), None)
+            if listed:
+                found.add(listed)
+            elif word in _DRUG_WORDS or word.endswith(_DRUG_SUFFIXES):
+                found.add(word)
     return found
 
 
@@ -300,4 +311,33 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 if not same_intervention(support_text, conflict_text):
                     continue
                 _add(facet, support, conflict, "Incompatible support and caution for the same intervention.")
+
+    safety_warnings: List[tuple[EvidenceLedgerEntry, EvidenceClaim]] = []
+    other_supports: List[tuple[EvidenceLedgerEntry, EvidenceClaim]] = []
+    for entry in ledger:
+        for claim in entry.claims:
+            if claim.facet == "safety_contraindications" and claim.polarity in {
+                EvidencePolarity.SAFETY,
+                EvidencePolarity.CONTRADICTS,
+            }:
+                safety_warnings.append((entry, claim))
+            elif (
+                claim.polarity == EvidencePolarity.SUPPORTS
+                and claim.facet != "safety_contraindications"
+            ):
+                other_supports.append((entry, claim))
+    for support_entry, support_claim in other_supports:
+        for warning_entry, warning_claim in safety_warnings:
+            # A safety warning crosses facets only when both sides name the same drug.
+            # An unnamed caution still covers the safety facet. It does not veto every guideline.
+            if not intervention_tokens(support_claim.claim) or not intervention_tokens(warning_claim.claim):
+                continue
+            if not same_intervention(support_claim.claim, warning_claim.claim):
+                continue
+            _add(
+                support_claim.facet,
+                support_entry,
+                warning_entry,
+                "Same-drug safety warning conflicts with this recommendation.",
+            )
     return pairs

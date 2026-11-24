@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import re
 from typing import Dict, Iterable, List, Optional, Sequence
 
 from app.core.config import settings
@@ -51,8 +52,9 @@ def score_passage_facets(
         keyword_score = min(0.65, len(matched) * 0.18)
         section_score = passage.section_score if passage.section_score is not None else 0.5
         safety_bonus = 0.25 if facet.name == "safety_contraindications" and _safety_score(passage) > 0 else 0.0
-        if not matched and safety_bonus == 0.0 and source_bonus < 0.45:
+        if not matched and safety_bonus == 0.0 and source_bonus <= 0.45:
             # Source-policy affinity alone must not mark an unrelated facet as covered.
+            # An exact source match is 0.45. It still needs a keyword or a safety hit.
             scores[facet.name] = 0.0
         else:
             scores[facet.name] = clamp(0.20 + source_bonus + keyword_score + 0.15 * section_score + safety_bonus)
@@ -160,6 +162,27 @@ def compute_facet_coverage(
     return coverage
 
 
+_CAUTION = re.compile(r"\b(?:contraindicat\w*|not recommended|\bavoid\b|do not|should not)\b", re.I)
+_LOCAL_NEGATION = re.compile(
+    r"\b(?:no|not|without|absent|denies|denied|negative for|free of)\b(?:\W+\w+){0,4}\W*$",
+    re.I,
+)
+_BENIGN_DO_NOT = re.compile(r"^\s+(?:delay|withhold|wait|hesitate)\b", re.I)
+
+
+def _ungoverned_caution(text: str) -> bool:
+    """True when caution wording is not cancelled by a nearby negation."""
+    for match in _CAUTION.finditer(text or ""):
+        window = text[max(0, match.start() - 48):match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        phrase = match.group(0).lower()
+        if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(text[match.end():]):
+            continue
+        return True
+    return False
+
+
 def infer_polarity(passage: CandidatePassage, facet: ClinicalFacet) -> EvidencePolarity:
     explicit = passage.metadata.get("polarity")
     if explicit:
@@ -168,7 +191,7 @@ def infer_polarity(passage: CandidatePassage, facet: ClinicalFacet) -> EvidenceP
         except ValueError:
             pass
     text = passage.text.lower()
-    if any(term in text for term in ["contraindicat", "not recommended", "avoid", "do not", "should not"]):
+    if _ungoverned_caution(text):
         return EvidencePolarity.CONTRADICTS if facet.name != "safety_contraindications" else EvidencePolarity.SAFETY
     if any(term in text for term in ["unless", "except", "caution", "monitor"]):
         return EvidencePolarity.QUALIFIES

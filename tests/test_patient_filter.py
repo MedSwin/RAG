@@ -24,4 +24,6 @@ def test_a_named_patient_keeps_that_chart_and_shared_evidence():
     query_filter = retrieval_filter("org-1", None, "patient-1", {})
     clause = query_filter["$and"][0]["$or"]
     assert {"patient_id": "patient-1"} in clause
-    assert {"source_type": {"$ne": SourceType.EMR.value}} in clause
+    shared = next(item for item in clause if "$and" in item)
+    assert {"source_type": {"$ne": SourceType.EMR.value}} in shared["$and"]
+    assert {"patient_id": "other-patient"} not in clause

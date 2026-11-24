@@ -131,9 +131,10 @@ class LexicalRetriever:
             where.append("source_type = ?")
             params.append(source_type_filter.value)
         if patient_id:
-            # Patient-scoped retrieval still allows global literature; only EMR
-            # rows are narrowed to the active patient by the Mongo filter below.
-            pass
+            # Keep shared literature. Keep only this patient's chart rows inside
+            # the FTS limit, so another chart cannot fill the window.
+            where.append("(source_type != 'EMR' OR patient_id = ?)")
+            params.append(patient_id)
         source_policy = str((constraints or {}).get("source_policy") or "ANY").upper()
         if source_type_filter is None and source_policy.endswith("_ONLY"):
             source = source_policy.removesuffix("_ONLY")
