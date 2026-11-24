@@ -73,7 +73,8 @@ def lead_with_caution(text: str) -> str:
             ordered = raw
     else:
         span = LexicalRetriever._caution_span(raw)
-        ordered = f"{span} {raw}" if span and raw.lower().find(span.lower()) > 80 else raw
+        index = raw.lower().find(span.lower()) if span else 0
+        ordered = f"{span} {raw}" if span and (index < 0 or index > 80) else raw
     return _prepend_dose(ordered)
 
 

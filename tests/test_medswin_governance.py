@@ -44,6 +44,20 @@ def test_a_long_passage_shows_the_caution_first():
     assert "history39" in shown
 
 
+def test_a_long_sentence_shows_the_later_drug_first():
+    from app.services.medswin.governance import lead_with_caution
+
+    filler = " ".join(f"history{i}" for i in range(30))
+    gap = (
+        "this treatment immediately whenever the haematology service confirms "
+        "persistent gastrointestinal bleeding after a recent major procedure involving"
+    )
+    shown = lead_with_caution(f"{filler} Avoid {gap} apixaban")
+    assert "apixaban" in shown[:80].lower()
+    assert shown.lower().find("apixaban") < shown.lower().find("history0")
+    assert lead_with_caution("Avoid apixaban.").lower().count("avoid apixaban") == 1
+
+
 def test_the_chat_response_drops_a_phone_number():
     from app.schemas.evidence import EvidenceBundle, EvidenceClaim, EvidenceLedgerEntry
     from app.schemas.traces import ChatResponse
