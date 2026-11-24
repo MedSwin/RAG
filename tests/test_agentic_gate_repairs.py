@@ -1100,6 +1100,37 @@ def test_a_specialist_cannot_turn_a_caution_into_support():
     assert all(claim.polarity != EvidencePolarity.SUPPORTS for claim in merged[0].claims)
 
 
+def test_a_caution_confidence_does_not_outrank_the_recommendation():
+    from app.scoring.utility import select_bundle
+
+    facet = ClinicalFacet(name="guideline_concordance", keywords=["apixaban"], required=True, threshold=0.70)
+    recommendation = _passage("rec", "Apixaban is recommended for atrial fibrillation.")
+    caution = _passage("caut", "Avoid apixaban. Apixaban is contraindicated.", source_type=SourceType.SAFETY)
+    for passage in (recommendation, caution):
+        passage.calibrated_score = 0.90
+        passage.fusion_score = 0.80
+        passage.token_count = 40
+    caution.contradiction_score = 0.32
+    score_passage_facets(recommendation, [facet])
+    score_passage_facets(caution, [facet])
+    batch = AgentClaimBatch(
+        agent_id="guideline",
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Apixaban is recommended.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="caut",
+                confidence=1.0,
+            )
+        ],
+    )
+    apply_claim_alignment([recommendation, caution], [batch], [facet])
+    assert caution.facet_scores["guideline_concordance"] < 1.0
+    selected = select_bundle([recommendation, caution], token_budget=40, max_chunks=1)
+    assert [item.chunk_id for item in selected] == ["rec"]
+
+
 def test_drug_tokens_fold_plurals_and_ignore_april():
     assert intervention_tokens("Avoid NSAIDs") == {"nsaid"}
     assert same_intervention("Avoid NSAIDs", "NSAID is recommended") is True

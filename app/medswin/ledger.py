@@ -165,6 +165,13 @@ def apply_claim_alignment(
                 current = passage.facet_scores.get(claim.facet, 0.0)
                 if current <= 0.0:
                     continue
+                text_polarity = infer_polarity(passage, ClinicalFacet(name=claim.facet))
+                if text_polarity in {
+                    EvidencePolarity.CONTRADICTS,
+                    EvidencePolarity.SAFETY,
+                    EvidencePolarity.QUALIFIES,
+                }:
+                    continue
                 passage.facet_scores[claim.facet] = max(current, clamp(claim.confidence))
 
 
