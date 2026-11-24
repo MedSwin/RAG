@@ -85,6 +85,27 @@ def _trace_candidates(pool: List[CandidatePassage], limit: int = 40) -> List[Dic
     ]
 
 
+def _trace_scores(candidates: List[CandidatePassage], limit: int = 40) -> List[Dict[str, Any]]:
+    """List the top rerank scores and any later caution."""
+    from app.agents.base import _is_prompt_caution
+
+    shown = list(candidates[:limit])
+    shown_ids = {item.chunk_id for item in shown}
+    for candidate in candidates[limit:]:
+        if candidate.chunk_id in shown_ids or not _is_prompt_caution(candidate):
+            continue
+        shown.append(candidate)
+        shown_ids.add(candidate.chunk_id)
+    return [
+        {
+            "chunk_id": item.chunk_id,
+            "p_hat": item.calibrated_score,
+            "logit": (item.metadata or {}).get("rerank_logit"),
+        }
+        for item in shown
+    ]
+
+
 class HybridRetriever:
     """Two-stage hybrid retriever with calibrated reranking."""
 
@@ -207,14 +228,7 @@ class HybridRetriever:
             version = calibrated[0].get("calibration_version") if calibrated else self.calibration.version
             trace = RerankTrace(
                 calibration_version=version,
-                scores=[
-                    {
-                        "chunk_id": c.chunk_id,
-                        "p_hat": c.calibrated_score,
-                        "logit": c.metadata.get("rerank_logit"),
-                    }
-                    for c in candidates[:40]
-                ],
+                scores=_trace_scores(candidates),
             )
             return candidates, trace
         except Exception as exc:  # noqa: BLE001

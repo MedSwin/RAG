@@ -736,3 +736,18 @@ def test_the_retrieval_trace_lists_a_caution_past_the_first_rows():
     ids = [row["chunk_id"] for row in rows]
     assert ids.count("caution") == 1
     assert "other" not in ids
+
+
+def test_the_rerank_trace_lists_a_caution_past_the_first_scores():
+    from app.retrieval.hybrid import _trace_scores
+
+    fillers = [
+        _candidate(f"dense-{index}", "A general note.", dense=0.90, rerank=0.90)
+        for index in range(40)
+    ]
+    caution = _candidate("caution", "Avoid apixaban.", source_type=SourceType.SAFETY, rerank=0.60)
+    other = _candidate("other", "A trial report about methods.", rerank=0.20)
+    rows = _trace_scores([*fillers, caution, other], limit=40)
+    caution_row = next(row for row in rows if row["chunk_id"] == "caution")
+    assert caution_row["p_hat"] == 0.60
+    assert all(row["chunk_id"] != "other" for row in rows)
