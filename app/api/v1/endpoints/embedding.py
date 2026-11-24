@@ -7,12 +7,12 @@ from typing import List, Literal
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.state import get_model_manager
+from app.models.pooling import cls_pool
 from app.services.adapters.embedding import EmbeddingClient
 
 logger = logging.getLogger(__name__)
@@ -78,9 +78,7 @@ def _local_embed(texts: List[str], normalize: bool) -> tuple[List[List[float]], 
     inputs = {key: value.to(device) for key, value in inputs.items()}
     with torch.no_grad():
         outputs = embed_model(**inputs)
-        embedding = mean_pooling(outputs.last_hidden_state, inputs["attention_mask"])
-        if normalize:
-            embedding = F.normalize(embedding, p=2, dim=1)
+        embedding = cls_pool(outputs.last_hidden_state, inputs["attention_mask"])
         array = embedding.cpu().numpy().astype(np.float32)
     return array.tolist(), int(embedding_dim)
 
@@ -170,9 +168,4 @@ async def get_embedding_info():
     }
 
 
-def mean_pooling(token_embeddings: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    masked_embeddings = token_embeddings * input_mask_expanded
-    summed_embeddings = torch.sum(masked_embeddings, 1)
-    summed_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-    return summed_embeddings / summed_mask
+from app.models.pooling import cls_pool

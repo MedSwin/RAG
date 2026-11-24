@@ -137,8 +137,9 @@ class IngestionPipelineService:
     def _generate_embeddings_sync(self, chunks, tokenizer, embed_model, device, embedding_dim):
         """Synchronous embedding generation."""
         import torch
-        import torch.nn.functional as F
         import numpy as np
+
+        from app.models.pooling import cls_pool
         
         chunks_with_embeddings = []
         batch_size = settings.BATCH_SIZE
@@ -161,8 +162,7 @@ class IngestionPipelineService:
             with torch.no_grad():
                 outputs = embed_model(**inputs)
                 attention_mask = inputs['attention_mask']
-                embeddings = self._mean_pooling(outputs.last_hidden_state, attention_mask)
-                embeddings = F.normalize(embeddings, p=2, dim=1)
+                embeddings = cls_pool(outputs.last_hidden_state, attention_mask)
                 embeddings = embeddings.cpu().numpy().astype(np.float64)
             
             # Add embeddings to chunks
@@ -178,16 +178,6 @@ class IngestionPipelineService:
                 torch.cuda.empty_cache()
         
         return chunks_with_embeddings
-    
-    def _mean_pooling(self, token_embeddings, attention_mask):
-        """Mean pooling function."""
-        import torch
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-        masked_embeddings = token_embeddings * input_mask_expanded
-        summed_embeddings = torch.sum(masked_embeddings, 1)
-        summed_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-        mean_embeddings = summed_embeddings / summed_mask
-        return mean_embeddings
     
     async def _deduplicate_chunks(self, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Remove duplicate chunks based on content hash."""

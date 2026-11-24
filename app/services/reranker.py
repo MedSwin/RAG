@@ -6,6 +6,8 @@ import logging
 from typing import List, Dict, Tuple, Union
 import json
 
+from app.models.pooling import inference_device
+
 logger = logging.getLogger(__name__)
 
 class DocumentReranker:
@@ -13,7 +15,7 @@ class DocumentReranker:
     
     def __init__(self, model_path: str, model_type: str = "auto"):
         self.model_path = Path(model_path)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = inference_device()
         self.model_type = self._detect_model_type() if model_type == "auto" else model_type
         
         logger.info(f"Loading reranker model from {model_path} on {self.device}")
@@ -66,14 +68,13 @@ class DocumentReranker:
     
     def _prepare_input_bge_m3(self, query: str, document: str) -> Dict[str, torch.Tensor]:
         """Prepare input for BGE-M3 model."""
-        text = f"{query} [SEP] {document}"
-        
         inputs = self.tokenizer(
-            text,
+            query,
+            document,
             truncation=True,
             padding=True,
             max_length=512,
-            return_tensors="pt"
+            return_tensors="pt",
         )
         
         return {k: v.to(self.device) for k, v in inputs.items()}
@@ -95,15 +96,11 @@ class DocumentReranker:
     def _compute_score_bge_m3(self, inputs: Dict[str, torch.Tensor]) -> float:
         """Compute relevance score for BGE-M3 model."""
         with torch.no_grad():
-            outputs = self.model(**inputs)
-            logits = outputs.logits
-            scores = F.softmax(logits, dim=-1)
-            
-            if scores.shape[-1] == 1:
-                score = torch.sigmoid(logits).item()
+            logits = self.model(**inputs).logits
+            if logits.shape[-1] == 1:
+                score = torch.sigmoid(logits.view(-1)[0]).item()
             else:
-                score = scores[0, 1].item() if scores.shape[-1] > 1 else scores[0, 0].item()
-        
+                score = F.softmax(logits, dim=-1)[0, 1].item()
         return score
     
     def _compute_score_gemma(self, inputs: Dict[str, torch.Tensor]) -> float:

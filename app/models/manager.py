@@ -7,6 +7,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from app.core.config import settings
+from app.models.pooling import cls_pool, inference_device
 from app.services.reranker import DocumentReranker
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class ModelManager:
     
     def _load_embedding_model_sync(self, model_path: Path) -> Tuple[AutoTokenizer, AutoModel, torch.device, int]:
         """Synchronous model loading function."""
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = inference_device()
         
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         model = AutoModel.from_pretrained(model_path)
@@ -61,7 +62,7 @@ class ModelManager:
         
         with torch.no_grad():
             test_output = model(**test_input)
-            test_embedding = self._mean_pooling(test_output.last_hidden_state, test_input['attention_mask'])
+            test_embedding = cls_pool(test_output.last_hidden_state, test_input["attention_mask"])
             embedding_dim = test_embedding.shape[1]
         
         return tokenizer, model, device, embedding_dim
@@ -93,15 +94,6 @@ class ModelManager:
     def _load_reranker_model_sync(self, model_path: Path) -> DocumentReranker:
         """Synchronous reranker loading function."""
         return DocumentReranker(str(model_path))
-    
-    def _mean_pooling(self, token_embeddings: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-        """Mean pooling function."""
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-        masked_embeddings = token_embeddings * input_mask_expanded
-        summed_embeddings = torch.sum(masked_embeddings, 1)
-        summed_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-        mean_embeddings = summed_embeddings / summed_mask
-        return mean_embeddings
     
     def get_embedding_model(self) -> Tuple[AutoTokenizer, AutoModel, torch.device, int]:
         """Get embedding model components."""

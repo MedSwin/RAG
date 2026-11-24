@@ -19,6 +19,7 @@ __pycache__/
 quicktest.py
 reranker/
 model/
+/models/
 
 # Environment
 .env*

@@ -1,15 +1,26 @@
 import os
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from pathlib import Path
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from huggingface_hub import hf_hub_download, snapshot_download
-from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _has_weights(local_path: Path) -> bool:
+    """Accept a single-file or sharded weight directory."""
+    if (local_path / "model.safetensors").exists() or (local_path / "pytorch_model.bin").exists():
+        return True
+    return any(local_path.glob("model*.safetensors")) or any(local_path.glob("pytorch_model*.bin"))
+
+
+def _has_tokenizer(local_path: Path) -> bool:
+    names = ("tokenizer.json", "tokenizer_config.json", "vocab.txt", "sentencepiece.bpe.model")
+    return any((local_path / name).exists() for name in names)
+
 
 class ModelDownloadService:
     """Service for downloading models from Hugging Face."""
@@ -21,7 +32,7 @@ class ModelDownloadService:
         # Model configurations
         self.models = {
             "embedding": {
-                "repo_id": "sentence-transformers/all-MiniLM-L6-v2",
+                "repo_id": "abhinand/MedEmbed-large-v0.1",
                 "local_path": settings.EMBEDDING_MODEL_PATH,
                 "type": "embedding"
             },
@@ -68,6 +79,8 @@ class ModelDownloadService:
     def _download_model_sync(self, model_config: Dict[str, Any]) -> None:
         """Synchronous model download."""
         try:
+            from huggingface_hub import snapshot_download
+
             local_path = Path(model_config["local_path"])
             local_path.mkdir(parents=True, exist_ok=True)
             
@@ -97,19 +110,11 @@ class ModelDownloadService:
         if not local_path.exists():
             return False
         
-        # Check for required files based on model type
         if model_config["type"] == "embedding":
-            required_files = ["config.json", "pytorch_model.bin", "tokenizer.json"]
-        elif model_config["type"] == "reranker":
-            required_files = ["config.json", "pytorch_model.bin"]
-        else:
-            required_files = ["config.json"]
-        
-        for file_name in required_files:
-            if not (local_path / file_name).exists():
-                return False
-        
-        return True
+            return _has_weights(local_path) and _has_tokenizer(local_path) and (local_path / "config.json").exists()
+        if model_config["type"] == "reranker":
+            return _has_weights(local_path) and (local_path / "config.json").exists()
+        return (local_path / "config.json").exists()
     
     async def get_model_info(self, model_name: str) -> Dict[str, Any]:
         """Get information about a model."""
