@@ -525,6 +525,7 @@ def named_caution_text(text: str) -> str:
         _not_home_stop,
         _not_own_stop,
         _not_current_stop,
+        _not_therapy_stop,
         _not_regular_med_stop,
         _ungoverned_caution,
     )
@@ -540,6 +541,7 @@ def named_caution_text(text: str) -> str:
                 or _not_brought_stop(sentence)
                 or _not_own_stop(sentence)
                 or _not_current_stop(sentence)
+                or _not_therapy_stop(sentence)
             ):
                 spans.append(sentence.strip())
                 continue
@@ -899,6 +901,7 @@ _DURATION_DRUG = re.compile(
     r"(?:long-?term|regular|chronic|maintenance|current(?:ly)?)\s+",
     re.I,
 )
+_THERAPY_NOUN = re.compile(r"\b(?:therap(?:y|ies)|treatments?)\b", re.I)
 _IS_REGULAR_MED = re.compile(
     r"\b(?:is|was|were|are|am|been)\s+"
     r"(?:(?:a|an|the|his|her|their)\s+)?"
@@ -1094,6 +1097,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
     if _established_on_drug(sentence):
         return True
     if _duration_drug(sentence):
+        return True
+    if _drug_therapy(sentence):
         return True
     if _regular_medication(sentence):
         return True
@@ -1571,6 +1576,29 @@ def _duration_drug(sentence: str) -> bool:
     return False
 
 
+def _drug_therapy(sentence: str) -> bool:
+    """True when the drug itself is named as the therapy."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _MED_HISTORY, _MED_TOPIC, _ON_TOPIC
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text) or _MED_TOPIC.search(text) or _MED_HISTORY.search(text):
+        return False
+    for match in _THERAPY_NOUN.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        prefix = text[: match.start()]
+        tail = text[match.end():]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        tail_words = re.findall(r"[A-Za-z0-9'-]+", tail)
+        if any(_ON_TOPIC.match(word) for word in tail_words):
+            continue
+        if intervention_tokens(tail) and intervention_tokens(prefix).isdisjoint(intervention_tokens(tail)):
+            continue
+        if _home_subject_is_drug(prefix):
+            return True
+    return False
+
+
 def _subject_word_is_drug(prefix: str) -> bool:
     """True when the subject just before the verb is a drug."""
     words = re.findall(r"[A-Za-z0-9'-]+", prefix or "")
@@ -2011,6 +2039,7 @@ def _chart_caution_text(chart: str) -> str:
         _not_brought_stop,
         _not_own_stop,
         _not_current_stop,
+        _not_therapy_stop,
         _med_list_stop,
         _refused_stop,
         _negated_away_split,
@@ -2043,6 +2072,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _not_brought_stop(sentence)
                 or _not_own_stop(sentence)
                 or _not_current_stop(sentence)
+                or _not_therapy_stop(sentence)
                 or _med_list_stop(sentence)
                 or _refused_stop(sentence)
             ):

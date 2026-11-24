@@ -470,6 +470,10 @@ _NOT_CURRENT = re.compile(
     r"\b(?:no|not|never)\s+current(?:ly)?\s+",
     re.I,
 )
+_NOT_THERAPY = re.compile(
+    r"\b(?:no|not|never)\b(?:\s+[A-Za-z0-9'-]+){0,4}\s+(?:therap(?:y|ies)|treatments?)\b",
+    re.I,
+)
 _NOT_REGULAR_MED = re.compile(
     r"\b(?:is|was|were|are|am|been)\s+not\s+"
     r"(?:(?:a|an|the|his|her|their)\s+)?"
@@ -510,6 +514,10 @@ _BARE_MED = re.compile(
 _MED_PACK = re.compile(
     r"\b(?:webster(?:\s+pack)?|blister\s+pack|dosette(?:\s+(?:box|pack))?|pack)\b"
     r"(?P<mid>(?:\s+\w+){0,4})\s*(?P<mark>includes?\b|contains?\b|:)",
+    re.I,
+)
+_CARE_LIST = re.compile(
+    r"\b(?:treatments?|therap(?:y|ies))\b(?P<mid>(?:\s+\w+){0,4})\s*(?P<mark>includes?\b|:)",
     re.I,
 )
 _NOT_PACK = re.compile(
@@ -854,6 +862,23 @@ def _not_current_stop(text: str) -> bool:
     return False
 
 
+def _not_therapy_stop(text: str) -> bool:
+    """True when the line says the drug is not the therapy."""
+    raw = text or ""
+    if re.search(r"\b(?:counsel|discuss|advise|update|inform|educat\w*)\b", raw, re.I):
+        return False
+    if _MED_TOPIC.search(raw) or _MED_HISTORY.search(raw):
+        return False
+    for match in _NOT_THERAPY.finditer(raw):
+        tail_words = re.findall(r"[A-Za-z0-9'-]+", raw[match.end():])
+        if any(_ON_TOPIC.match(word) for word in tail_words):
+            continue
+        words = re.findall(r"[A-Za-z0-9'-]+", match.group(0))
+        if any(_token_names_drug(word) for word in words):
+            return True
+    return False
+
+
 def _not_for_stop(text: str) -> bool:
     """True when the line says the patient is not for a named drug."""
     if _negated_off_keep(text):
@@ -905,7 +930,7 @@ def _med_list_kind(text: str) -> str:
     raw = text or ""
     if _MED_HISTORY.search(raw) or _MED_TOPIC.search(raw):
         return ""
-    for pattern in (_MED_LIST, _MED_PACK):
+    for pattern in (_MED_LIST, _MED_PACK, _CARE_LIST):
         for match in pattern.finditer(raw):
             if pattern is _MED_PACK and _NOT_PACK.search(raw[max(0, match.start() - 24): match.end()]):
                 continue
@@ -1079,6 +1104,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _not_brought_stop(text)
         or _not_own_stop(text)
         or _not_current_stop(text)
+        or _not_therapy_stop(text)
         or _med_list_stop(text)
         or _refused_stop(text)
     )
