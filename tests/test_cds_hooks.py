@@ -357,6 +357,47 @@ def test_a_critical_card_names_the_conflict_drug():
     assert "conflicts with warfarin" in beside["detail"].lower()
 
 
+def test_a_long_conflict_list_keeps_every_drug_name():
+    from app.schemas.evidence import ContradictionPair
+
+    drugs = [
+        "apixaban",
+        "dabigatran",
+        "rivaroxaban",
+        "edoxaban",
+        "warfarin",
+        "heparin",
+        "enoxaparin",
+        "aspirin",
+        "metformin",
+        "ibuprofen",
+        "ketorolac",
+    ]
+    response = _response(accepted=True, unresolved=True)
+    response.evidence_bundle.passages.append(
+        CandidatePassage(
+            chunk_id="caution",
+            doc_id="doc-caution",
+            source_type=SourceType.SAFETY,
+            text="Avoid " + ", ".join(drugs) + ".",
+        )
+    )
+    response.contradictions = [
+        ContradictionPair(
+            facet="guideline_concordance",
+            chunk_id_a="chunk-1",
+            chunk_id_b="caution",
+            severity="high",
+            reason="The sources conflict.",
+        )
+    ]
+    card = cards_from_chat(response)[0]
+    assert len(card["summary"]) <= 140
+    for drug in drugs:
+        assert drug in card["summary"]
+    assert card["summary"].endswith(".")
+
+
 def test_unknown_service_is_not_found():
     response = _app(None).post(
         "/cds-services/other",

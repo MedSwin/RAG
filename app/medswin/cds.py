@@ -85,7 +85,12 @@ def cards_from_chat(
         indicator = "critical"
         conflict_drug = _caution_drug_name(passages, decision, contradictions, severity="high")
         summary = (
-            _clip(f"Unresolved evidence conflicts for {conflict_drug} need clinician review.")
+            _named_summary(
+                conflict_drug,
+                "Unresolved evidence conflicts for ",
+                " need clinician review.",
+                "Conflicts for ",
+            )
             if conflict_drug
             else "Unresolved evidence conflicts need clinician review."
         )
@@ -212,17 +217,47 @@ def _chart_caution_line(decision: Any, contradictions: List[Any]) -> str:
     return ""
 
 
+def _named_summary(drugs: str, full_prefix: str, full_suffix: str, short_prefix: str) -> str:
+    """Keep every drug name. Shorten the sentence when the full line exceeds the card limit."""
+    full = f"{full_prefix}{drugs}{full_suffix}"
+    if len(full) <= _SUMMARY_LIMIT:
+        return full
+    short = f"{short_prefix}{drugs}."
+    if len(short) <= _SUMMARY_LIMIT:
+        return short
+    names = [name.strip() for name in drugs.split(",") if name.strip()]
+    kept: List[str] = []
+    for name in names:
+        trial = f"{short_prefix}{', '.join(kept + [name])}."
+        if len(trial) > _SUMMARY_LIMIT:
+            break
+        kept.append(name)
+    if not kept:
+        return _clip(full)
+    return f"{short_prefix}{', '.join(kept)}."
+
+
 def _conflict_summary(drug_name: str) -> str:
     """Name a medium Avoid warning. This sentence is not a low qualifier."""
     if drug_name:
-        return _clip(f"An unresolved caution conflicts with {drug_name}.")
+        return _named_summary(
+            drug_name,
+            "An unresolved caution conflicts with ",
+            ".",
+            "Conflicts with ",
+        )
     return "An unresolved caution conflicts with this recommendation."
 
 
 def _caution_summary(drug_name: str) -> str:
     """Name the caution drug when the passage states one."""
     if drug_name:
-        return _clip(f"An unresolved caution qualifies {drug_name}.")
+        return _named_summary(
+            drug_name,
+            "An unresolved caution qualifies ",
+            ".",
+            "Qualifies ",
+        )
     return "An unresolved caution qualifies this recommendation."
 
 
