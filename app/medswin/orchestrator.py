@@ -325,8 +325,25 @@ def _specialist_candidates(ranked: List, limit: int = 40) -> List:
 
 def rejected_chunk_ids(candidates: List, selected_ids: set, limit: int = 50) -> List[str]:
     """List dropped passages. Put a caution ahead of filler."""
+    from app.agents.base import _make_room_for_new_drug
+
     rejected = [item for item in candidates if item.chunk_id not in selected_ids]
-    return [item.chunk_id for item in prioritize_passages(rejected)][:limit]
+    kept = []
+    for item in prioritize_passages(rejected):
+        if len(kept) >= limit:
+            kept = [
+                part[0]
+                for part in _make_room_for_new_drug(
+                    [(part,) for part in kept],
+                    lambda part: part[0].text or "",
+                    item.text or "",
+                    True,
+                )
+            ]
+        if len(kept) >= limit:
+            continue
+        kept.append(item)
+    return [item.chunk_id for item in kept]
 
 
 def _chart_synopsis(chunks: List, budget: int = 140) -> str:

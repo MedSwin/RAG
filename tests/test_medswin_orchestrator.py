@@ -634,6 +634,34 @@ def test_a_dropped_caution_stays_on_the_rejected_list():
     assert len(dropped) == 50
 
 
+def test_a_later_drug_stays_when_repeated_cautions_fill_the_rejected_list():
+    from app.medswin.orchestrator import rejected_chunk_ids
+
+    repeated = [
+        CandidatePassage(
+            chunk_id=f"w-{index}",
+            doc_id=f"w-{index}",
+            source_type=SourceType.SAFETY,
+            text=f"Avoid warfarin. note {index}",
+            calibrated_score=0.90,
+            safety_score=0.90,
+        )
+        for index in range(50)
+    ]
+    later = CandidatePassage(
+        chunk_id="apix",
+        doc_id="apix",
+        source_type=SourceType.SAFETY,
+        text="Avoid apixaban.",
+        calibrated_score=0.60,
+        safety_score=0.40,
+    )
+    dropped = rejected_chunk_ids([*repeated, later], set())
+    assert "apix" in dropped
+    assert any(chunk_id.startswith("w-") for chunk_id in dropped)
+    assert len(dropped) <= 50
+
+
 def test_supplied_session_id_is_created_when_it_is_missing():
     import asyncio
 
