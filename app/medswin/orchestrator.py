@@ -32,6 +32,7 @@ from app.medswin.ledger import (
     merge_agent_claims,
 )
 from app.retrieval.hints import expand_query
+from app.retrieval.lexical import LexicalRetriever
 from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 from app.medswin.normalize import QueryNormalizer
 from app.medswin.packing import pack_bundle
@@ -707,7 +708,7 @@ class MedSwinOrchestrator:
     ):
         retrieval_query = await self._patient_query(query, org_id, patient_id, constraints, trace)
         trace.retrieval_query = redact_phi_text(retrieval_query)
-        embeddings = await self.embedding_client.embed([retrieval_query])
+        embeddings = await self.embedding_client.embed([LexicalRetriever.focus_query(retrieval_query)])
         query_embedding = embeddings[0] if embeddings else None
         if query_embedding is None:
             empty = EvidenceBundle(passages=[], total_tokens=0, cpg_count=0, emr_count=0, lit_count=0)
@@ -729,7 +730,9 @@ class MedSwinOrchestrator:
         while iteration < settings.MAX_RETRIEVE_LOOPS:
             loop_query = expand_query(retrieval_query, hints)
             if loop_query != last_embedded:
-                expanded_embeddings = await self.embedding_client.embed([loop_query])
+                expanded_embeddings = await self.embedding_client.embed(
+                    [LexicalRetriever.focus_query(loop_query)]
+                )
                 if expanded_embeddings:
                     query_embedding = expanded_embeddings[0]
                     last_embedded = loop_query

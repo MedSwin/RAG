@@ -153,17 +153,35 @@ class LexicalRetriever:
         return terms
 
     @staticmethod
-    def _caution_terms(context: str) -> List[str]:
-        """Keep terms from caution sentences. A history sentence stays out."""
+    def _caution_sentences(context: str) -> List[str]:
+        """Keep caution sentences. A history sentence stays out."""
         from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 
         sentences = re.split(r"(?<=[.!?])\s+|\n+", context or "")
-        kept = [
-            sentence
+        return [
+            sentence.strip()
             for sentence in sentences
-            if _ungoverned_caution(sentence) or _QUALIFY.search(sentence)
+            if sentence.strip() and (_ungoverned_caution(sentence) or _QUALIFY.search(sentence))
         ]
-        return LexicalRetriever._fts_terms(" ".join(kept))
+
+    @staticmethod
+    def _caution_terms(context: str) -> List[str]:
+        """Keep terms from caution sentences. A history sentence stays out."""
+        return LexicalRetriever._fts_terms(" ".join(LexicalRetriever._caution_sentences(context)))
+
+    @staticmethod
+    def focus_query(query: str) -> str:
+        """Question plus caution sentences. History filler stays out of the embedding."""
+        raw = query or ""
+        marker = "patient retrieval context:"
+        index = raw.lower().find(marker)
+        if index < 0:
+            return raw.strip()
+        question = raw[:index].strip()
+        kept = LexicalRetriever._caution_sentences(raw[index + len(marker):])
+        if not kept:
+            return question
+        return f"{question}\n\nPatient retrieval context:\n{' '.join(kept)}"
 
     @staticmethod
     def _lexical_terms(query: str) -> List[str]:

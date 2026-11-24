@@ -13,7 +13,10 @@ from app.services.adapters.limiter import rate_limit_snapshot
 
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _PHONE_RE = re.compile(r"\b(?:\+?\d[\d .()-]{7,}\d)\b")
-_MRN_RE = re.compile(r"\b(?:MRN|patient(?:\s+id)?|medicare)\s*[:#-]?\s*[A-Z0-9-]{4,}\b", re.IGNORECASE)
+_MRN_RE = re.compile(
+    r"\b(?:MRN|medicare|patient(?:\s+id)?)\s*[:#-]\s*[A-Z0-9-]{4,}\b",
+    re.IGNORECASE,
+)
 _DOB_RE = re.compile(r"\b(?:DOB|date of birth)\s*[:#-]?\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", re.IGNORECASE)
 
 

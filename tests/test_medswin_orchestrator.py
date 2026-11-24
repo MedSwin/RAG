@@ -66,6 +66,44 @@ async def _noop_agents(*args, **kwargs):
     return []
 
 
+def test_the_dense_query_drops_the_chart_history():
+    import asyncio
+
+    seen = []
+
+    class Embedder:
+        async def embed(self, texts):
+            seen.extend(texts)
+            return [np.array([1.0, 0.0], dtype=np.float32)]
+
+    class Charts:
+        async def get_by_patient_id(self, patient_id, org_id, **_kwargs):
+            note = "Avoid apixaban. " + " ".join(f"history{i}" for i in range(40))
+            return [{"source_type": "EMR", "text": note}]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=Embedder(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.chunk_repo = Charts()
+    orchestrator.retriever = FakeRetriever()
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which metformin dose?")
+    asyncio.run(
+        orchestrator._retrieve_with_sufficiency(
+            "Which metformin dose?",
+            QuerySpec(canonical_terms=["metformin"]),
+            "org",
+            "pt-1",
+            {},
+            trace,
+        )
+    )
+    assert seen
+    assert "Avoid apixaban." in seen[0]
+    assert "metformin" in seen[0].lower()
+    assert "history39" not in seen[0]
+    assert "history39" in trace.retrieval_query
+
+
 def test_the_retrieval_query_stores_the_redacted_patient_synopsis():
     import asyncio
 

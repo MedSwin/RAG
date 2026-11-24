@@ -66,6 +66,21 @@ def test_phi_redaction_handles_direct_identifiers():
     assert "[REDACTED_PHONE]" in redacted
 
 
+def test_the_retrieval_marker_is_not_redacted_as_a_patient_id():
+    from app.services.medswin.governance import redact_phi_text
+
+    text = "Which metformin dose?\n\nPatient retrieval context:\nAvoid apixaban."
+    redacted = redact_phi_text(text)
+    assert "Patient retrieval context:" in redacted
+    assert "Avoid apixaban." in redacted
+    assert "metformin" in redacted
+    assert "[REDACTED_PATIENT_ID]" not in redacted
+    labelled = redact_phi_text("Review MRN: ABCD99 and Patient MRN: 123456.")
+    assert "ABCD99" not in labelled
+    assert "123456" not in labelled
+    assert labelled.count("[REDACTED_PATIENT_ID]") == 2
+
+
 def test_recursive_phi_redaction_and_cds_boundary():
     payload = {"query": "MRN: XYZZY99 needs review", "items": ["email a@b.com"]}
 
