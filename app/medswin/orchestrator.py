@@ -134,7 +134,6 @@ class MedSwinOrchestrator:
         self.chunk_repo = ChunkRepository()
         self.session_repo = SessionRepository()
         self.trace_repo = TraceRepository()
-        self._last_ranked_evidence: List[RankedEvidenceItem] = []
 
     async def _open_session(
         self,
@@ -193,6 +192,7 @@ class MedSwinOrchestrator:
             patient_id=patient_id,
             pipeline=self.pipeline,
         )
+        ranked_evidence: List[RankedEvidenceItem] = []
 
         try:
             normalize_started = time.perf_counter()
@@ -214,9 +214,9 @@ class MedSwinOrchestrator:
                 patient_id=patient_id,
                 constraints=constraints or {},
                 trace=trace,
+                ranked_out=ranked_evidence,
             )
             trace.timing_ms["retrieve_gate"] = round((time.perf_counter() - retrieve_started) * 1000.0, 2)
-            ranked_evidence = list(self._last_ranked_evidence)
 
             decision = evidence_bundle.policy_decision
             facet_matrix = FacetMatrix(
@@ -343,7 +343,7 @@ class MedSwinOrchestrator:
                 uncertainty_level="high",
                 pipeline=self.pipeline,
                 generator_profile=_generator_profile(self.supervisor),
-                ranked_evidence=list(self._last_ranked_evidence),
+                ranked_evidence=ranked_evidence,
                 timing_ms=trace.timing_ms,
             )
 
@@ -457,6 +457,7 @@ class MedSwinOrchestrator:
         patient_id: Optional[str],
         constraints: Dict[str, Any],
         trace: AuditTrace,
+        ranked_out: Optional[List[RankedEvidenceItem]] = None,
     ):
         retrieval_query = await self._patient_query(query, org_id, patient_id, constraints, trace)
         embeddings = await self.embedding_client.embed([retrieval_query])
@@ -578,9 +579,9 @@ class MedSwinOrchestrator:
             hints = check.policy_decision.retrieval_hints if check.policy_decision else {"increase_k": True}
             iteration += 1
 
-        decision = self.gate.last_decision
-        coverage = self.gate.last_coverage
-        contradictions = self.gate.last_contradictions
+        decision = None
+        coverage = []
+        contradictions = []
         if final_check and final_check.policy_decision:
             decision = final_check.policy_decision
             coverage = decision.facet_coverage
@@ -588,10 +589,12 @@ class MedSwinOrchestrator:
 
         # ``ranked_candidates`` is the final post-rerank/fusion state, before
         # MMR/token packing. It is the evaluator's observation point.
-        self._last_ranked_evidence = self._document_rank(
+        ranked = self._document_rank(
             ranked_candidates if "ranked_candidates" in locals() else all_candidates,
             depth=self.policy.ranking_depth,
         )
+        if ranked_out is not None:
+            ranked_out[:] = ranked
         if selected:
             for trace_row in trace.rerank_traces[-1:]:
                 trace_row.selected_chunk_ids = [p.chunk_id for p in selected]

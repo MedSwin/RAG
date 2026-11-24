@@ -309,3 +309,58 @@ def test_session_failure_keeps_the_gated_answer():
     assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
     assert "insufficient" in response.answer.lower()
 
+
+def test_failed_request_does_not_leak_previous_ranked_evidence():
+    import asyncio
+
+    class Sessions:
+        async def create(self, session, org_id):
+            return {}
+
+    class Traces:
+        async def create(self, trace, org_id):
+            return {}
+
+    class Embedder:
+        def __init__(self):
+            self.empty = False
+
+        async def embed(self, texts):
+            return [] if self.empty else [np.array([1.0, 0.0], dtype=np.float32)]
+
+    class Normalizer:
+        def __init__(self):
+            self.fail = False
+
+        async def normalize(self, query, trace):
+            if self.fail:
+                raise RuntimeError("normalizer failed")
+            return QuerySpec(canonical_terms=["treatment"])
+
+        def build_facets(self, query, query_spec, constraints, patient_id):
+            return [ClinicalFacet(name="treatment", required=True, threshold=0.99)]
+
+    embedder = Embedder()
+    normalizer = Normalizer()
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=embedder, reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.session_repo = Sessions()
+    orchestrator.trace_repo = Traces()
+    orchestrator.retriever = FakeRetriever()
+    orchestrator.chunk_repo = EmptyRepo()
+    orchestrator.normalizer = normalizer
+
+    first = asyncio.run(orchestrator.chat(query="q1", user_id="u1", org_id="org-a"))
+    assert [item.doc_id for item in first.ranked_evidence] == ["d1"]
+
+    embedder.empty = True
+    second = asyncio.run(orchestrator.chat(query="q2", user_id="u2", org_id="org-b"))
+    assert second.ranked_evidence == []
+
+    embedder.empty = False
+    normalizer.fail = True
+    third = asyncio.run(orchestrator.chat(query="q3", user_id="u3", org_id="org-c"))
+    assert third.ranked_evidence == []
+    assert third.degraded_mode.get("error") is True
+
