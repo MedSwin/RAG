@@ -341,6 +341,48 @@ def test_a_low_caution_is_named_when_the_gate_abstains():
     )
     assert "conflicts with apixaban" in medium_text.lower()
     assert "qualifies" not in medium_text.lower()
+    mixed = PolicyDecision(
+        passed=False,
+        action=PolicyAction.INSUFFICIENT_EVIDENCE,
+        reason="An unresolved caution conflicts with apixaban.",
+        contradictions=[
+            ContradictionPair(
+                facet="guideline_concordance",
+                chunk_id_a="cpg",
+                chunk_id_b="caution",
+                severity="medium",
+                reason="Same-drug safety warning conflicts with this recommendation for apixaban.",
+            ),
+            ContradictionPair(
+                facet="guideline_concordance",
+                chunk_id_a="cpg",
+                chunk_id_b="qualify",
+                severity="low",
+                reason="Same-drug caution qualifies this recommendation for metformin.",
+            ),
+        ],
+    )
+    mixed_text = insufficient_answer(
+        "Which dose?",
+        mixed,
+        passages=[
+            CandidatePassage(
+                chunk_id="caution",
+                doc_id="doc-caution",
+                source_type=SourceType.SAFETY,
+                text="Avoid apixaban.",
+            ),
+            CandidatePassage(
+                chunk_id="qualify",
+                doc_id="doc-qualify",
+                source_type=SourceType.CPG,
+                text="Use metformin with caution.",
+            ),
+        ],
+    )
+    assert "conflicts with apixaban" in mixed_text.lower()
+    assert "qualifies metformin" in mixed_text.lower()
+    assert "qualifies apixaban" not in mixed_text.lower()
 
 
 def test_same_drug_caution_qualifies_the_recommendation():

@@ -81,7 +81,9 @@ def insufficient_answer(
         )
     if any(item.severity == "low" for item in decision.contradictions if not item.resolved):
         caution = _caution_summary(
-            _caution_drug_name(passages or [], decision, decision.contradictions)
+            _caution_drug_name(
+                passages or [], decision, decision.contradictions, severity="qualifier"
+            )
         )
         conflict += f" {caution} Review the paired evidence before a therapy change."
     from app.medswin.cds import _chart_caution_line
