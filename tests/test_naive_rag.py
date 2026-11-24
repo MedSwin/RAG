@@ -171,7 +171,25 @@ def test_naive_refuses_to_pretend_rag_when_corpus_has_no_embeddings():
     orch._diagnose_corpus = _diagnosis
     response = asyncio.run(orch.chat(query="q", user_id="u1", org_id="org1"))
     assert response.degraded_mode.get("no_embeddings") is True
+    assert response.policy_decision.passed is False
+    assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert response.answer_artifact.abstained is True
     assert "embeddings" in response.answer.lower()
+    assert llm.calls == []
+
+
+def test_naive_error_does_not_return_accept():
+    orch, _, llm = _orchestrator(passages=[])
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("embedder timeout")
+
+    orch.embedding_client.embed = _boom
+    response = asyncio.run(orch.chat(query="q", user_id="u1", org_id="org1"))
+    assert response.degraded_mode.get("error") is True
+    assert response.policy_decision.passed is False
+    assert response.policy_decision.action == PolicyAction.INSUFFICIENT_EVIDENCE
+    assert response.answer_artifact.abstained is True
     assert llm.calls == []
 
 

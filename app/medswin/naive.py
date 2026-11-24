@@ -261,6 +261,12 @@ class NaiveRAGOrchestrator:
             if not passages and self._is_infrastructure_gap(diagnosis, backend):
                 note = self._infrastructure_answer(backend, diagnosis)
                 degraded = {"no_embeddings": True} if diagnosis.get("embedded_count") == 0 else {"empty_index": True}
+                decision = PolicyDecision(
+                    passed=False,
+                    action=PolicyAction.INSUFFICIENT_EVIDENCE,
+                    reason=note,
+                    missing_facets=["retrieved_evidence"],
+                )
                 return await self._respond(
                     trace,
                     org_id,
@@ -273,6 +279,8 @@ class NaiveRAGOrchestrator:
                     retrieve_ms=retrieve_ms,
                     generate_ms=0.0,
                     degraded=degraded,
+                    decision=decision,
+                    abstained=True,
                 )
             if not passages:
                 reason = "Naive RAG retrieved no passages, so it did not call the generator."
@@ -340,18 +348,26 @@ class NaiveRAGOrchestrator:
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("Naive RAG failed: %s", exc, exc_info=True)
+            decision = PolicyDecision(
+                passed=False,
+                action=PolicyAction.INSUFFICIENT_EVIDENCE,
+                reason=str(exc),
+                missing_facets=["retrieved_evidence"],
+            )
             return await self._respond(
                 trace,
                 org_id,
                 passages=[], ranked_passages=[],
                 backend="error",
-                answer=f"Naive RAG failed: {exc}",
+                answer="Naive RAG encountered an error processing your query.",
                 notes=str(exc),
                 started=started,
                 embed_ms=0.0,
                 retrieve_ms=0.0,
                 generate_ms=0.0,
                 degraded={"error": True},
+                decision=decision,
+                abstained=True,
             )
 
     async def _retrieve(

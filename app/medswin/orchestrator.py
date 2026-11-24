@@ -397,6 +397,15 @@ class MedSwinOrchestrator:
         if not self.policy.enable_mac:
             trace.tool_calls.append(ToolCall(tool_name="pipeline.mac", parameters={}, result={"status": "skipped_by_pipeline"}))
             return []
+        if not candidates:
+            trace.tool_calls.append(
+                ToolCall(
+                    tool_name="pipeline.mac",
+                    parameters={"passage_count": 0},
+                    result={"status": "skipped_no_candidates"},
+                )
+            )
+            return []
         batches = []
         always = {"quality"}
         targets = set(always)
