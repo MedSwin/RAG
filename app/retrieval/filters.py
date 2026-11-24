@@ -61,7 +61,11 @@ def retrieval_filter(
         filter_dict["$and"] = filter_dict.get("$and", []) + [{"patient_id": {"$in": []}}]
     else:
         filter_dict["$and"] = filter_dict.get("$and", []) + [
-            {"source_type": {"$ne": SourceType.EMR.value}}
+            {"source_type": {"$ne": SourceType.EMR.value}},
+            {"$or": [
+                {"patient_id": {"$in": [None, ""]}},
+                {"patient_id": {"$exists": False}},
+            ]},
         ]
 
     if settings.CLOUD_MODE:

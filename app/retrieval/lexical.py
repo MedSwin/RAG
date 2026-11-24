@@ -39,6 +39,16 @@ from app.retrieval.filters import retrieval_filter
 from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage
 
+
+def chart_scope_sql(patient_id: Optional[str]) -> tuple[str, list[Any]]:
+    """Keep shared text. A chart row is visible only for its own patient."""
+    if patient_id:
+        return (
+            "((patient_id IS NULL OR patient_id = '') AND source_type != 'EMR') OR patient_id = ?",
+            [patient_id],
+        )
+    return "(patient_id IS NULL OR patient_id = '') AND source_type != 'EMR'", []
+
 logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path(settings.DATA_DIR) / "bm25"
@@ -131,11 +141,9 @@ class LexicalRetriever:
         if source_type_filter is not None:
             where.append("source_type = ?")
             params.append(source_type_filter.value)
-        if patient_id:
-            # Keep shared literature. Keep only this patient's chart rows inside
-            # the FTS limit, so another chart cannot fill the window.
-            where.append("(source_type != 'EMR' OR patient_id = ?)")
-            params.append(patient_id)
+        scope_sql, scope_params = chart_scope_sql(patient_id)
+        where.append(scope_sql)
+        params.extend(scope_params)
         source_policy = str((constraints or {}).get("source_policy") or "ANY").upper()
         if source_type_filter is None and source_policy.endswith("_ONLY"):
             source = source_policy.removesuffix("_ONLY")
