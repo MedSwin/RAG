@@ -390,14 +390,29 @@ def _pairing_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
 PATIENT_CHART_ID = "patient-chart"
 
 
+def _chart_caution_text(chart: str) -> str:
+    """Keep caution sentences from a chart note. A later drug sentence stays out."""
+    from app.retrieval.lexical import LexicalRetriever
+    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+    kept = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", chart or ""):
+        if not sentence.strip():
+            continue
+        if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
+            kept.append(LexicalRetriever._caution_span(sentence))
+    return " ".join(kept).strip()
+
+
 def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[ContradictionPair]:
     """Pair a chart caution with a selected recommendation for the same drug.
 
     The chart synopsis is not a retrieved passage. A dose line is not a caution.
+    A drug named outside the caution sentence does not form a conflict.
     """
     from app.scoring.coverage import _QUALIFY, _ungoverned_caution
 
-    text = (chart or "").strip()
+    text = _chart_caution_text(chart)
     if not text or not intervention_tokens(text):
         return []
     caution = _ungoverned_caution(text)

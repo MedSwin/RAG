@@ -1509,6 +1509,16 @@ def test_a_chart_caution_conflicts_with_the_same_drug():
     assert chart_contradictions("Avoid dabigatran.", [support]) == []
     assert chart_contradictions("ASA 100mg daily", [support]) == []
     assert chart_contradictions("The ASA meeting used a 100mg slide.", [support]) == []
+    metformin = _entry(
+        "met",
+        "guideline_concordance",
+        "Metformin is recommended.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.90,
+    )
+    metformin.text = "Metformin is recommended."
+    assert chart_contradictions("Avoid apixaban. Metformin is continued.", [metformin]) == []
+    assert chart_contradictions("Avoid apixaban. Metformin is continued.", [support])
     from app.schemas.enums import ClinicalScope
 
     gate = EvidenceGate()
