@@ -155,7 +155,12 @@ class IngestionPipelineService:
         
         for i in range(0, len(chunks), batch_size):
             batch_chunks = chunks[i:i+batch_size]
-            batch_texts = [chunk['content'] for chunk in batch_chunks]
+            from app.services.medswin.governance import lead_with_caution, redact_phi_text
+
+            batch_texts = [
+                lead_with_caution(redact_phi_text(chunk.get("content") or ""))
+                for chunk in batch_chunks
+            ]
             
             # Tokenize batch
             inputs = tokenizer(

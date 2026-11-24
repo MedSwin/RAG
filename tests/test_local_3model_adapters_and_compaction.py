@@ -259,6 +259,59 @@ async def test_embedding_connect_error_sticks_and_batches_thirty_two(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_the_embedding_sees_a_late_caution(monkeypatch):
+    class _Tokenizer:
+        def __init__(self):
+            self.batches = []
+
+        def __call__(self, texts, truncation, padding, max_length, return_tensors):
+            self.batches.append(list(texts))
+            ids = torch.ones((len(texts), 2), dtype=torch.long)
+            return {"input_ids": ids, "attention_mask": ids}
+
+    class _Model:
+        def __call__(self, **inputs):
+            rows = inputs["input_ids"].shape[0]
+            hidden = torch.ones((rows, 2, 4))
+
+            class _Out:
+                last_hidden_state = hidden
+
+            return _Out()
+
+    tokenizer = _Tokenizer()
+
+    class _Manager:
+        def get_embedding_model(self):
+            return tokenizer, _Model(), torch.device("cpu"), 4
+
+    monkeypatch.setattr("app.core.state.get_model_manager", lambda: _Manager())
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    client = EmbeddingClient("local://medembed")
+    filler = "History note. " * 200
+    text = f"{filler} Avoid apixaban."
+
+    await client.embed([text])
+    sent = tokenizer.batches[0][0]
+    assert sent.startswith("Avoid apixaban.")
+    assert "History note." in sent
+
+    from app.services.ingestion import IngestionPipelineService
+
+    IngestionPipelineService._generate_embeddings_sync(
+        object(),
+        [{"content": text, "chunk_id": "c1"}],
+        tokenizer,
+        _Model(),
+        torch.device("cpu"),
+        4,
+    )
+    ingested = tokenizer.batches[1][0]
+    assert ingested.startswith("Avoid apixaban.")
+    assert "History note." in ingested
+
+
+@pytest.mark.asyncio
 async def test_the_local_embedding_drops_a_phone_number(monkeypatch):
     class _Tokenizer:
         def __init__(self):
