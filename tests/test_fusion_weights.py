@@ -1,7 +1,7 @@
 from app.core.config import settings
 from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage
-from app.scoring.fusion import _safety
+from app.scoring.fusion import _contradiction, _safety
 
 
 def test_a_dose_sentence_does_not_raise_the_safety_rank():
@@ -19,6 +19,30 @@ def test_a_dose_sentence_does_not_raise_the_safety_rank():
     )
     assert _safety(dose) == 0.0
     assert _safety(caution) > 0.0
+
+
+def test_a_hedge_does_not_pin_a_contradiction():
+    hedge = CandidatePassage(
+        chunk_id="hedge",
+        doc_id="hedge",
+        source_type=SourceType.LIT,
+        text="The uncertainty is insufficient. Avoidance of delay is still recommended.",
+    )
+    interest = CandidatePassage(
+        chunk_id="interest",
+        doc_id="interest",
+        source_type=SourceType.LIT,
+        text="The conflict of interest statement says the evidence is uncertain and insufficient.",
+    )
+    caution = CandidatePassage(
+        chunk_id="caution",
+        doc_id="caution",
+        source_type=SourceType.SAFETY,
+        text="Avoid metformin because it is not recommended when the eGFR is low.",
+    )
+    assert _contradiction(hedge) == 0.0
+    assert _contradiction(interest) < 0.32
+    assert _contradiction(caution) >= 0.32
 
 
 def test_default_fusion_weights_include_evidence_and_safety():

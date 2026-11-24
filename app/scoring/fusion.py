@@ -80,10 +80,25 @@ def _noise(candidate: CandidatePassage) -> float:
     return clamp(score)
 
 
+_CONFLICT_PHRASE = re.compile(
+    r"\b(?:not recommended|should not|do not(?!\s+(?:delay|withhold|wait|hesitate)))\b"
+)
+_CONFLICT_TOKENS = {"avoid", "conflict", "conflicts", "conflicting"}
+
+
+def _is_conflict_token(token: str) -> bool:
+    if token in _CONFLICT_TOKENS:
+        return True
+    if token.endswith("s") and token[:-1] == "avoid":
+        return True
+    return token.startswith("contraindicat")
+
+
 def _contradiction(candidate: CandidatePassage) -> float:
     text = candidate.text.lower()
-    terms = ["conflict", "not recommended", "avoid", "insufficient", "uncertain", "contraindicat"]
-    return clamp(sum(1 for term in terms if term in text) * 0.16)
+    hits = len(_CONFLICT_PHRASE.findall(text))
+    hits += sum(1 for token in re.findall(r"[a-z0-9]+", text) if _is_conflict_token(token))
+    return clamp(hits * 0.16)
 
 
 def compute_fusion_scores(candidates: List[CandidatePassage]) -> List[CandidatePassage]:
