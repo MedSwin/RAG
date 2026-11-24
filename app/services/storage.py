@@ -261,11 +261,13 @@ class StorageService:
         self,
         batch_size: Optional[int] = None,
         org_id: Optional[str] = None,
+        *,
+        include_charts: bool = False,
     ) -> Dict[str, Any]:
-        """Refresh stale chunk embeddings and rebuild the active index.
+        """Refresh stale chunk embeddings. This method does not rebuild the index.
 
-        Stored passages are documents, so Cohere-native cloud calls explicitly
-        use document intent rather than relying on the online-query default.
+        Chart rows stay out unless the caller sets include_charts. Stored
+        passages are documents, so a cloud call uses document intent.
         """
         batch_size = batch_size or settings.BATCH_SIZE
         batch_cap = settings.CLOUD_EMBED_BATCH_SIZE if settings.CLOUD_MODE else settings.BATCH_SIZE
@@ -283,7 +285,7 @@ class StorageService:
         try:
             db = get_database()
             coll = db["chunks"]
-            stale_filter = self._stale_embedding_filter(org_id=org_id)
+            stale_filter = self._stale_embedding_filter(org_id=org_id, include_charts=include_charts)
             stale_count = await coll.count_documents(stale_filter)
             EMBEDDING_REFRESH_STATUS["stale"] = stale_count
 
@@ -320,9 +322,6 @@ class StorageService:
             finally:
                 await client.close()
 
-            index_result = await self.build_hnsw_index_async(force_rebuild=True, org_id=org_id)
-            if not index_result.get("success"):
-                raise RuntimeError(index_result.get("message") or "HNSW rebuild failed after embedding refresh")
             EMBEDDING_REFRESH_STATUS.update({
                 "running": False,
                 "ready": True,
@@ -341,7 +340,12 @@ class StorageService:
     def get_embedding_refresh_status(self) -> Dict[str, Any]:
         return EMBEDDING_REFRESH_STATUS.copy()
 
-    def _stale_embedding_filter(self, org_id: Optional[str] = None) -> Dict[str, Any]:
+    def _stale_embedding_filter(
+        self,
+        org_id: Optional[str] = None,
+        *,
+        include_charts: bool = True,
+    ) -> Dict[str, Any]:
         expected_dim = settings.active_embedding_dimension()
         filter_dict: Dict[str, Any] = {
             "$or": [
@@ -357,6 +361,8 @@ class StorageService:
         }
         if org_id:
             filter_dict["org_id"] = org_id
+        if not include_charts:
+            filter_dict["source_type"] = {"$ne": "EMR"}
         return filter_dict
 
     def _build_hnsw_index_sync(

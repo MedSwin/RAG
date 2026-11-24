@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -12,6 +13,7 @@ from app.api.cds import get_cds_chat, router as cds_router
 from app.api.tenant import bind_org, bind_tenant, require_operator
 from app.api.v1.endpoints import pipelines, retrieval, storage
 from app.core.config import settings
+from app.services import storage as storage_service
 from app.schemas.enums import PipelineId
 from app.schemas.evidence import EvidenceBundle
 from app.schemas.traces import ChatResponse
@@ -410,3 +412,54 @@ def test_clinician_cannot_list_or_delete_charts(monkeypatch):
     assert visible.json()["source_type"] == "CPG"
     denied = client.delete("/api/v1/storage/chunks", headers=headers, params={"org_id": "org-a"})
     assert denied.status_code == 403
+
+
+def test_service_refresh_skips_charts_and_does_not_rebuild(monkeypatch):
+    embedded = []
+    built = []
+
+    class _Cursor:
+        def limit(self, _count):
+            return self
+
+        async def to_list(self, length):
+            return []
+
+    class _Collection:
+        async def count_documents(self, query):
+            assert query["org_id"] == "org-a"
+            assert query["source_type"] == {"$ne": "EMR"}
+            return 0
+
+        def find(self, _query):
+            return _Cursor()
+
+    class _Client:
+        def __init__(self, _url):
+            pass
+
+        async def embed(self, texts, **_kwargs):
+            embedded.append(texts)
+            return []
+
+        async def close(self):
+            return None
+
+    service = storage_service.StorageService()
+    previous = dict(storage_service.EMBEDDING_REFRESH_STATUS)
+
+    async def _build(**kwargs):
+        built.append(kwargs)
+
+    monkeypatch.setattr(storage_service, "get_database", lambda: {"chunks": _Collection()})
+    monkeypatch.setattr(storage_service, "EmbeddingClient", _Client)
+    monkeypatch.setattr(service, "build_hnsw_index_async", _build)
+    try:
+        status = asyncio.run(service.refresh_cloud_embeddings(org_id="org-a"))
+    finally:
+        storage_service.EMBEDDING_REFRESH_STATUS.clear()
+        storage_service.EMBEDDING_REFRESH_STATUS.update(previous)
+    assert embedded == []
+    assert built == []
+    assert status["running"] is False
+    assert status["error"] is None
