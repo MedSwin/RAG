@@ -101,6 +101,17 @@ def merge_agent_claims(
             text_score = float((passage.facet_scores or {}).get(claim.facet, 0.0) or 0.0)
             if text_score <= 0.0:
                 continue
+            text_polarity = infer_polarity(passage, ClinicalFacet(name=claim.facet))
+            if (
+                text_polarity
+                in {
+                    EvidencePolarity.CONTRADICTS,
+                    EvidencePolarity.SAFETY,
+                    EvidencePolarity.QUALIFIES,
+                }
+                and claim.polarity == EvidencePolarity.SUPPORTS
+            ):
+                claim = claim.model_copy(update={"polarity": text_polarity})
             entry = by_chunk.get(claim.chunk_id)
             if entry is None:
                 entry = EvidenceLedgerEntry(

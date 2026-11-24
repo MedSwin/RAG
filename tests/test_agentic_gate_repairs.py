@@ -1067,6 +1067,39 @@ def test_a_specialist_confidence_cannot_cover_a_facet_the_passage_does_not_suppo
     assert coverage["guideline_concordance"] == "satisfied"
 
 
+def test_a_specialist_cannot_turn_a_caution_into_support():
+    passage = _passage("cpg-1", "Avoid metformin when the eGFR is low.")
+    passage.calibrated_score = 0.95
+    passage.evidence_grade_score = 0.95
+    facet = ClinicalFacet(
+        name="guideline_concordance",
+        keywords=["metformin"],
+        required=True,
+        threshold=0.70,
+    )
+    score_passage_facets(passage, [facet])
+    ledger = build_retrieval_ledger([passage], [facet])
+    batch = AgentClaimBatch(
+        agent_id="guideline",
+        claims=[
+            EvidenceClaim(
+                facet="guideline_concordance",
+                claim="Metformin is recommended.",
+                polarity=EvidencePolarity.SUPPORTS,
+                chunk_id="cpg-1",
+                confidence=1.0,
+                calibrated_relevance=1.0,
+                evidence_grade=EvidenceGrade(score=1.0),
+            )
+        ],
+    )
+    merged = merge_agent_claims(ledger, [batch], [passage])
+    coverage = compute_facet_coverage([facet], merged)
+    assert coverage[0].coverage_probability == 0.0
+    assert coverage[0].supporting_chunk_ids == []
+    assert all(claim.polarity != EvidencePolarity.SUPPORTS for claim in merged[0].claims)
+
+
 def test_drug_tokens_fold_plurals_and_ignore_april():
     assert intervention_tokens("Avoid NSAIDs") == {"nsaid"}
     assert same_intervention("Avoid NSAIDs", "NSAID is recommended") is True
