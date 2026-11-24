@@ -199,11 +199,16 @@ class StorageService:
                         len(operations) - inserted,
                     )
                 except pymongo.errors.BulkWriteError as exc:
-                    logger.error("Chunk batch write failed: %s", exc.details)
+                    codes = [
+                        item.get("code")
+                        for item in (exc.details or {}).get("writeErrors") or []
+                        if isinstance(item, dict)
+                    ]
+                    logger.error("Chunk batch write failed: %s %s", type(exc).__name__, codes)
                     failed_chunks.extend(operation_chunks)
                     failed_count += len(operation_chunks)
                 except Exception as exc:  # noqa: BLE001
-                    logger.error("Unexpected chunk storage error: %s", exc)
+                    logger.error("Unexpected chunk storage error: %s", type(exc).__name__)
                     failed_chunks.extend(operation_chunks)
                     failed_count += len(operation_chunks)
         finally:
