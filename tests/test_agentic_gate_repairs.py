@@ -149,6 +149,9 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "Meds: warfarin.",
         "The medication list includes warfarin.",
         "Discharge medications include warfarin.",
+        "Patient on warfarin.",
+        "The patient on warfarin.",
+        "On warfarin.",
         "Continue warfarin and monitor the INR.",
     ):
         pairs = chart_contradictions(chart, [warning, other])
@@ -195,6 +198,9 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "Discuss medications including warfarin.",
         "No medications include warfarin.",
         "Medications do not include warfarin.",
+        "Update the patient on warfarin.",
+        "Advise the patient on warfarin.",
+        "Effect on warfarin.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
     recommendation = _entry(
@@ -515,6 +521,11 @@ def test_a_patient_mention_does_not_conflict_with_the_drug_warning():
     assert len(listed) == 1
     assert "warfarin" in listed[0].reason
     assert pairs_for("Medications include warfarin.", "Warfarin is recommended.") == []
+    on_chart = pairs_for("Patient on warfarin.", "Avoid warfarin.")
+    assert len(on_chart) == 1
+    assert "warfarin" in on_chart[0].reason
+    assert pairs_for("Patient on warfarin.", "Warfarin is recommended.") == []
+    assert pairs_for("Update the patient on warfarin.", "Avoid warfarin.") == []
     review = pairs_for("A review supports warfarin.", "Avoid warfarin.")
     assert len(review) == 1
     assert "warfarin" in review[0].reason

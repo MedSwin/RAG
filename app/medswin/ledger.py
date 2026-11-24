@@ -817,6 +817,13 @@ _REMAIN_ON = re.compile(
     r"\b(?:remain|remains|stay|stays|still|currently|now|back)\s+on\b",
     re.I,
 )
+_BARE_ON = re.compile(r"(?:^|\bpatient\s+)on\b", re.I)
+_COUNSEL_ON = re.compile(
+    r"\b(?:update[sd]?|updating|advis(?:e|es|ed|ing)|inform(?:s|ed|ing)?|"
+    r"tell(?:s|ing)?|told|counsel(?:s|led|ling|ing)?|discuss(?:es|ed|ing)?|"
+    r"speak|spoke|talk(?:s|ed|ing)?|educat(?:e|es|ed|ing)|ask(?:s|ed|ing)?)\b",
+    re.I,
+)
 _PLANNED_FOR = re.compile(
     r"\b(?:is|was|were|are|am)\s+for\b"
     r"|\b(?:is|was|were|are|am)\s+to\s+have\b"
@@ -959,6 +966,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
         return True
     if _current_med_list(sentence):
         return True
+    if _bare_patient_on(sentence):
+        return True
     for match in _CAUTION.finditer(sentence or ""):
         phrase = match.group(0).lower()
         if phrase in {"do not", "should not"} and _BENIGN_DO_NOT.match(sentence[match.end():]):
@@ -1020,6 +1029,25 @@ _PUT_ON = re.compile(
     r"\b(?:put|puts|putting|placed?|placing)\b(?:\s+\w+){0,5}\s+on\b",
     re.I,
 )
+
+
+def _bare_patient_on(sentence: str) -> bool:
+    """True when a chart line says the patient is on a drug without a copula."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _on_object_is_drug
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text) or _PUT_ON.search(text):
+        return False
+    for match in _BARE_ON.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        tail = text[match.end():]
+        if re.match(r"\s*(?:hold|the\s+hold)\b", tail, re.I):
+            continue
+        if _on_object_is_drug(tail):
+            return True
+    return False
 _WITH_DRUG = re.compile(
     r"\b(?:loads?|loaded|loading)\b(?:\s+\w+){0,5}\s+with\b"
     r"|\b(?:cover(?:s|ed|ing)?|bridg(?:e|es|ed|ing))\s+the\s+patient\s+with\b"
