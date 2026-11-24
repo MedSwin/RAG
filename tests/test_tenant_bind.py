@@ -42,6 +42,51 @@ def _token(secret: str, claims: dict) -> str:
     return f"{header}.{body}.{_b64url(signature)}"
 
 
+def test_a_trace_read_hides_another_clinician_in_the_same_org(monkeypatch):
+    secret = "clinical-secret-value"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "ENABLE_RBAC", False)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    monkeypatch.setattr(settings, "AUTH_JWT_AUDIENCE", None)
+    monkeypatch.setattr(settings, "AUTH_JWT_ISSUER", None)
+
+    class _Traces:
+        async def get_by_id(self, trace_id, org_id):
+            return {
+                "trace_id": trace_id,
+                "session_id": "sess-1",
+                "user_id": "dr-chen",
+                "query": "Which anticoagulant is safer for this patient?",
+                "messages": [],
+                "tool_calls": [],
+                "sufficiency_checks": [],
+                "evidence_bundle": {"passages": []},
+            }
+
+    monkeypatch.setattr(pipelines, "TraceRepository", lambda: _Traces())
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(pipelines.router, prefix="/pipelines")
+    client = TestClient(app)
+    other = _token(secret, {"sub": "dr-other", "org_id": "org-a", "exp": int(time.time()) + 60})
+    owner = _token(secret, {"sub": "dr-chen", "org_id": "org-a", "exp": int(time.time()) + 60})
+    hidden = client.get(
+        "/pipelines/traces/trace-1",
+        headers={"Authorization": f"Bearer {other}"},
+        params={"org_id": "org-a", "include_details": "true"},
+    )
+    shown = client.get(
+        "/pipelines/traces/trace-1",
+        headers={"Authorization": f"Bearer {owner}"},
+        params={"org_id": "org-a"},
+    )
+    assert hidden.status_code == 404
+    assert "anticoagulant" not in hidden.text
+    assert shown.status_code == 200
+    assert shown.json()["query"].startswith("Which anticoagulant")
+
+
 def test_a_session_read_hides_another_clinician_in_the_same_org(monkeypatch):
     secret = "clinical-secret-value"
     monkeypatch.setattr(settings, "ENABLE_AUTH", True)

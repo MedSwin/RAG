@@ -205,9 +205,11 @@ async def pipelines_ready():
 
 @router.get("/traces/{trace_id}")
 async def pipeline_trace(trace_id: str, org_id: str, http_request: Request, include_details: bool = False):
+    token_user = fhir_id(str(getattr(http_request.state, "user_id", "") or ""))
     org_id = bind_org(http_request, org_id)
     trace = await TraceRepository().get_by_id(trace_id, org_id)
-    if not trace:
+    owner = fhir_id(str((trace or {}).get("user_id") or ""))
+    if not trace or (token_user and owner != token_user):
         raise HTTPException(status_code=404, detail="Trace not found")
     return redacted_trace_summary(trace, include_policy_details=include_details)
 
