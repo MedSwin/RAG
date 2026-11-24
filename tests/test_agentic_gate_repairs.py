@@ -70,6 +70,36 @@ def test_a_required_abstention_fails_when_the_answer_gives_a_dose():
     assert abstention_matches(dose, False) is True
 
 
+def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning():
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    same = _entry(
+        "aw",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    for claim in (
+        "Do not discontinue warfarin. Apixaban is recommended.",
+        "Do not cease warfarin. Apixaban is recommended.",
+        "Do not interrupt warfarin. Apixaban is recommended.",
+    ):
+        support = _entry("note", "guideline_concordance", claim, EvidencePolarity.SUPPORTS, grade=0.95)
+        pairs = detect_contradictions([support, warning, same])
+        assert any(pair.chunk_id_b == "war" and "warfarin" in pair.reason for pair in pairs), claim
+        assert any(pair.chunk_id_b == "aw" and "apixaban" in pair.reason for pair in pairs), claim
+        assert infer_polarity(
+            _passage("keep", claim.split(".")[0] + "."),
+            ClinicalFacet(name="guideline_concordance", keywords=["warfarin"]),
+        ) == EvidencePolarity.SUPPORTS
+
+
 def test_do_not_stop_warfarin_still_conflicts_with_the_warfarin_warning():
     support = _entry(
         "note",
