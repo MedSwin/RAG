@@ -228,6 +228,72 @@ def test_an_unpacked_caution_still_blocks_the_same_drug():
     assert ignored.passed is True
 
 
+def test_a_blocking_caution_stays_on_the_evidence_list():
+    from app.medswin.cds import cards_from_chat
+    from app.medswin.ledger import cited_caution_passages
+    from app.schemas.enums import PolicyAction
+    from app.schemas.evidence import AnswerArtifact, ContradictionPair, EvidenceBundle, PolicyDecision
+    from app.schemas.traces import ChatResponse
+
+    support = _passage("support", "Guideline recommendation supports apixaban for stroke prevention.")
+    caution = _passage(
+        "caution",
+        "Avoid apixaban when bleeding risk is high.",
+        source_type=SourceType.SAFETY,
+        score=0.80,
+    )
+    weak = _passage(
+        "weak",
+        "Avoid apixaban when the dose is uncertain.",
+        source_type=SourceType.SAFETY,
+        score=0.40,
+    )
+    pair = ContradictionPair(
+        facet="safety_contraindications",
+        chunk_id_a="support",
+        chunk_id_b="caution",
+        severity="high",
+        reason="Same-drug safety warning conflicts with this recommendation for apixaban.",
+    )
+    weak_pair = ContradictionPair(
+        facet="safety_contraindications",
+        chunk_id_a="support",
+        chunk_id_b="weak",
+        severity="high",
+        reason="Same-drug safety warning conflicts with this recommendation for apixaban.",
+    )
+    extra = cited_caution_passages([support], [support, caution, weak], [pair, weak_pair])
+    assert [item.chunk_id for item in extra] == ["caution"]
+    shown = [support, *extra]
+    response = ChatResponse(
+        answer="The evidence is insufficient.",
+        answer_artifact=AnswerArtifact(
+            content="The evidence is insufficient.",
+            rendered_text="The evidence is insufficient.",
+            abstained=True,
+        ),
+        evidence_bundle=EvidenceBundle(
+            passages=shown,
+            total_tokens=20,
+            cpg_count=1,
+            emr_count=0,
+            lit_count=0,
+        ),
+        trace_id="trace-caution",
+        policy_decision=PolicyDecision(
+            passed=False,
+            action=PolicyAction.INSUFFICIENT_EVIDENCE,
+            reason="Unresolved evidence conflicts for apixaban need clinician review.",
+            unresolved_critical_conflicts=True,
+            contradictions=[pair],
+        ),
+        contradictions=[pair],
+    )
+    detail = cards_from_chat(response)[0]["detail"]
+    assert "caution" in detail
+    assert "weak" not in detail
+
+
 def test_an_empty_selection_does_not_review_the_dropped_passages():
     policy = EvidenceSufficiencyPolicy()
     facets = [

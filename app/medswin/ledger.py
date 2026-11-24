@@ -171,6 +171,35 @@ def audit_chunk_ids(selected: List[CandidatePassage], ranked: List[CandidatePass
     return ids
 
 
+def cited_caution_passages(
+    selected: List[CandidatePassage],
+    ranked: List[CandidatePassage],
+    contradictions: List[ContradictionPair],
+) -> List[CandidatePassage]:
+    """Return included cautions that a conflict cites and the bundle does not show."""
+    from app.agents.base import _is_prompt_caution
+
+    shown = {passage.chunk_id for passage in selected}
+    cited = set()
+    for pair in contradictions or []:
+        if pair.resolved:
+            continue
+        cited.add(pair.chunk_id_a)
+        cited.add(pair.chunk_id_b)
+    extra: List[CandidatePassage] = []
+    for passage in ranked:
+        if passage.chunk_id not in cited or passage.chunk_id in shown:
+            continue
+        score = passage.calibrated_score
+        if score is None or float(score) < settings.SUFF_T_INCLUSION:
+            continue
+        if not _is_prompt_caution(passage):
+            continue
+        extra.append(passage)
+        shown.add(passage.chunk_id)
+    return extra
+
+
 def apply_claim_alignment(
     passages: List[CandidatePassage],
     batches: List[AgentClaimBatch],

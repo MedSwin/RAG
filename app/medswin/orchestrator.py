@@ -29,6 +29,7 @@ from app.medswin.ledger import (
     build_retrieval_ledger,
     audit_chunk_ids,
     chart_contradictions,
+    cited_caution_passages,
     detect_contradictions,
     filter_ledger,
     merge_agent_claims,
@@ -968,6 +969,11 @@ class MedSwinOrchestrator:
             decision = final_check.policy_decision
             coverage = decision.facet_coverage
             contradictions = decision.contradictions
+        if contradictions:
+            pool = ranked_candidates if "ranked_candidates" in locals() else all_candidates
+            selected.extend(cited_caution_passages(selected, pool, contradictions))
+            if "ledger" in locals():
+                selected_ledger = filter_ledger(ledger, {passage.chunk_id for passage in selected})
 
         # ``ranked_candidates`` is the final post-rerank/fusion state, before
         # MMR/token packing. It is the evaluator's observation point.
