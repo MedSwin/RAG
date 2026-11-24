@@ -74,6 +74,33 @@ def cleanup_preprocessing_service() -> None:
         _preprocessing_service = None
 
 
+_CHUNK_ID_KEYS = {"chunk_id", "doc_id", "org_id", "patient_id", "user_id", "source_type", "_id"}
+
+
+def _public_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return chunk copies. Drop a phone, an email, an MRN, or a labelled date of birth."""
+    from app.services.medswin.governance import redact_phi_text
+
+    public: List[Dict[str, Any]] = []
+    for chunk in chunks:
+        item = dict(chunk)
+        for key in ("text", "content"):
+            value = item.get(key)
+            if isinstance(value, str):
+                item[key] = redact_phi_text(value)
+        metadata = item.get("metadata")
+        if isinstance(metadata, dict):
+            cleaned: Dict[str, Any] = {}
+            for key, value in metadata.items():
+                if isinstance(value, str) and key not in _CHUNK_ID_KEYS:
+                    cleaned[key] = redact_phi_text(value)
+                else:
+                    cleaned[key] = value
+            item["metadata"] = cleaned
+        public.append(item)
+    return public
+
+
 def _stats(chunks: List[Dict[str, Any]], **extra) -> Dict[str, Any]:
     stats: Dict[str, Any] = {
         **extra,
@@ -96,7 +123,7 @@ async def chunk_data(request: ChunkingRequest):
         service = get_preprocessing_service()
         frame = pd.DataFrame(request.data)
         target_size = request.target_chunk_size or settings.TARGET_CHUNK_SIZE
-        chunks = await service.chunk_medical_dialogues(frame, target_chunk_size=target_size)
+        chunks = _public_chunks(await service.chunk_medical_dialogues(frame, target_chunk_size=target_size))
         return ChunkingResponse(
             chunks=chunks,
             total_chunks=len(chunks),
@@ -147,7 +174,9 @@ async def upload_and_chunk_file(
             raise HTTPException(status_code=400, detail="This preprocessing endpoint supports CSV or JSON")
 
         service = get_preprocessing_service()
-        chunks = await service.chunk_medical_dialogues(frame, target_chunk_size=target_chunk_size)
+        chunks = _public_chunks(
+            await service.chunk_medical_dialogues(frame, target_chunk_size=target_chunk_size)
+        )
         return ChunkingResponse(
             chunks=chunks,
             total_chunks=len(chunks),

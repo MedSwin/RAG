@@ -281,6 +281,31 @@ def test_a_service_error_hides_the_exception_text(monkeypatch):
     assert "555-234-5678" not in embedded.text + chunked.text + listed.text + indexed.text
 
 
+def test_the_chunk_preview_drops_a_phone_number(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", False)
+
+    class _Chunker:
+        async def chunk_medical_dialogues(self, frame, target_chunk_size):
+            return [
+                {
+                    "content": "Call 555-234-5678. Creatinine is 1.4. Continue metformin.",
+                    "metadata": {"patient_id": "pt-1", "question": "Call 555-234-5678"},
+                }
+            ]
+
+    monkeypatch.setattr(preprocessing, "get_preprocessing_service", lambda: _Chunker())
+    app = FastAPI()
+    app.include_router(preprocessing.router, prefix="/api/v1/preprocessing")
+    response = TestClient(app).post("/api/v1/preprocessing/chunk", json={"data": [{"text": "dose"}]})
+    assert response.status_code == 200
+    chunk = response.json()["chunks"][0]
+    assert "555-234-5678" not in response.text
+    assert "Creatinine is 1.4." in chunk["content"]
+    assert "metformin" in chunk["content"]
+    assert chunk["metadata"]["patient_id"] == "pt-1"
+    assert chunk["metadata"]["question"] == "Call [REDACTED_PHONE]"
+
+
 def test_a_storage_error_hides_the_exception_text(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_AUTH", False)
 
