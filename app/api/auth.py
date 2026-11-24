@@ -18,7 +18,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_PUBLIC_PREFIXES = ("/health", "/docs", "/openapi", "/redoc")
+_PUBLIC_PREFIXES = ("/health", "/docs", "/openapi", "/redoc", "/app")
 
 
 def _claim_roles(claims: Dict[str, Any]) -> set[str]:
@@ -86,7 +86,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
     """Require a signed HS256 bearer token when ENABLE_AUTH is true."""
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        if request.url.path.startswith(_PUBLIC_PREFIXES):
+        if request.url.path == "/" or request.url.path.startswith(_PUBLIC_PREFIXES):
+            return await call_next(request)
+        # CDS Hooks discovery is a catalog. Service calls stay behind the token.
+        if request.method == "GET" and request.url.path.rstrip("/") == "/cds-services":
             return await call_next(request)
         if settings.ENABLE_RBAC and not settings.ENABLE_AUTH:
             return JSONResponse(status_code=401, content={"detail": "Authentication is not configured"})

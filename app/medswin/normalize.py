@@ -38,6 +38,22 @@ class QueryNormalizer:
             return {"canonical_terms": [], "clinical_scope": ClinicalScope.CLINICIAN_CDS.value}
         data = dict(spec_data)
         data.setdefault("canonical_terms", [])
+        if isinstance(data.get("canonical_terms"), str):
+            data["canonical_terms"] = [data["canonical_terms"]]
+        elif not isinstance(data.get("canonical_terms"), list):
+            data["canonical_terms"] = []
+        else:
+            data["canonical_terms"] = [str(item).strip() for item in data["canonical_terms"] if str(item).strip()]
+        specialty = data.get("specialty")
+        if isinstance(specialty, list):
+            specialty = next((str(item).strip() for item in specialty if str(item).strip()), None)
+        elif specialty is not None and not isinstance(specialty, str):
+            specialty = str(specialty).strip() or None
+        data["specialty"] = specialty or None
+        if not isinstance(data.get("patient_context"), dict):
+            data["patient_context"] = None
+        if not isinstance(data.get("retrieval_hints"), dict):
+            data["retrieval_hints"] = {}
         data.setdefault("abbreviations", {})
         data.setdefault("retrieval_hints", {})
         abbreviations = data.get("abbreviations") or {}
@@ -149,12 +165,14 @@ class QueryNormalizer:
 
     async def normalize(self, query: str, trace: Optional[AuditTrace] = None) -> QuerySpec:
         try:
+            local_cap = 48 if getattr(self.client, "backend", "") in {"medswin_local", "local_http"} else None
             response = await self.client.call_llm(
                 [
                     {"role": "system", "content": query_prompt.SYSTEM},
                     {"role": "user", "content": f"Normalize this medical query: {query}"},
                 ],
                 json_schema=query_prompt.SCHEMA,
+                max_tokens=local_cap,
             )
             spec_data = self.coerce_spec(extract_json_object(response["content"]))
             query_spec = QuerySpec(**spec_data)

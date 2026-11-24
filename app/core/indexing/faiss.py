@@ -169,6 +169,9 @@ class FAISSIndexBuilder(BaseIndexBuilder):
             logger.info(f"FAISS index loaded from {index_path}")
             return True
             
+        except FileNotFoundError as e:
+            logger.info("FAISS index is absent: %s", e)
+            return False
         except Exception as e:
             logger.error(f"Error loading FAISS index: {e}")
             return False

@@ -176,9 +176,22 @@ class AdaptiveModelRateLimiter:
                         raise
                     await asyncio.sleep(0.4 * attempt)
                     continue
+                # A local generator keeps one lock. A read timeout means that
+                # call is still running. A retry queues a second generation.
+                if isinstance(exc, httpx.ReadTimeout) and _is_loopback_url(url):
+                    raise
                 if attempt == settings.MODEL_RATE_LIMIT_MAX_ATTEMPTS:
                     raise
-                await asyncio.sleep(_retry_backoff_seconds(attempt))
+                backoff = _retry_backoff_seconds(attempt, url=url)
+                logger.warning(
+                    "Model request transient error (%s) for %s (attempt %d/%d); retrying in %.2fs",
+                    type(exc).__name__,
+                    key,
+                    attempt,
+                    settings.MODEL_RATE_LIMIT_MAX_ATTEMPTS,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
                 continue
 
             status_code = getattr(response, "status_code", 200)
@@ -201,7 +214,16 @@ class AdaptiveModelRateLimiter:
                 self._retry_events += 1
                 if attempt == settings.MODEL_RATE_LIMIT_MAX_ATTEMPTS:
                     response.raise_for_status()
-                await asyncio.sleep(_retry_backoff_seconds(attempt))
+                backoff = _retry_backoff_seconds(attempt, url=url)
+                logger.warning(
+                    "Model HTTP %d for %s (attempt %d/%d); retrying in %.2fs",
+                    status_code,
+                    key,
+                    attempt,
+                    settings.MODEL_RATE_LIMIT_MAX_ATTEMPTS,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
                 continue
 
             await self.register_success(response)
@@ -215,12 +237,18 @@ class AdaptiveModelRateLimiter:
         raise RuntimeError(f"Model request failed without response for {key}")
 
 
-def _retry_backoff_seconds(attempt: int) -> float:
-    delay = min(
-        settings.MODEL_RATE_LIMIT_MAX_COOLDOWN_S,
-        settings.MODEL_RATE_LIMIT_BASE_COOLDOWN_S * (2 ** (attempt - 1)),
-    )
-    return delay + random.uniform(0, settings.MODEL_RATE_LIMIT_JITTER_S)
+def _is_loopback_url(url: str) -> bool:
+    lowered = (url or "").lower()
+    return "://127.0.0.1" in lowered or "://localhost" in lowered or "://[::1]" in lowered
+
+
+def _retry_backoff_seconds(attempt: int, *, url: str = "") -> float:
+    # Transient network/5xx errors are not provider 429 quota windows; use bounded
+    # exponential backoff rather than the 600s 429 cooldown.
+    base = 0.5 if _is_loopback_url(url) else 1.5
+    cap = 2.0 if _is_loopback_url(url) else 15.0
+    delay = min(cap, base * (2 ** (attempt - 1)), settings.MODEL_RATE_LIMIT_MAX_COOLDOWN_S)
+    return delay + min(random.uniform(0, settings.MODEL_RATE_LIMIT_JITTER_S), max(0.0, settings.MODEL_RATE_LIMIT_MAX_COOLDOWN_S))
 
 
 _limiters: Dict[str, AdaptiveModelRateLimiter] = {}

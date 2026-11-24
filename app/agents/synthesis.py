@@ -205,7 +205,17 @@ class SynthesisAgent:
             messages[-1]["content"] += benchmark_prompt.SYSTEM_SUFFIX
             schema = benchmark_prompt.SCHEMA
         response = await self.client.call_llm(messages, json_schema=schema)
-        answer_data = extract_json_object(response["content"])
+        raw_content = str(response.get("content") or "").strip()
+        try:
+            answer_data = extract_json_object(raw_content)
+        except Exception:
+            if backend in _LOCAL_BACKENDS and raw_content:
+                answer_data = {"answer": raw_content}
+            else:
+                raise
+        if backend in _LOCAL_BACKENDS and not str(answer_data.get("answer") or "").strip() and raw_content:
+            if not (isinstance(answer_data, dict) and "answer" in answer_data):
+                answer_data = {**(answer_data if isinstance(answer_data, dict) else {}), "answer": raw_content}
         rendered, provenance = self._render(answer_data, evidence_bundle)
         ideal = " ".join(str(answer_data.get("ideal_answer") or answer_data.get("answer") or "").split()[:200]) if benchmark else None
         artifact = AnswerArtifact(

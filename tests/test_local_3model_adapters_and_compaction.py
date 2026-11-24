@@ -318,8 +318,8 @@ def test_local_passage_context_keeps_safety_inside_2048_envelope(monkeypatch):
         )
     )
     rendered = passage_context(passages)
-    assert len(rendered) <= 2800
-    assert rendered.count("[") <= 6
+    assert len(rendered) <= 1400
+    assert rendered.count("[") <= 4
     assert "[safety-keep|SAFETY|doc=doc-safety-keep]" in rendered
     assert rendered.index("safety-keep") < rendered.index("lit-0")
 

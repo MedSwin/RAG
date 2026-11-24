@@ -60,9 +60,9 @@ SHARED_CLAIM_SYSTEM_PREFIX = (
 )
 SPECIALIST_SUFFIX_MARK = "\n\nSpecialist Instructions:\n"
 _LOCAL_GENERATION_BACKENDS = {"medswin_local", "local_http"}
-_COMPACT_PASSAGE_LIMIT = 6
-_COMPACT_PASSAGE_CHARS = 480
-_COMPACT_PASSAGE_BLOCK_CHARS = 2800
+_COMPACT_PASSAGE_LIMIT = 4
+_COMPACT_PASSAGE_CHARS = 280
+_COMPACT_PASSAGE_BLOCK_CHARS = 1400
 
 
 CLAIM_SCHEMA = {
@@ -118,6 +118,12 @@ def prioritize_passages(passages: List[CandidatePassage]) -> List[CandidatePassa
 
 def shared_claim_system_message() -> str:
     """Return the byte-stable system prefix, including the claim JSON schema."""
+    if _local_generation_window():
+        return (
+            f"{SHARED_CLAIM_SYSTEM_PREFIX}\n"
+            'Return one JSON object. Example: {"claims":[{"facet":"guideline_concordance",'
+            '"claim":"...","polarity":"supports","chunk_id":"id#0","confidence":0.85}],"notes":[]}'
+        )
     return f"{SHARED_CLAIM_SYSTEM_PREFIX}\n{schema_instruction(CLAIM_SCHEMA)}"
 
 
@@ -275,12 +281,14 @@ async def call_claim_agent(
     """
     shared = passages if shared_passages is None else shared_passages
     try:
+        local_cap = 96 if getattr(client, "backend", "") in {"medswin_local", "local_http"} else None
         response = await client.call_llm(
             [
                 {"role": "system", "content": shared_claim_system_message()},
                 {"role": "user", "content": _claim_user_message(system, user, shared, passages)},
             ],
             json_schema=CLAIM_SCHEMA,
+            max_tokens=local_cap,
         )
         payload = extract_json_object(response["content"])
         batch = parse_claims(agent_id, payload, passages, facets=facets)

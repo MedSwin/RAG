@@ -132,6 +132,35 @@ class DocumentReranker:
             return self._compute_score_gemma(inputs)
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
+
+    def compute_relevance_scores(
+        self, query: str, documents: List[str], batch_size: int = 16
+    ) -> List[float]:
+        """Compute relevance scores in batches on GPU/MPS/CPU."""
+        if not documents:
+            return []
+        if self.model_type != "bge-m3":
+            return [self.compute_relevance_score(query, doc) for doc in documents]
+        scores: List[float] = []
+        for start in range(0, len(documents), max(1, batch_size)):
+            batch_docs = documents[start : start + max(1, batch_size)]
+            inputs = self.tokenizer(
+                [query] * len(batch_docs),
+                batch_docs,
+                truncation=True,
+                padding=True,
+                max_length=512,
+                return_tensors="pt",
+            )
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            with torch.no_grad():
+                logits = self.model(**inputs).logits
+                if logits.shape[-1] == 1:
+                    probs = torch.sigmoid(logits.view(-1)).detach().cpu().tolist()
+                else:
+                    probs = F.softmax(logits, dim=-1)[:, 1].detach().cpu().tolist()
+                scores.extend(float(p) for p in probs)
+        return scores
     
     def rerank_documents(self, query: str, documents: List[Dict], top_k: int = 3) -> List[Dict]:
         """Rerank documents based on relevance to query."""

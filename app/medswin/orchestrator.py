@@ -151,7 +151,12 @@ class MedSwinOrchestrator:
                     org_id,
                 )
             else:
-                await self.session_repo.update_last_active(session_id, org_id)
+                updated = await self.session_repo.update_last_active(session_id, org_id)
+                if not updated:
+                    await self.session_repo.create(
+                        Session(session_id=session_id, user_id=user_id, org_id=org_id),
+                        org_id,
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.error("Session persistence failed: %s", exc)
             degraded["session"] = True
@@ -526,12 +531,38 @@ class MedSwinOrchestrator:
             )
 
             by_id = {c.chunk_id: c for c in all_candidates}
+            prev_ids = set(by_id.keys())
             for c in candidates:
                 if c.chunk_id not in by_id:
                     by_id[c.chunk_id] = c
                 else:
                     merge_candidate_scores(by_id[c.chunk_id], c)
             all_candidates = list(by_id.values())
+            new_ids = set(by_id.keys()) - prev_ids
+
+            if iteration > 0 and not new_ids:
+                trace.tool_calls.append(
+                    ToolCall(
+                        tool_name="pipeline.mac",
+                        parameters={"iteration": iteration, "skipped": "no_new_candidates"},
+                        result={"count": 0},
+                    )
+                )
+                terminal_iter = max(iteration, settings.MAX_RETRIEVE_LOOPS - 1)
+                check = self.gate.check(
+                    selected_ledger,
+                    facets,
+                    selected,
+                    iteration=terminal_iter,
+                    constraints=constraints,
+                    query_spec=query_spec,
+                    contradictions=contradictions if "contradictions" in locals() else [],
+                )
+                final_check = check
+                trace.sufficiency_checks.append(check)
+                if check.policy_decision:
+                    trace.policy_decisions.append(check.policy_decision)
+                break
 
             routed = (hints or {}).get("routed_agents") or (hints or {}).get("routed_agent")
             missing = (hints or {}).get("missing_facets") or []

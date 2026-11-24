@@ -91,13 +91,21 @@ async def cds_discovery() -> Dict[str, Any]:
     return discovery()
 
 
+def _fhir_id(value: str) -> str:
+    """Return the id tail of a FHIR reference such as Practitioner/dr-chen."""
+    text = (value or "").strip()
+    if "/" in text:
+        return text.rsplit("/", 1)[-1].strip()
+    return text
+
+
 def _cds_caller(request: Request, body: CdsRequest) -> tuple[str, str]:
     token_user = str(getattr(request.state, "user_id", "") or "").strip()
     if token_user:
         token_org = str(getattr(request.state, "org_id", "") or "").strip()
         return bind_tenant(
             request,
-            (body.context.userId or token_user).strip(),
+            _fhir_id(body.context.userId or token_user),
             (body.context.orgId or token_org).strip(),
         )
     user_id = (body.context.userId or "cds-client").strip() or "cds-client"
@@ -117,7 +125,8 @@ async def cds_service(
     if body.hook != "patient-view":
         raise HTTPException(status_code=400, detail="This service expects the patient-view hook")
     user_id, org_id = _cds_caller(request, body)
-    question = " ".join((body.context.question or "").split())
+    extra = body.context.model_extra or {}
+    question = " ".join((body.context.question or str(extra.get("clinicalQuestion") or "")).split())
     if not question:
         return {"cards": []}
     response = await chat(

@@ -145,3 +145,27 @@ def test_health_stays_open_when_auth_is_on(monkeypatch):
     monkeypatch.setattr(settings, "AUTH_JWT_SECRET", None)
     response = _client().get("/health")
     assert response.status_code == 200
+
+
+def test_clinician_shell_stays_open_when_auth_is_on(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", None)
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+
+    @app.get("/")
+    def root():
+        return {"ok": True}
+
+    @app.get("/app/")
+    def app_shell():
+        return {"ok": True}
+
+    @app.get("/api/v1/ping")
+    def ping():
+        return {"ok": True}
+
+    client = TestClient(app)
+    assert client.get("/").status_code == 200
+    assert client.get("/app/").status_code == 200
+    assert client.get("/api/v1/ping").status_code == 401

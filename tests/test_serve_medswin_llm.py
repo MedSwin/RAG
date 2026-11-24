@@ -400,3 +400,36 @@ class TestPrefixKvCache:
         usage = second.json()["usage"]
         assert usage["cached_tokens"] > 0
         assert serve._prefix_kv_cache.hits >= 1
+
+
+def test_nonfinite_sampling_retries_greedy(serve):
+    class _Boom:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def generate(self, **kwargs):
+            self.calls.append(bool(kwargs.get("do_sample")))
+            if kwargs.get("do_sample"):
+                raise RuntimeError("probability tensor contains either `inf`, `nan` or element < 0")
+
+            class _Out:
+                sequences = torch.tensor([[1, 2, 3]])
+                past_key_values = None
+
+            return _Out()
+
+    model = _Boom()
+    input_ids = torch.tensor([[1, 2, 3, 4, 5]])
+    sequences, cached = serve._generate_with_optional_prefix_cache(
+        model,
+        input_ids,
+        torch.ones_like(input_ids),
+        torch.device("cpu"),
+        {"max_new_tokens": 2, "do_sample": True, "temperature": 0.2, "top_p": 0.95},
+        prompt_tokens=5,
+        pad_token_id=0,
+        eos_token_id=1,
+    )
+    assert model.calls == [True, False]
+    assert cached == 0
+    assert int(sequences.shape[-1]) == 3

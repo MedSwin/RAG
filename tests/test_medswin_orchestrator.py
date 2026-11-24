@@ -208,6 +208,26 @@ def test_retrieval_packs_with_the_policy_token_budget(monkeypatch):
     assert seen["token_budget"] == 222
 
 
+def test_supplied_session_id_is_created_when_it_is_missing():
+    import asyncio
+
+    created = []
+
+    class Sessions:
+        async def update_last_active(self, session_id, org_id):
+            return False
+
+        async def create(self, session, org_id):
+            created.append((session.session_id, session.user_id, org_id))
+            return {"session_id": session.session_id}
+
+    orchestrator = MedSwinOrchestrator(embedding_client=FakeEmbeddingClient(), reranker_client=None)
+    orchestrator.session_repo = Sessions()
+    session_id = asyncio.run(orchestrator._open_session("sess-live-cdss-001", "dr-chen", "st-vincent-cdss", {}))
+    assert session_id == "sess-live-cdss-001"
+    assert created == [("sess-live-cdss-001", "dr-chen", "st-vincent-cdss")]
+
+
 def test_trace_failure_keeps_the_gated_answer():
     import asyncio
 

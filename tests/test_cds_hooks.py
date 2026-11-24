@@ -1,5 +1,9 @@
+import time
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from tests.test_auth import _token
 
 from app.api.auth import AuthMiddleware
 from app.api.cds import get_cds_chat, get_feedback_recorder, router
@@ -137,6 +141,56 @@ def test_unknown_service_is_not_found():
         json={"hook": "patient-view", "hookInstance": "hook-1", "context": {}},
     )
     assert response.status_code == 404
+
+
+def test_cds_discovery_stays_open_when_auth_is_on(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", None)
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(router)
+    response = TestClient(app).get("/cds-services")
+    assert response.status_code == 200
+    assert "medswin-evidence" in {item["id"] for item in response.json()["services"]}
+
+
+def test_cds_service_accepts_a_fhir_user_reference(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", "clinical-secret-value")
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    seen = {}
+
+    async def chat(**kwargs):
+        seen.update(kwargs)
+        return _response(accepted=True)
+
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(router)
+    app.dependency_overrides[get_cds_chat] = lambda: chat
+    now = int(time.time())
+    token = _token(
+        "clinical-secret-value",
+        {"sub": "dr-chen", "org_id": "st-vincent-cdss", "role": "clinician", "exp": now + 60},
+    )
+    response = TestClient(app).post(
+        "/cds-services/medswin-evidence",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "hook": "patient-view",
+            "hookInstance": "hook-1",
+            "context": {
+                "userId": "Practitioner/dr-chen",
+                "patientId": "pt-1",
+                "orgId": "st-vincent-cdss",
+                "clinicalQuestion": "Which anticoagulant is safer?",
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["cards"]
+    assert seen["user_id"] == "dr-chen"
+    assert seen["question"] == "Which anticoagulant is safer?"
 
 
 def test_cds_service_requires_a_token_when_auth_is_on(monkeypatch):

@@ -14,9 +14,11 @@ prompt/output envelope to both MedSwin and Foundry GPT.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
+import threading
 import time
 import uuid
 from collections import OrderedDict
@@ -211,6 +213,12 @@ def _load() -> tuple[Any, Any, torch.device]:
         _model = _model.to(device)
     _model.eval()
     try:
+        resolved_win = _context_window(_model, _tokenizer)
+        if isinstance(getattr(_tokenizer, "model_max_length", None), int) and _tokenizer.model_max_length < resolved_win:
+            _tokenizer.model_max_length = resolved_win
+    except Exception:
+        pass
+    try:
         _device = next(_model.parameters()).device
     except StopIteration:
         _device = device
@@ -278,7 +286,9 @@ class _PrefixCacheEntry:
 
 @dataclass
 class PrefixKvCache:
-    max_entries: int = 4
+    max_entries: int = field(
+        default_factory=lambda: int(os.getenv("MEDSWIN_PREFIX_CACHE_MAX_ENTRIES", "2"))
+    )
     min_prefix_tokens: int = field(
         default_factory=lambda: int(os.getenv("MEDSWIN_PREFIX_CACHE_MIN_TOKENS", "32"))
     )
@@ -338,8 +348,10 @@ class PrefixKvCache:
         cloned = DynamicCache()
         try:
             for layer_idx, layer in enumerate(best_entry.cache.layers):
-                k = layer.keys[:, :, :best_len, :].to(device=device, non_blocking=False).clone()
-                v = layer.values[:, :, :best_len, :].to(device=device, non_blocking=False).clone()
+                k_src = layer.keys[:, :, :best_len, :]
+                v_src = layer.values[:, :, :best_len, :]
+                k = (k_src if k_src.device == device else k_src.to(device=device)).clone()
+                v = (v_src if v_src.device == device else v_src.to(device=device)).clone()
                 cloned.update(k, v, layer_idx=layer_idx)
         except Exception:
             self.misses += 1
@@ -352,19 +364,19 @@ class PrefixKvCache:
     def store(self, token_ids: list[int], cache: DynamicCache, store_len: int) -> None:
         if not self.enabled or store_len < self.min_prefix_tokens:
             return
-        cpu_cache = DynamicCache()
+        dev_cache = DynamicCache()
         try:
             for layer_idx, layer in enumerate(cache.layers):
-                k = layer.keys[:, :, :store_len, :].detach().to("cpu").clone()
-                v = layer.values[:, :, :store_len, :].detach().to("cpu").clone()
-                cpu_cache.update(k, v, layer_idx=layer_idx)
+                k = layer.keys[:, :, :store_len, :].detach().clone()
+                v = layer.values[:, :, :store_len, :].detach().clone()
+                dev_cache.update(k, v, layer_idx=layer_idx)
         except Exception:
             return
 
         key = hashlib.sha256(tuple(token_ids[:store_len]).__repr__().encode()).hexdigest()[:16]
         self._entries[key] = _PrefixCacheEntry(
             token_ids=tuple(token_ids[:store_len]),
-            cache=cpu_cache,
+            cache=dev_cache,
         )
         while len(self._entries) > self.max_entries:
             self._entries.popitem(last=False)
@@ -385,11 +397,18 @@ def reset_prefix_cache() -> None:
     _prefix_kv_cache.reset()
 
 
-def _build_attention_mask(
-    prefix_len: int, suffix_len: int, max_new_tokens: int, device: torch.device
-) -> torch.Tensor:
-    total = prefix_len + suffix_len + max_new_tokens
-    return torch.ones(1, total, dtype=torch.long, device=device)
+def _nonfinite_sampling(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "probability tensor" in text or "nan" in text or "inf" in text
+
+
+def _greedy_generation_kwargs(generation_kwargs: dict[str, Any]) -> dict[str, Any]:
+    greedy = dict(generation_kwargs)
+    greedy["do_sample"] = False
+    greedy.pop("temperature", None)
+    greedy.pop("top_p", None)
+    greedy.pop("top_k", None)
+    return greedy
 
 
 def _generate_with_optional_prefix_cache(
@@ -410,29 +429,34 @@ def _generate_with_optional_prefix_cache(
     if eos_token_id is not None:
         gen_kwargs.setdefault("eos_token_id", eos_token_id)
 
-    prefix_cache, matched = _prefix_kv_cache.lookup(input_ids, device)
-    if prefix_cache is not None and 0 < matched < prompt_tokens:
-        suffix = input_ids[:, matched:]
-        suffix_len = int(suffix.shape[-1])
-        pos = torch.arange(matched, matched + suffix_len, dtype=torch.long, device=device)
-        mask = _build_attention_mask(
-            matched, suffix_len, int(gen_kwargs.get("max_new_tokens", 1)), device
-        )
-        try:
-            out = model.generate(
-                input_ids=suffix,
-                attention_mask=mask,
-                past_key_values=prefix_cache,
-                cache_position=pos,
-                **gen_kwargs,
-            )
-            full_output = torch.cat([input_ids[:, :matched], out.sequences], dim=1)
-            _store_prefix_from_generate_output(input_ids, prompt_tokens, out)
-            return full_output, matched
-        except Exception:
-            pass
+    def _run(kwargs: dict[str, Any], past: Any = None) -> Any:
+        call = dict(kwargs)
+        if past is not None:
+            call["past_key_values"] = past
+        return model.generate(input_ids=input_ids, attention_mask=attention_mask, **call)
 
-    out = model.generate(input_ids=input_ids, attention_mask=attention_mask, **gen_kwargs)
+    # MPS float16 prefix reuse can stall inside generate on the second call.
+    # CPU reuse stays on. The in-process smoke benchmark still records prefix hits.
+    if device.type == "mps":
+        prefix_cache, matched = None, 0
+    else:
+        prefix_cache, matched = _prefix_kv_cache.lookup(input_ids, device)
+    if prefix_cache is not None and 0 < matched < prompt_tokens:
+        try:
+            out = _run(gen_kwargs, prefix_cache)
+            _store_prefix_from_generate_output(input_ids, prompt_tokens, out)
+            return out.sequences, matched
+        except Exception as exc:
+            if _nonfinite_sampling(exc):
+                gen_kwargs = _greedy_generation_kwargs(gen_kwargs)
+            prefix_cache = None
+
+    try:
+        out = _run(gen_kwargs)
+    except RuntimeError as exc:
+        if not _nonfinite_sampling(exc) or not generation_kwargs.get("do_sample"):
+            raise
+        out = _run(_greedy_generation_kwargs(gen_kwargs))
     _store_prefix_from_generate_output(input_ids, prompt_tokens, out)
     return out.sequences, 0
 
@@ -482,6 +506,9 @@ async def health() -> dict[str, Any]:
     }
 
 
+_GENERATION_LOCK = threading.Lock()
+
+
 @app.post("/v1/chat/completions", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     if request.model not in _ACCEPTED_MODEL_ALIASES:
@@ -521,7 +548,13 @@ async def chat(request: ChatRequest) -> ChatResponse:
         attention_mask = attention_mask.to(device)
 
     temperature = float(request.temperature if request.temperature is not None else 0.2)
-    do_sample = temperature > 0.0
+    # MPS float16 multinomial yields non-finite probabilities on long clinical prompts.
+    force_greedy = str(device).startswith("mps") and os.getenv("MEDSWIN_MPS_SAMPLE", "0") != "1"
+    do_sample = temperature > 0.0 and not force_greedy
+    print(
+        f"MedSwin generate start prompt_tokens={prompt_tokens} max_new_tokens={max_new_tokens} sample={do_sample}",
+        flush=True,
+    )
     pad_token_id, eos_token_id = _resolve_token_ids(model, tokenizer)
     generation_kwargs: dict[str, Any] = {
         "max_new_tokens": max_new_tokens,
@@ -533,9 +566,9 @@ async def chat(request: ChatRequest) -> ChatResponse:
         generation_kwargs["temperature"] = max(temperature, 1e-5)
         generation_kwargs["top_p"] = float(request.top_p or 0.95)
 
-    try:
-        with torch.inference_mode():
-            output, cached_tokens = _generate_with_optional_prefix_cache(
+    def _run_generate() -> tuple[Any, int]:
+        with _GENERATION_LOCK, torch.inference_mode():
+            return _generate_with_optional_prefix_cache(
                 model,
                 input_ids,
                 attention_mask,
@@ -545,6 +578,9 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 pad_token_id,
                 eos_token_id,
             )
+
+    try:
+        output, cached_tokens = await asyncio.to_thread(_run_generate)
     except Exception as exc:
         if _is_oom_error(exc):
             _empty_device_cache(device)

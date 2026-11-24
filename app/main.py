@@ -45,7 +45,7 @@ def _strict_benchmark_runtime() -> bool:
 
 def _active_generation_identity() -> tuple[str, str]:
     """Return the actual generation backend/model selected by LLMClient."""
-    backend = _generation_backend()
+    backend = settings.resolved_generation_backend()
     if backend == "medswin_local":
         return backend, os.getenv("MEDSWIN_LLM_MODEL") or settings.MEDSWIN_LLM_MODEL
     if backend == "bedrock":
@@ -294,8 +294,20 @@ async def health_check():
         model_manager = get_model_manager()
         embedding_loaded = model_manager.embedding_model is not None
         reranker_loaded = model_manager.reranker_model is not None
-        return {
-            "status": "healthy",
+        storage = StorageService()
+        try:
+            stats = await storage.get_storage_stats()
+            index_ready = bool(stats.get("index_exists")) and bool(stats.get("index_provenance_valid", True))
+            status = cloud_health_status(
+                index_exists=bool(stats.get("index_exists")),
+                provenance_valid=bool(stats.get("index_provenance_valid", True)),
+            )
+        except Exception:  # noqa: BLE001
+            stats = {}
+            index_ready = False
+            status = "healthy"
+        body = {
+            "status": status,
             "contract_version": "2.0",
             "supported_pipelines": ["naive", "two-stage", "full"],
             "system_eval_mode": _disabled("SYSTEM_EVAL_MODE"),
@@ -306,9 +318,16 @@ async def health_check():
             "llm_model": generation_model,
             "embedding_model": "loaded" if embedding_loaded else "not_loaded",
             "reranker_model": "loaded" if reranker_loaded else "not_loaded",
+            "active_embedding_space": settings.active_embedding_space(),
+            "active_embedding_dimension": settings.active_embedding_dimension(),
+            "active_index_ready": index_ready,
+            "index_provenance_error": stats.get("index_provenance_error"),
             "dataset_preload_disabled": _disabled("DISABLE_DATASET_PRELOAD"),
             "database": "connected",
         }
+        if status == "degraded":
+            return JSONResponse(status_code=503, content=jsonable_encoder(body))
+        return body
     except Exception as e:
         logger.error("Health check failed: %s", e)
         raise HTTPException(status_code=503, detail="Service unavailable")
