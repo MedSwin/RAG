@@ -202,17 +202,33 @@ class LexicalRetriever:
         caution_at = []
         drug_at = []
         for index, word in enumerate(words):
-            window = " ".join(words[max(0, index - 5):index + 1])
-            if _ungoverned_caution(window) or _QUALIFY.search(window):
+            earlier = " ".join(words[max(0, index - 2):index])
+            phrase = f"{earlier} {word}".strip()
+            now = _ungoverned_caution(phrase) or bool(_QUALIFY.search(phrase))
+            before = bool(earlier) and (_ungoverned_caution(earlier) or bool(_QUALIFY.search(earlier)))
+            if now and not before:
                 caution_at.append(index)
             if intervention_tokens(word):
                 drug_at.append(index)
         if not caution_at:
             return " ".join(words[:6])
-        begin = max(0, caution_at[0] - 4)
-        later_drugs = [index for index in drug_at if index >= begin]
-        end = later_drugs[-1] + 1 if later_drugs else min(len(words), caution_at[0] + 6)
-        return " ".join(words[begin:end])
+        spans = []
+        for anchor in caution_at:
+            nearby = [index for index in drug_at if anchor - 4 <= index <= anchor + 4]
+            begin = anchor
+            end = min(len(words), anchor + 3)
+            if nearby:
+                if nearby[0] < anchor:
+                    begin = nearby[0]
+                end = nearby[-1] + 1
+            spans.append((begin, end))
+        merged = []
+        for begin, end in spans:
+            if merged and begin <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((begin, end))
+        return " ".join(" ".join(words[begin:end]) for begin, end in merged)
 
     @staticmethod
     def _caution_sentences(context: str) -> List[str]:
