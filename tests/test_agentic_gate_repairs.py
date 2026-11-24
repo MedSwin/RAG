@@ -215,6 +215,59 @@ def test_same_drug_warning_on_the_safety_facet_conflicts_with_the_guideline():
     assert different == []
 
 
+def test_a_recommendation_that_cannot_use_warfarin_does_not_conflict_with_that_warning():
+    cannot = _entry(
+        "cannot",
+        "guideline_concordance",
+        "Apixaban is recommended when patients cannot use warfarin.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    prefer = _entry(
+        "prefer",
+        "guideline_concordance",
+        "Prefer apixaban over warfarin.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    separate = _entry(
+        "separate",
+        "guideline_concordance",
+        "Patients cannot use warfarin. Apixaban is recommended.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    same = _entry(
+        "aw",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    only = _entry(
+        "only",
+        "guideline_concordance",
+        "Cannot use apixaban.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    for support in (cannot, prefer, separate):
+        pairs = detect_contradictions([support, warning, same])
+        assert all(pair.chunk_id_b != "war" for pair in pairs)
+        assert any(pair.chunk_id_b == "aw" and "apixaban" in pair.reason for pair in pairs)
+        assert all("warfarin" not in pair.reason for pair in pairs)
+    blocked = detect_contradictions([only, warning, same])
+    assert any(pair.chunk_id_b == "aw" for pair in blocked)
+    assert all(pair.chunk_id_b != "war" for pair in blocked)
+
+
 def test_a_caution_clause_in_the_recommendation_does_not_conflict_with_that_warning():
     support = _entry(
         "note",

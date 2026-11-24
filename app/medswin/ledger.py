@@ -571,6 +571,30 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
     return recommendation, clause
 
 
+_CANNOT_USE = re.compile(
+    r"\bcannot\s+(?:use|take|receive|give|start)\s+([A-Za-z][A-Za-z0-9-]{3,})",
+    re.I,
+)
+_PREFER_OVER = re.compile(
+    r"\bprefer\s+[A-Za-z][A-Za-z0-9-]{3,}\s+over\s+([A-Za-z][A-Za-z0-9-]{3,})",
+    re.I,
+)
+
+
+def _drop_alternative_drug(text: str) -> str:
+    """Drop a drug the recommendation says not to use when another drug remains."""
+    words = [match.group(1) for match in _CANNOT_USE.finditer(text or "")]
+    words.extend(match.group(1) for match in _PREFER_OVER.finditer(text or ""))
+    kept = text or ""
+    for word in words:
+        if not intervention_tokens(word):
+            continue
+        trial = re.sub(rf"\b{re.escape(word)}\b", "", kept, count=1, flags=re.I)
+        if intervention_tokens(trial):
+            kept = trial
+    return kept
+
+
 def _support_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = None) -> str:
     """Drop a caution sentence that names a different drug from the recommendation."""
     from app.scoring.coverage import _QUALIFY, _ungoverned_caution
@@ -597,8 +621,8 @@ def _support_text(entry: EvidenceLedgerEntry, claim: Optional[EvidenceClaim] = N
     other_drugs = intervention_tokens(other_text)
     caution_drugs = intervention_tokens(caution_text)
     if other_drugs and caution_drugs and other_drugs.isdisjoint(caution_drugs):
-        return other_text
-    return text
+        return _drop_alternative_drug(other_text)
+    return _drop_alternative_drug(text)
 
 
 PATIENT_CHART_ID = "patient-chart"
