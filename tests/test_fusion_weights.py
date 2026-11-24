@@ -3,6 +3,7 @@ from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage
 from app.agents.base import prioritize_passages
 from app.scoring.fusion import _contradiction, _safety
+from app.scoring.utility import select_bundle
 
 
 def test_a_dose_sentence_does_not_raise_the_safety_rank():
@@ -64,6 +65,62 @@ def test_a_direct_caution_raises_the_safety_rank():
     assert _safety(renal) < 0.32
     direct.safety_score = _safety(direct)
     assert prioritize_passages([filler, direct])[0].chunk_id == "direct"
+
+
+def test_a_caution_qualifier_reaches_the_safety_pin():
+    qualifier = CandidatePassage(
+        chunk_id="qualifier",
+        doc_id="qualifier",
+        source_type=SourceType.SAFETY,
+        text="Use apixaban with caution in CKD.",
+        calibrated_score=0.90,
+    )
+    precaution = CandidatePassage(
+        chunk_id="precaution",
+        doc_id="precaution",
+        source_type=SourceType.SAFETY,
+        text="Take precautions with apixaban when the eGFR is low.",
+        calibrated_score=0.90,
+    )
+    denied = CandidatePassage(
+        chunk_id="denied",
+        doc_id="denied",
+        source_type=SourceType.CPG,
+        text="The note records no caution for apixaban in this adult.",
+        calibrated_score=0.90,
+    )
+    monitor = CandidatePassage(
+        chunk_id="monitor",
+        doc_id="monitor",
+        source_type=SourceType.LIT,
+        text="Laboratory monitoring is recommended during treatment.",
+        calibrated_score=0.90,
+    )
+    exceptional = CandidatePassage(
+        chunk_id="exceptional",
+        doc_id="exceptional",
+        source_type=SourceType.LIT,
+        text="Apixaban has an exceptional effect in this trial.",
+        calibrated_score=0.90,
+    )
+    filler = CandidatePassage(
+        chunk_id="filler",
+        doc_id="filler",
+        source_type=SourceType.CPG,
+        text="A general management statement about diet.",
+        calibrated_score=0.99,
+        fusion_score=0.99,
+    )
+    assert _safety(qualifier) >= 0.32
+    assert _safety(precaution) >= 0.32
+    assert _safety(denied) == 0.0
+    assert _safety(monitor) == 0.0
+    assert _safety(exceptional) == 0.0
+    assert _contradiction(qualifier) < 0.32
+    qualifier.safety_score = _safety(qualifier)
+    qualifier.fusion_score = 0.20
+    selected = select_bundle([filler, qualifier], max_chunks=1)
+    assert [item.chunk_id for item in selected] == ["filler", "qualifier"]
 
 
 def test_a_hedge_does_not_pin_a_contradiction():

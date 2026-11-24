@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.schemas.enums import SourceType
 from app.schemas.evidence import CandidatePassage
 from app.scoring.calibrate import clamp, first_present
-from app.scoring.coverage import _LOCAL_NEGATION, _token_is_caution
+from app.scoring.coverage import _LOCAL_NEGATION, _QUALIFY, _token_is_caution
 from app.scoring.hierarchy import evidence_grade_from_metadata
 
 
@@ -72,6 +72,11 @@ def _safety(candidate: CandidatePassage) -> float:
             score += 0.32
         elif token.startswith(("renal", "pregnan")):
             score += 0.16
+    if score < 0.32:
+        for match in _QUALIFY.finditer(text):
+            if _governed_caution(text, match.start()):
+                score += 0.32
+                break
     return clamp(score)
 
 
