@@ -1181,6 +1181,7 @@ _SCRIPT_FOR = re.compile(
     re.I,
 )
 _SCRIPT_END = re.compile(r"\bscript\s*[.!?]*\s*$", re.I)
+_REPEAT_ORDER = re.compile(r"\brepeat(?:s|ed|ing)?\b", re.I)
 _PUT_ON = re.compile(
     r"\b(?:put|puts|putting|placed?|placing)\b(?:\s+\w+){0,5}\s+on\b",
     re.I,
@@ -1793,6 +1794,34 @@ def _script_orders_drug(text: str) -> bool:
     return False
 
 
+def _repeat_orders_drug(text: str) -> bool:
+    """True when a repeat order names a drug."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _ON_TOPIC
+
+    raw = text or ""
+    if _COUNSEL_ON.search(raw):
+        return False
+    for match in _REPEAT_ORDER.finditer(raw):
+        window = raw[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        tail = raw[match.end():]
+        prefix = raw[: match.start()]
+        content = _content_words(tail)
+        nxt = content[1] if len(content) >= 2 else ""
+        if nxt and _ON_TOPIC.match(nxt):
+            continue
+        if _direct_drug_object(tail):
+            return True
+        if (
+            not intervention_tokens(tail)
+            and _home_subject_is_drug(prefix)
+            and not _MONITOR_WORD.search(prefix)
+        ):
+            return True
+    return False
+
+
 def _has_recommendation_verb(text: str) -> bool:
     from app.scoring.coverage import _LOCAL_NEGATION, _ON_TOPIC, _QUALIFY
 
@@ -1846,6 +1875,8 @@ def _has_recommendation_verb(text: str) -> bool:
         ):
             return True
     if _script_orders_drug(text):
+        return True
+    if _repeat_orders_drug(text):
         return True
     for match in _PUT_ON.finditer(text or ""):
         window = text[max(0, match.start() - 48): match.start()]
