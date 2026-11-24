@@ -379,10 +379,19 @@ class LexicalRetriever:
         from app.medswin.ledger import _DRUG_ALIASES, _SHORT_ALIASES, intervention_tokens
 
         caution_terms = LexicalRetriever._caution_terms(context)
+        question_caution = LexicalRetriever._caution_terms(question)
         drug_terms = [term for term in caution_terms if intervention_tokens(term)]
+        question_drugs = [term for term in question_caution if intervention_tokens(term)]
         other_terms = [term for term in caution_terms if term not in set(drug_terms)]
-        ordered = drug_terms + other_terms[:32] + LexicalRetriever._fts_terms(question)
-        caution_term_set = set(caution_terms)
+        question_other = [term for term in question_caution if term not in set(question_drugs)]
+        ordered = (
+            drug_terms
+            + question_drugs
+            + other_terms[:32]
+            + question_other[:32]
+            + LexicalRetriever._fts_terms(question)
+        )
+        caution_term_set = set(caution_terms) | set(question_caution)
         chosen = []
         seen = set()
         for term in ordered:

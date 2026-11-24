@@ -279,6 +279,15 @@ def test_a_later_chart_drug_stays_in_the_search_terms():
         assert drug in terms
 
 
+def test_the_word_search_keeps_a_warning_at_the_end_of_a_long_question():
+    from app.retrieval.lexical import LexicalRetriever
+
+    question = " ".join(f"history{index}" for index in range(400)) + " Avoid apixaban."
+    terms = LexicalRetriever._lexical_terms(question)
+    assert "apixaban" in terms
+    assert len(terms) <= 64
+
+
 def test_the_embedding_window_keeps_a_warning_at_the_end_of_a_long_question():
     from app.core.config import settings
     from app.retrieval.lexical import LexicalRetriever
