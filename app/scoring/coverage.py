@@ -152,7 +152,7 @@ def compute_facet_coverage(
             for claim in entry.claims:
                 if claim.facet != facet.name:
                     continue
-                if claim.polarity == EvidencePolarity.CONTRADICTS:
+                if claim.polarity in {EvidencePolarity.CONTRADICTS, EvidencePolarity.QUALIFIES}:
                     contradicting.append(entry.chunk_id)
                     continue
                 contrib = _contribution(claim, entry)

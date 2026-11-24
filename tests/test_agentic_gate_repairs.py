@@ -179,6 +179,36 @@ def test_same_drug_caution_qualifies_the_recommendation():
     assert different == []
 
 
+def test_a_precaution_alone_does_not_cover_the_facet():
+    facet = ClinicalFacet(
+        name="guideline_concordance",
+        keywords=["apixaban"],
+        required=True,
+        threshold=0.70,
+    )
+    precaution = _passage(
+        "safety-ckd",
+        "Use apixaban with caution in CKD.",
+        source_type=SourceType.CPG,
+    )
+    precaution.calibrated_score = 0.95
+    precaution.evidence_grade_score = 0.95
+    recommendation = _passage(
+        "cpg-apixaban",
+        "Apixaban is recommended for nonvalvular atrial fibrillation.",
+        source_type=SourceType.CPG,
+    )
+    recommendation.calibrated_score = 0.95
+    recommendation.evidence_grade_score = 0.95
+    caution_only = compute_facet_coverage([facet], build_retrieval_ledger([precaution], [facet]))
+    supported = compute_facet_coverage([facet], build_retrieval_ledger([recommendation], [facet]))
+    assert caution_only[0].coverage_probability == 0.0
+    assert caution_only[0].supporting_chunk_ids == []
+    assert "safety-ckd" in caution_only[0].contradicting_chunk_ids
+    assert supported[0].coverage_probability > 0.0
+    assert supported[0].supporting_chunk_ids == ["cpg-apixaban"]
+
+
 def test_critic_must_cite_both_chunks_before_a_medium_conflict_clears():
     pair = ContradictionPair(
         facet="guideline_concordance",
