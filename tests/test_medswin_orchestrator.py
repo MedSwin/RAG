@@ -213,6 +213,36 @@ def test_a_second_caution_in_a_long_note_stays_in_the_synopsis():
     assert len(returned.split()) <= 160
 
 
+def test_a_chart_warning_stays_when_dose_lines_fill_the_row():
+    from app.medswin.orchestrator import _chart_synopsis
+
+    sentence = "The patient takes {drug} 150 mg twice daily with breakfast."
+    drugs = [
+        "dabigatran",
+        "rivaroxaban",
+        "edoxaban",
+        "warfarin",
+        "heparin",
+        "enoxaparin",
+        "aspirin",
+        "ibuprofen",
+        "ketorolac",
+        "metformin",
+    ]
+    note = " ".join(sentence.format(drug=drug) for drug in drugs) + " Avoid apixaban."
+    synopsis = _chart_synopsis(
+        [
+            {"text": note},
+            {"text": "Age 80 years."},
+            {"text": "Creatinine is 1.4 today."},
+        ]
+    )
+    lowered = synopsis.lower()
+    assert "avoid apixaban" in lowered
+    assert "warfarin" in lowered
+    assert len(synopsis.split()) <= 140
+
+
 def test_a_later_drug_stays_when_earlier_chart_cautions_are_long():
     from app.medswin.orchestrator import _chart_synopsis
 

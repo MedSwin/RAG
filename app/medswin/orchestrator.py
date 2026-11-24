@@ -235,13 +235,14 @@ def _fit_row(text: str, allowance: int) -> List[str]:
     from app.medswin.ledger import dose_span
 
     caution_indexes = [index for index, sentence in enumerate(sentences) if _note_priority(sentence)]
-    caution_bits: List[str] = []
+    dose_bits: List[str] = []
     for sentence in sentences:
         if _note_priority(sentence):
             continue
         span = dose_span(sentence)
         if span:
-            caution_bits.append(span)
+            dose_bits.append(span)
+    caution_bits: List[str] = []
     used = 0
     remaining = set(caution_indexes)
     for index in caution_indexes:
@@ -268,6 +269,12 @@ def _fit_row(text: str, allowance: int) -> List[str]:
         if piece:
             caution_bits.append(" ".join(piece))
             used += len(piece)
+    for bit in dose_bits:
+        bit_words = bit.split()
+        if not bit_words or used + len(bit_words) > allowance:
+            break
+        caution_bits.append(bit)
+        used += len(bit_words)
     prefix = words[:allowance]
     if caution_bits and all(bit in " ".join(prefix) for bit in caution_bits):
         return prefix
