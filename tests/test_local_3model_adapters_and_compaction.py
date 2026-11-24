@@ -691,13 +691,31 @@ def test_the_local_window_keeps_the_chart_and_the_caution():
             384,
         )
         text = fitted[-1]["content"]
-        assert "ASA 100mg daily" in text
         assert "Avoid apixaban" in text
+        if "ASA 100mg daily" in content:
+            assert "ASA 100mg daily" in text
         if "Avoid metformin." in content:
             for line in cautions:
                 assert line in text
         assert "history " * 40 not in text
         assert _estimate_message_tokens(fitted) + 384 <= 1980
+    no_chart = (
+        "Shared Evidence Passages:\n"
+        f"{blocks}\n\n"
+        "Query: Which dose?\n"
+    )
+    fitted = fit_local_messages(
+        [
+            {"role": "system", "content": "Return one JSON object. " * 40},
+            {"role": "user", "content": no_chart},
+        ],
+        384,
+    )
+    text = fitted[-1]["content"]
+    for line in cautions:
+        assert line in text
+    assert "history " * 40 not in text
+    assert _estimate_message_tokens(fitted) + 384 <= 1980
 
 
 def test_nist_download_sends_a_browser_user_agent(monkeypatch, tmp_path):

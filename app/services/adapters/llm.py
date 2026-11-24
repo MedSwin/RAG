@@ -196,7 +196,11 @@ def _shrink_user_message(messages: List[Dict[str, Any]], prompt_budget: int) -> 
         content = str(messages[index].get("content") or "")
         if len(content) <= 80:
             return False
-        if "Patient chart:" in content or "Evidence:\n" in content:
+        if (
+            "Patient chart:" in content
+            or "Evidence:\n" in content
+            or "Shared Evidence Passages:\n" in content
+        ):
             width = max(80, width // 2)
             messages[index]["content"] = _compact_user_message(content, width)
             continue
