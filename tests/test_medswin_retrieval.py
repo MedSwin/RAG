@@ -721,3 +721,18 @@ def test_a_lexical_caution_stays_ahead_of_weaker_dense_cautions():
     assert "lexical" in kept
     assert "weak-0" in kept
     assert "weak-11" not in kept
+
+
+def test_the_retrieval_trace_lists_a_caution_past_the_first_rows():
+    from app.retrieval.hybrid import _trace_candidates
+
+    fillers = [
+        _candidate(f"dense-{index}", "A general note.", dense=0.90)
+        for index in range(40)
+    ]
+    caution = _candidate("caution", "Avoid apixaban.", source_type=SourceType.SAFETY, dense=0.10)
+    other = _candidate("other", "A trial report about methods.", dense=0.05)
+    rows = _trace_candidates([*fillers, caution, other], limit=40)
+    ids = [row["chunk_id"] for row in rows]
+    assert ids.count("caution") == 1
+    assert "other" not in ids

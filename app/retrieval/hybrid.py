@@ -62,6 +62,29 @@ def _with_lexical_cautions(
     return pool + extra
 
 
+def _trace_candidates(pool: List[CandidatePassage], limit: int = 40) -> List[Dict[str, Any]]:
+    """List the top rows and any later caution the pool still holds."""
+    from app.agents.base import _is_prompt_caution
+
+    shown = list(pool[:limit])
+    shown_ids = {item.chunk_id for item in shown}
+    for candidate in pool[limit:]:
+        if candidate.chunk_id in shown_ids or not _is_prompt_caution(candidate):
+            continue
+        shown.append(candidate)
+        shown_ids.add(candidate.chunk_id)
+    return [
+        {
+            "chunk_id": item.chunk_id,
+            "source_type": item.source_type.value,
+            "dense_score": item.dense_score,
+            "lexical_score": item.lexical_score,
+            "retrieved_by": item.retrieved_by,
+        }
+        for item in shown
+    ]
+
+
 class HybridRetriever:
     """Two-stage hybrid retriever with calibrated reranking."""
 
@@ -157,16 +180,7 @@ class HybridRetriever:
             lexical_count=len(lexical),
             union_count=len(pool),
             hints=hints or {},
-            candidates=[
-                {
-                    "chunk_id": c.chunk_id,
-                    "source_type": c.source_type.value,
-                    "dense_score": c.dense_score,
-                    "lexical_score": c.lexical_score,
-                    "retrieved_by": c.retrieved_by,
-                }
-                for c in pool[:40]
-            ],
+            candidates=_trace_candidates(pool),
         )
         return pool, trace
 
