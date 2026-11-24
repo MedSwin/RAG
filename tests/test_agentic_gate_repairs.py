@@ -1195,6 +1195,62 @@ def test_a_required_chart_replaces_a_filler_passage():
     assert "filler" not in kept
 
 
+def test_a_required_literature_note_stays_when_the_chart_enters():
+    from app.scoring.utility import select_bundle
+
+    facets = [
+        ClinicalFacet(
+            name="patient_applicability",
+            required=True,
+            source_policy="EMR",
+            keywords=["patient"],
+        ),
+        ClinicalFacet(
+            name="treatment_evidence",
+            required=True,
+            source_policy="LIT",
+            keywords=["therapy"],
+        ),
+    ]
+    strong = CandidatePassage(
+        chunk_id="strong",
+        doc_id="strong",
+        source_type=SourceType.CPG,
+        text="A guideline note about follow-up.",
+        calibrated_score=0.90,
+        fusion_score=0.95,
+        token_count=50,
+    )
+    literature = CandidatePassage(
+        chunk_id="lit",
+        doc_id="lit",
+        source_type=SourceType.LIT,
+        text="Treatment therapy evidence from the literature.",
+        calibrated_score=0.90,
+        fusion_score=0.55,
+        token_count=40,
+    )
+    chart = CandidatePassage(
+        chunk_id="chart",
+        doc_id="chart",
+        source_type=SourceType.EMR,
+        text="Patient history shows renal disease.",
+        calibrated_score=0.80,
+        fusion_score=0.30,
+        token_count=30,
+    )
+    selected = select_bundle(
+        [strong, literature, chart],
+        facets=facets,
+        token_budget=90,
+        max_chunks=2,
+    )
+    kept = {item.chunk_id for item in selected}
+    assert "lit" in kept
+    assert "chart" in kept
+    assert "strong" not in kept
+
+
 def test_a_required_chart_replaces_a_filler_at_the_passage_cap():
     from app.core.config import settings
     from app.scoring.utility import select_bundle

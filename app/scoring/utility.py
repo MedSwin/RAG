@@ -116,9 +116,14 @@ def _preserve_required_sources(
             continue
         item = max(candidates, key=lambda c: (max((c.facet_scores or {}).values(), default=0.0), c.fusion_score or 0.0))
         tokens = token_count(item)
-        current_tokens = _make_room(selected, token_budget, tokens)
+        current_tokens = _make_room(
+            selected,
+            token_budget,
+            tokens,
+            protected_sources=required_sources,
+        )
         if len(selected) >= settings.MMR_MAX_EVIDENCE_CHUNKS:
-            fillers = [passage for passage in selected if not _is_critical_caution(passage)]
+            fillers = _filler_candidates(selected, required_sources)
             if len(selected) <= 1 or not fillers:
                 continue
             victim = min(
@@ -166,11 +171,33 @@ def _adds_a_new_drug_warning(item: CandidatePassage, selected: List[CandidatePas
     return not unnamed and not warned
 
 
-def _make_room(selected: List[CandidatePassage], token_budget: int, needed: int) -> int:
-    """Drop the weakest filler so a new-drug caution can fit. Keep the last passage."""
+def _filler_candidates(
+    selected: List[CandidatePassage],
+    protected_sources: Optional[set] = None,
+) -> List[CandidatePassage]:
+    """Return passages that can leave. Keep the last passage of a required source."""
+    protected = protected_sources or set()
+    fillers = []
+    for item in selected:
+        if _is_critical_caution(item):
+            continue
+        source = item.source_type.value
+        if source in protected and sum(other.source_type.value == source for other in selected) == 1:
+            continue
+        fillers.append(item)
+    return fillers
+
+
+def _make_room(
+    selected: List[CandidatePassage],
+    token_budget: int,
+    needed: int,
+    protected_sources: Optional[set] = None,
+) -> int:
+    """Drop the weakest filler so a protected passage can fit. Keep the last passage."""
     current = sum(token_count(item) for item in selected)
     while current + needed > token_budget and len(selected) > 1:
-        fillers = [item for item in selected if not _is_critical_caution(item)]
+        fillers = _filler_candidates(selected, protected_sources)
         if not fillers:
             break
         victim = min(
