@@ -133,7 +133,6 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "Remain on warfarin.",
         "Stays on warfarin.",
         "Continue warfarin and monitor the INR.",
-        "Apixaban is recommended. Warfarin should be continued.",
     ):
         pairs = chart_contradictions(chart, [warning, other])
         assert len(pairs) == 1, chart
@@ -142,6 +141,17 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         assert "warfarin" in pairs[0].reason
         assert "apixaban" not in pairs[0].reason
         assert _chart_caution_line(None, pairs).startswith("Chart continuation:")
+    mixed = chart_contradictions(
+        "Apixaban is recommended. Warfarin should be continued.",
+        [warning, other],
+    )
+    assert {pair.chunk_id_b for pair in mixed} == {"war", "aw"}
+    warfarin_pair = next(pair for pair in mixed if pair.chunk_id_b == "war")
+    apixaban_pair = next(pair for pair in mixed if pair.chunk_id_b == "aw")
+    assert warfarin_pair.reason.startswith("Chart continuation:")
+    assert "apixaban" not in warfarin_pair.reason
+    assert apixaban_pair.reason.startswith("Chart recommendation:")
+    assert "warfarin" not in apixaban_pair.reason
     for chart in (
         "Continue monitoring warfarin.",
         "Continue to monitor warfarin.",
@@ -197,6 +207,88 @@ def test_a_chart_continuation_qualifies_against_the_same_drug():
     both = chart_contradictions("Warfarin should be continued.", [warning, caution, other])
     assert {pair.chunk_id_b for pair in both} == {"war", "q"}
     assert {pair.severity for pair in both} == {"high", "low"}
+
+
+def test_a_chart_recommendation_conflicts_with_the_same_drug_warning():
+    from app.medswin.cds import _chart_caution_line
+
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    other = _entry(
+        "aw",
+        "safety_contraindications",
+        "Avoid apixaban.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    caution = _entry(
+        "q",
+        "guideline_concordance",
+        "Use warfarin with caution.",
+        EvidencePolarity.QUALIFIES,
+        grade=0.95,
+    )
+    for chart in (
+        "Warfarin is recommended.",
+        "Recommend warfarin.",
+        "Warfarin is first-line.",
+        "Start warfarin.",
+        "Initiate warfarin.",
+        "Prescribe warfarin.",
+        "Warfarin is indicated.",
+        "Use warfarin.",
+        "Give warfarin.",
+        "Start warfarin 5 mg daily.",
+        "Start warfarin and monitor the INR.",
+        "Warfarin is recommended for patients who should not take apixaban.",
+    ):
+        pairs = chart_contradictions(chart, [warning, other])
+        assert len(pairs) == 1, chart
+        assert pairs[0].chunk_id_b == "war", chart
+        assert pairs[0].severity == "high"
+        assert "warfarin" in pairs[0].reason
+        assert "apixaban" not in pairs[0].reason
+        assert _chart_caution_line(None, pairs).startswith("Chart recommendation:")
+    qualified = chart_contradictions("Warfarin is recommended.", [caution, other])
+    assert len(qualified) == 1
+    assert qualified[0].chunk_id_b == "q"
+    assert qualified[0].severity == "low"
+    preferred = chart_contradictions("Prefer apixaban over warfarin.", [warning, other])
+    assert len(preferred) == 1
+    assert preferred[0].chunk_id_b == "aw"
+    assert "warfarin" not in preferred[0].reason
+    listed = chart_contradictions("Warfarin is recommended. Apixaban is also listed.", [warning, other])
+    assert len(listed) == 1
+    assert listed[0].chunk_id_b == "war"
+    dose = chart_contradictions("Apixaban is recommended. Warfarin 5 mg daily.", [warning, other])
+    assert len(dose) == 1
+    assert dose[0].chunk_id_b == "aw"
+    for chart in (
+        "Warfarin 5 mg daily.",
+        "Take warfarin 5 mg daily.",
+        "Patient takes warfarin.",
+        "History of warfarin use.",
+        "Warfarin is not indicated.",
+        "Do not start warfarin.",
+        "Use warfarin with caution.",
+        "Preferred to warfarin.",
+    ):
+        assert chart_contradictions(chart, [warning, other]) == [], chart
+    recommendation = _entry(
+        "rec",
+        "guideline_concordance",
+        "Warfarin is recommended.",
+        EvidencePolarity.SUPPORTS,
+        grade=0.95,
+    )
+    held = chart_contradictions("Do not start warfarin.", [recommendation])
+    assert len(held) == 1
+    assert held[0].chunk_id_b == PATIENT_CHART_ID
 
 
 def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning():

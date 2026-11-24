@@ -720,6 +720,72 @@ def _is_continuation_sentence(sentence: str) -> bool:
     return False
 
 
+_RECOMMEND_VERB = re.compile(
+    r"\b(?:recommend(?:ed|s|ing)?|first[- ]line|indicat(?:ed|ion)|initiat(?:e|ed|ing)|prescrib(?:e|ed|ing)|start(?:ed|ing)?|prefer(?:red|s)?)\b",
+    re.I,
+)
+_ORDER_VERB = re.compile(
+    r"(?:^|[.!?]\s+)(?:please\s+)?(?:use|give)\s+(?:the\s+|a\s+)?[A-Za-z]",
+    re.I,
+)
+
+
+def _rejected_drugs(text: str) -> set[str]:
+    words = [match.group(1) for match in _CANNOT_USE.finditer(text or "")]
+    for pattern in (_PREFER_OVER, _INSTEAD_OF, _SWITCH_FROM, _REPLACE_WITH, _STOP_DRUG):
+        words.extend(match.group(1) for match in pattern.finditer(text or ""))
+    found: set[str] = set()
+    for word in words:
+        found.update(intervention_tokens(word))
+    return found
+
+
+def _has_recommendation_verb(text: str) -> bool:
+    from app.scoring.coverage import _LOCAL_NEGATION, _QUALIFY
+
+    for match in _RECOMMEND_VERB.finditer(text or ""):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        return True
+    if _QUALIFY.search(text or ""):
+        return False
+    return bool(_ORDER_VERB.search(text or ""))
+
+
+def _recommendation_sentence(sentence: str) -> str:
+    """Keep a chart order for a drug. A dose line and a warning stay out."""
+    from app.scoring.coverage import _ungoverned_caution
+
+    if not intervention_tokens(sentence):
+        return ""
+    recommendation, clause = _caution_clause(sentence)
+    recommendation_drugs = intervention_tokens(recommendation)
+    clause_drugs = intervention_tokens(clause)
+    if recommendation_drugs and clause_drugs and recommendation_drugs.isdisjoint(clause_drugs):
+        text = recommendation
+    elif _ungoverned_caution(sentence):
+        return ""
+    else:
+        text = sentence
+    if intervention_tokens(text) <= _rejected_drugs(text):
+        return ""
+    text = _drop_alternative_drug(text)
+    if not intervention_tokens(text) or not _has_recommendation_verb(text):
+        return ""
+    return " ".join(text.split())
+
+
+def _chart_recommendation_text(chart: str) -> str:
+    """Keep chart sentences that recommend a drug."""
+    kept = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", chart or ""):
+        text = _recommendation_sentence(sentence)
+        if text:
+            kept.append(text)
+    return " ".join(kept).strip()
+
+
 def _chart_continuation_text(chart: str) -> str:
     """Keep chart sentences that say to continue a drug."""
     kept = []
@@ -753,9 +819,11 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
 
     text = _chart_caution_text(chart)
     continuation = _chart_continuation_text(chart)
+    recommendation = _chart_recommendation_text(chart)
     has_caution = bool(text and intervention_tokens(text))
     has_continuation = bool(continuation and intervention_tokens(continuation))
-    if not has_caution and not has_continuation:
+    has_recommendation = bool(recommendation and intervention_tokens(recommendation))
+    if not has_caution and not has_continuation and not has_recommendation:
         return []
     caution = _ungoverned_caution(text) if has_caution else False
     qualify = bool(_QUALIFY.search(text)) and not caution if has_caution else False
@@ -796,7 +864,12 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
                         grade_b=0.0,
                     )
                 )
+    orders = []
     if has_continuation:
+        orders.append((continuation, "Chart continuation:"))
+    if has_recommendation:
+        orders.append((recommendation, "Chart recommendation:"))
+    for order_text, label in orders:
         for entry in ledger:
             if entry.chunk_id == PATIENT_CHART_ID:
                 continue
@@ -810,20 +883,20 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
                 else:
                     continue
                 conflict_text = _conflict_text(entry, claim)
-                if not intervention_tokens(conflict_text) or not same_intervention(continuation, conflict_text):
+                if not intervention_tokens(conflict_text) or not same_intervention(order_text, conflict_text):
                     continue
                 key = (claim.facet, entry.chunk_id, severity)
                 if key in seen:
                     continue
                 seen.add(key)
-                span = " ".join(continuation.split())
+                span = " ".join(order_text.split())
                 pairs.append(
                     ContradictionPair(
                         facet=claim.facet,
                         chunk_id_a=PATIENT_CHART_ID,
                         chunk_id_b=entry.chunk_id,
                         severity=severity,
-                        reason=f"Chart continuation: {span} | {_reason_with_drug(base, continuation, conflict_text)}",
+                        reason=f"{label} {span} | {_reason_with_drug(base, order_text, conflict_text)}",
                         grade_a=0.0,
                         grade_b=entry.evidence_grade.score,
                     )

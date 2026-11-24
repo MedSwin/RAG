@@ -213,7 +213,9 @@ def _chart_caution_line(decision: Any, contradictions: List[Any]) -> str:
             continue
         reason = item.reason or ""
         if " | " not in reason or not (
-            reason.startswith("Chart caution:") or reason.startswith("Chart continuation:")
+            reason.startswith("Chart caution:")
+            or reason.startswith("Chart continuation:")
+            or reason.startswith("Chart recommendation:")
         ):
             continue
         return reason.split(" | ", 1)[0].strip()
