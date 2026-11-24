@@ -822,6 +822,24 @@ async def test_local_llm_defaults_and_clamps_completion_inside_2048(monkeypatch)
     assert "max_tokens" not in seen["json"]
 
 
+def test_the_local_prompt_budget_ignores_a_smaller_server_window(monkeypatch):
+    import inspect
+
+    monkeypatch.setenv("MEDSWIN_CONTEXT_WINDOW", "512")
+    huge = "token " * 4000
+    fitted = fit_local_messages(
+        [
+            {"role": "system", "content": "Return one JSON object."},
+            {"role": "user", "content": huge},
+        ],
+        96,
+    )
+    tokens = _estimate_message_tokens(fitted)
+    assert tokens + 96 <= 1980
+    assert tokens > 512
+    assert "MEDSWIN_CONTEXT_WINDOW" not in inspect.getsource(fit_local_messages)
+
+
 def test_the_local_query_keeps_a_warning_at_the_end_of_a_long_question():
     question = " ".join(f"history{index}" for index in range(400)) + " Avoid apixaban."
     content = (
