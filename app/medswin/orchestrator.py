@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from datetime import datetime
@@ -30,6 +31,7 @@ from app.medswin.ledger import (
     merge_agent_claims,
 )
 from app.retrieval.hints import expand_query
+from app.scoring.coverage import _ungoverned_caution
 from app.medswin.normalize import QueryNormalizer
 from app.medswin.packing import pack_bundle
 from app.repositories.chunks import ChunkRepository
@@ -192,22 +194,67 @@ def _source_filter_for_hints(
     return pinned
 
 
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _caution_window(words: List[str], room: int) -> List[str]:
+    """Keep the caution when it sits past the start of a long note."""
+    if room <= 0 or not words:
+        return []
+    anchor = 0
+    for index, _word in enumerate(words):
+        start = max(0, index - 5)
+        if _ungoverned_caution(" ".join(words[start:index + 1])):
+            anchor = index
+            break
+    begin = max(0, anchor - max(0, room - 8))
+    if begin + room > len(words):
+        begin = max(0, len(words) - room)
+    return words[begin:begin + room]
+
+
+def _fit_row(text: str, allowance: int) -> List[str]:
+    """Keep a caution sentence before the leading words of a long note."""
+    words = text.split()
+    if allowance <= 0 or not words:
+        return []
+    if len(words) <= allowance:
+        return words
+    sentences = [part.strip() for part in _SENTENCE_SPLIT.split(text) if part.strip()] or [text]
+    caution_indexes = {index for index, sentence in enumerate(sentences) if _ungoverned_caution(sentence)}
+    order = [index for index in range(len(sentences)) if index in caution_indexes]
+    order.extend(index for index in range(len(sentences)) if index not in caution_indexes)
+    picked: List[str] = []
+    used = 0
+    for index in order:
+        if used >= allowance:
+            break
+        piece = sentences[index].split()
+        room = allowance - used
+        if len(piece) > room:
+            piece = _caution_window(piece, room) if index in caution_indexes else piece[:room]
+        if piece:
+            picked.append(" ".join(piece))
+            used += len(piece)
+    return " ".join(picked).split()[:allowance]
+
+
 def _chart_synopsis(chunks: List, budget: int = 140) -> str:
     """Keep a share of each recent chart row inside the word budget."""
     rows = []
     for chunk in chunks[:3]:
-        words = " ".join(str(chunk.get("text") or chunk.get("content") or "").split()).split()
-        if words:
-            rows.append(words)
+        text = " ".join(str(chunk.get("text") or chunk.get("content") or "").split())
+        if text:
+            rows.append(text)
     if not rows:
         return ""
     share = max(1, budget // len(rows))
     leftover = budget
     parts: List[str] = []
-    for index, words in enumerate(rows):
+    for index, text in enumerate(rows):
         reserved = share * (len(rows) - index - 1)
         allowance = max(0, leftover - reserved)
-        taken = words[:allowance]
+        taken = _fit_row(text, allowance)
         leftover -= len(taken)
         if taken:
             parts.append(" ".join(taken))
