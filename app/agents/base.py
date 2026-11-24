@@ -13,6 +13,7 @@ from app.schemas.enums import EvidencePolarity
 from app.schemas.evidence import CandidatePassage, EvidenceClaim
 from app.schemas.facets import ClinicalFacet
 from app.services.adapters.llm import LLMClient
+from app.services.medswin.governance import redact_phi_text
 from app.services.prompts.structured import _is_schema_fragment, extract_json_object, schema_instruction
 from app.scoring.calibrate import first_present
 from app.scoring.hierarchy import evidence_grade_from_metadata
@@ -157,7 +158,8 @@ def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
         if len(blocks) >= configured_limit:
             break
         header = f"[{passage.chunk_id}|{passage.source_type.value}|doc={passage.doc_id}]"
-        body = passage.text[:configured_chars]
+        redacted = redact_phi_text(passage.text or "")
+        body = redacted[:configured_chars]
         block = f"{header}\n{body}"
         if total_cap is not None:
             trial = "\n\n".join(blocks + [block])
@@ -167,7 +169,7 @@ def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
                 room = total_cap - used - separator - len(header) - 1
                 if room <= 0:
                     break
-                block = f"{header}\n{passage.text[:room]}"
+                block = f"{header}\n{redacted[:room]}"
                 trial = "\n\n".join(blocks + [block])
                 if len(trial) > total_cap:
                     break

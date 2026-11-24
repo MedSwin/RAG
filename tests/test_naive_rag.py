@@ -287,3 +287,31 @@ def test_naive_search_and_answer_drop_the_phone():
     blob = str(llm.calls)
     assert "555-234-5678" not in blob
     assert "[REDACTED_PHONE]" in blob
+
+
+def test_naive_passage_text_drops_the_phone():
+    class RecordingEmbed:
+        async def embed(self, texts):
+            return [np.array([1.0, 0.0], dtype=np.float32)]
+
+    passage = CandidatePassage(
+        chunk_id="emr-1",
+        doc_id="emr-1",
+        source_type=SourceType.EMR,
+        text="Call 555-234-5678. Creatinine is 1.4. Continue metformin.",
+        dense_score=0.9,
+    )
+    llm = FakeLLM()
+    orch = NaiveRAGOrchestrator(
+        embedding_client=RecordingEmbed(),
+        llm_client=llm,
+        dense_retriever=FakeDense([passage]),
+    )
+    orch.session_repo = EmptyRepo()
+    orch.trace_repo = RecordingTraceRepo()
+    asyncio.run(orch.chat(query="What is the creatinine?", user_id="u1", org_id="org1"))
+    blob = str(llm.calls)
+    assert "555-234-5678" not in blob
+    assert "[REDACTED_PHONE]" in blob
+    assert "Creatinine is 1.4." in blob
+    assert "metformin" in blob

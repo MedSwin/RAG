@@ -313,6 +313,26 @@ async def test_emr_specialist_with_no_chart_does_not_read_the_other_passages():
     assert "no passages" in " ".join(batch.notes).lower()
 
 
+def test_the_model_passage_drops_a_phone_number():
+    from app.agents.base import passage_context
+    from app.agents.synthesis import _bounded_local_evidence
+
+    passage = _passage(
+        "emr-1",
+        SourceType.EMR,
+        "Call 555-234-5678. Creatinine is 1.4. Continue metformin.",
+    )
+    rendered = passage_context([passage])
+    evidence, shown = _bounded_local_evidence([passage])
+    assert "555-234-5678" not in rendered
+    assert "[REDACTED_PHONE]" in rendered
+    assert "Creatinine is 1.4." in rendered
+    assert "metformin" in rendered
+    assert "555-234-5678" not in evidence
+    assert "[REDACTED_PHONE]" in evidence
+    assert shown == ["emr-1"]
+
+
 def test_local_passage_context_keeps_safety_inside_2048_envelope(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_MODE", False)
     monkeypatch.setattr(settings, "GENERATION_BACKEND", None)

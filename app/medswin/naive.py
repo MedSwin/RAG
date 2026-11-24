@@ -498,7 +498,7 @@ class NaiveRAGOrchestrator:
         per_passage_cap = 2600 if local_2k else None
         context = "\n\n".join(
             f"[{idx}] chunk_id={passage.chunk_id} doc_id={passage.doc_id}\n"
-            f"{(passage.text or '')[:per_passage_cap] if per_passage_cap else (passage.text or '')}"
+            f"{redact_phi_text(passage.text or '')[:per_passage_cap] if per_passage_cap else redact_phi_text(passage.text or '')}"
             for idx, passage in enumerate(passages, start=1)
         )
         instruction = (

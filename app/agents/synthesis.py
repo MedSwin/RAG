@@ -9,7 +9,7 @@ from app.agents.base import prioritize_passages
 from app.schemas.evidence import AnswerArtifact, AnswerProvenance, CandidatePassage, EvidenceBundle
 from app.schemas.facets import FacetCoverage
 from app.services.adapters.llm import LLMClient
-from app.services.medswin.governance import ensure_cds_language
+from app.services.medswin.governance import ensure_cds_language, redact_phi_text
 from app.services.prompts import answer as answer_prompt
 from app.services.prompts.structured import extract_json_object
 
@@ -35,7 +35,7 @@ def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> tuple[str, 
     for passage in prioritize_passages(list(passages)):
         if len(blocks) >= 6:
             break
-        body = passage.text[:450]
+        body = redact_phi_text(passage.text or "")[:450]
         block = f"[{passage.chunk_id}] {body}"
         trial = "\n\n".join(blocks + [block])
         if len(trial) > 2800:
@@ -44,7 +44,7 @@ def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> tuple[str, 
             room = 2800 - used - separator - len(f"[{passage.chunk_id}] ")
             if room <= 0:
                 break
-            block = f"[{passage.chunk_id}] {passage.text[:room]}"
+            block = f"[{passage.chunk_id}] {redact_phi_text(passage.text or '')[:room]}"
             trial = "\n\n".join(blocks + [block])
             if len(trial) > 2800:
                 break
@@ -191,7 +191,9 @@ class SynthesisAgent:
                 "Do not present autonomous diagnosis or treatment orders."
             )
         else:
-            evidence_text = "\n\n".join(f"[{p.chunk_id}] {p.text}" for p in evidence_bundle.passages)
+            evidence_text = "\n\n".join(
+                f"[{p.chunk_id}] {redact_phi_text(p.text or '')}" for p in evidence_bundle.passages
+            )
             user_content = (
                 f"Query: {query}\n\nFacet coverage:\n{coverage_text}\n\n"
                 f"Evidence:\n{evidence_text}\n\n"
