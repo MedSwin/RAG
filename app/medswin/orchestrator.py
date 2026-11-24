@@ -405,6 +405,19 @@ class MedSwinOrchestrator:
             trace.timing_ms["synthesis"] = round((time.perf_counter() - synthesis_started) * 1000.0, 2)
             if answer_artifact.abstained and decision.passed:
                 degraded["synthesis"] = True
+                decision = PolicyDecision(
+                    passed=False,
+                    action=PolicyAction.INSUFFICIENT_EVIDENCE,
+                    reason=(
+                        "The evidence gate accepted the passages. "
+                        "The model did not return a structured clinical answer."
+                    ),
+                    missing_facets=[],
+                )
+                trace.policy_decisions.append(decision)
+                evidence_bundle.policy_decision = decision
+                sufficiency_decision = self.gate.to_sufficiency_decision(decision)
+                trace.sufficiency_decision = sufficiency_decision
             citations = self._citations(evidence_bundle)
             trace.answer_provenance = provenance
             trace.completed_at = datetime.utcnow()
@@ -419,7 +432,7 @@ class MedSwinOrchestrator:
                 safety_notes=None,
                 trace_id=trace_id,
                 degraded_mode=degraded,
-                uncertainty_level="medium",
+                uncertainty_level="high" if degraded.get("synthesis") else "medium",
                 citations=citations,
                 policy_decision=decision,
                 facet_coverage=evidence_bundle.facet_coverage,

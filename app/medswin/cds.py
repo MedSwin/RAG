@@ -63,7 +63,9 @@ def cards_from_chat(
     unresolved = bool(decision and decision.unresolved_critical_conflicts)
     abstained = bool(response.answer_artifact and response.answer_artifact.abstained)
     crashed = bool((response.degraded_mode or {}).get("error")) or decision is None
-    synthesis_failed = bool(decision and decision.passed and abstained)
+    synthesis_failed = bool((response.degraded_mode or {}).get("synthesis")) or bool(
+        decision and decision.passed and abstained
+    )
     accepted = bool(
         decision
         and not crashed
@@ -90,6 +92,7 @@ def cards_from_chat(
         summary = "The available evidence is insufficient."
     detail = _detail(
         accepted=accepted,
+        synthesis_failed=synthesis_failed,
         reason=decision.reason if decision else "No sufficiency decision was recorded.",
         missing=missing,
         passage_ids=passage_ids,
@@ -174,12 +177,22 @@ def _detail(
     missing: List[str],
     passage_ids: List[str],
     contradiction_count: int,
+    synthesis_failed: bool = False,
 ) -> str:
     missing_text = ", ".join(missing) if missing else "none"
     passage_text = ", ".join(passage_ids) if passage_ids else "none"
-    outcome = "The evidence gate accepted this card." if accepted else "The evidence gate did not accept this card."
+    if synthesis_failed:
+        outcome = (
+            "The evidence gate accepted the passages. "
+            "The model did not return a structured clinical answer."
+        )
+    elif accepted:
+        outcome = "The evidence gate accepted this card."
+    else:
+        outcome = "The evidence gate did not accept this card."
+    lead = outcome if synthesis_failed else f"{outcome} {reason}"
     return (
-        f"{outcome} {reason} "
+        f"{lead} "
         f"Missing facets: {missing_text}. "
         f"Contradictions: {contradiction_count}. "
         f"Passage ids: {passage_text}. "

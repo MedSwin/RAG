@@ -160,7 +160,23 @@ def test_a_passed_gate_with_an_unstructured_answer_is_not_called_insufficient():
     card = cards_from_chat(response)[0]
     assert card["indicator"] == "warning"
     assert card["summary"] == "The model did not return a structured clinical answer."
-    assert "insufficient" not in card["summary"].lower()
+    assert "The evidence gate accepted the passages." in card["detail"]
+    assert "did not accept" not in card["detail"]
+    withheld = response.model_copy(
+        update={
+            "policy_decision": PolicyDecision(
+                passed=False,
+                action=PolicyAction.INSUFFICIENT_EVIDENCE,
+                reason=(
+                    "The evidence gate accepted the passages. "
+                    "The model did not return a structured clinical answer."
+                ),
+            ),
+        }
+    )
+    withheld_card = cards_from_chat(withheld)[0]
+    assert withheld_card["summary"] == card["summary"]
+    assert "did not accept" not in withheld_card["detail"]
 
 
 def test_insufficient_decision_returns_a_warning_card():
