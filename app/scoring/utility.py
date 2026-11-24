@@ -182,6 +182,25 @@ def _preserve_safety(
             continue
         tokens = token_count(item)
         current_tokens = _make_room(selected, token_budget, tokens)
+        if len(selected) >= settings.MMR_MAX_EVIDENCE_CHUNKS:
+            fillers = [passage for passage in selected if not _is_critical_caution(passage)]
+            if len(selected) <= 1 or not fillers:
+                continue
+            victim = min(
+                fillers,
+                key=lambda passage: (passage.fusion_score or 0.0, passage.calibrated_score or 0.0),
+            )
+            best = max(
+                selected,
+                key=lambda passage: (passage.fusion_score or 0.0, passage.calibrated_score or 0.0),
+            )
+            if victim is best:
+                continue
+            freed = current_tokens - token_count(victim)
+            if freed + tokens > token_budget:
+                continue
+            selected.remove(victim)
+            current_tokens = freed
         if current_tokens + tokens <= token_budget and len(selected) < settings.MMR_MAX_EVIDENCE_CHUNKS:
             item.selected_reason = "protected_critical_safety_or_contradiction"
             selected.append(item)

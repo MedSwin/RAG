@@ -1190,6 +1190,53 @@ def test_a_new_drug_caution_replaces_a_filler_passage():
     assert "filler" not in kept
 
 
+def test_a_new_drug_caution_replaces_a_filler_at_the_passage_cap():
+    from app.core.config import settings
+    from app.scoring.utility import select_bundle
+
+    passages = [
+        CandidatePassage(
+            chunk_id="rec",
+            doc_id="rec",
+            source_type=SourceType.CPG,
+            text="Apixaban is recommended.",
+            calibrated_score=0.90,
+            fusion_score=0.99,
+            token_count=10,
+        )
+    ]
+    passages.extend(
+        CandidatePassage(
+            chunk_id=f"filler-{index}",
+            doc_id=f"filler-{index}",
+            source_type=SourceType.LIT,
+            text=f"A general clinic note {index}.",
+            calibrated_score=0.80,
+            fusion_score=0.90 - (index * 0.01),
+            token_count=10,
+        )
+        for index in range(settings.MMR_MAX_EVIDENCE_CHUNKS)
+    )
+    passages.append(
+        CandidatePassage(
+            chunk_id="warfarin",
+            doc_id="warfarin",
+            source_type=SourceType.SAFETY,
+            text="Avoid warfarin. Warfarin is contraindicated.",
+            calibrated_score=0.80,
+            fusion_score=0.20,
+            contradiction_score=0.32,
+            token_count=10,
+        )
+    )
+    selected = select_bundle(passages, token_budget=1000, max_chunks=settings.MMR_MAX_EVIDENCE_CHUNKS)
+    kept = {item.chunk_id for item in selected}
+    assert len(selected) <= settings.MMR_MAX_EVIDENCE_CHUNKS
+    assert "rec" in kept
+    assert "warfarin" in kept
+    assert "filler-8" not in kept
+
+
 def test_a_passage_below_inclusion_is_not_packed():
     from app.scoring.utility import select_bundle
 
