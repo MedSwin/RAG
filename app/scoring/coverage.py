@@ -29,10 +29,22 @@ def _source_policy_score(source_type: SourceType, source_policy: Optional[str]) 
     return 0.0
 
 
+_CAUTION_TOKENS = {"allergy", "adverse", "interaction", "avoid", "toxicity"}
+
+
+def _token_is_caution(token: str) -> bool:
+    if token.startswith("contraindicat"):
+        return True
+    stems = {token}
+    if token.endswith("s") and len(token) > 3:
+        stems.add(token[:-1])
+    return bool(stems & _CAUTION_TOKENS)
+
+
 def _safety_score(passage: CandidatePassage) -> float:
-    text = passage.text.lower()
-    terms = ["contraindicat", "allergy", "adverse", "interaction", "avoid", "risk", "toxicity", "dose"]
-    return clamp(sum(1 for term in terms if term in text) * 0.18)
+    tokens = re.findall(r"[a-z0-9]+", passage.text.lower())
+    hits = sum(1 for token in tokens if _token_is_caution(token))
+    return clamp(hits * 0.18)
 
 
 def keyword_in_text(keyword: str, text: str) -> bool:

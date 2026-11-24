@@ -710,6 +710,17 @@ def test_live_report_status_does_not_pass_when_the_answerable_query_abstains():
     ) is False
 
 
+def test_a_dose_sentence_does_not_open_the_safety_facet():
+    dose = _passage("cpg-dose", "The metformin dose is 500 mg each morning.")
+    caution = _passage("cpg-caution", "Avoid metformin when the eGFR is low.")
+    facets = [ClinicalFacet(name="safety_contraindications", keywords=["contraindicated"], threshold=0.70)]
+    dose_scores = score_passage_facets(dose, facets)
+    caution_scores = score_passage_facets(caution, facets)
+    assert dose_scores["safety_contraindications"] == 0.0
+    assert caution_scores["safety_contraindications"] > 0.0
+    assert "safety_contraindications" not in build_retrieval_ledger([dose], facets)[0].facets
+
+
 def test_a_stored_facet_score_cannot_cover_text_that_lacks_the_facet():
     passage = _passage("cpg-1", "Metformin is first-line for type 2 diabetes.")
     passage.metadata = {"facet_scores": {"safety_contraindications": 1.0, "guideline_concordance": 0.95}}
