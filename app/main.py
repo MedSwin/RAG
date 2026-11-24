@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
@@ -17,7 +18,7 @@ from app.api.cds import router as cds_router
 from app.api.auth import AuthMiddleware
 from app.services.dataset import HuggingFaceDatasetService
 from app.services.storage import StorageService
-from app.services.adapters.llm import _generation_backend
+from app.medswin.readiness import cloud_health_status
 import asyncio
 
 logging.basicConfig(
@@ -255,9 +256,14 @@ async def health_check():
                 stats = await storage.get_storage_stats()
                 index_ready = bool(stats.get("index_exists")) and bool(stats.get("index_provenance_valid", True))
             except Exception:  # noqa: BLE001
+                stats = {}
                 index_ready = False
-            return {
-                "status": "healthy",
+            status = cloud_health_status(
+                index_exists=bool(stats.get("index_exists")),
+                provenance_valid=bool(stats.get("index_provenance_valid")),
+            )
+            body = {
+                "status": status,
                 "contract_version": "2.0",
                 "supported_pipelines": ["naive", "two-stage", "full"],
                 "system_eval_mode": _disabled("SYSTEM_EVAL_MODE"),
@@ -271,10 +277,14 @@ async def health_check():
                 "active_embedding_space": settings.active_embedding_space(),
                 "active_embedding_dimension": settings.active_embedding_dimension(),
                 "active_index_ready": index_ready,
+                "index_provenance_error": stats.get("index_provenance_error"),
                 "embedding_refresh": refresh,
                 "dataset_preload_disabled": _disabled("DISABLE_DATASET_PRELOAD"),
                 "database": "connected",
             }
+            if status == "degraded":
+                return JSONResponse(status_code=503, content=jsonable_encoder(body))
+            return body
 
         model_manager = get_model_manager()
         embedding_loaded = model_manager.embedding_model is not None
