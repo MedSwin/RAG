@@ -402,10 +402,14 @@ _OFF_DRUG = re.compile(
     r"|\boff(?:\s+of)?(?=\s+[A-Za-z])",
     re.I,
 )
+_REFUSED = re.compile(
+    r"\b(?:declin(?:e|ed|es|ing)|refus(?:e|ed|es|ing))\b",
+    re.I,
+)
 _NOT_FOR = re.compile(
     r"\bnot\s+for\b|\bnot\s+to\s+have\b|\bnot\s+to\s+be\s+given\b"
     r"|\bnot\s+(?:charted|due)\s+for\b|\bnot\s+written\s+up\s+for\b"
-    r"|\bnot\s+(?:need|needs|require|requires|required)\b",
+    r"|\bnot\s+(?:need|needs|require|requires|required|take)\b",
     re.I,
 )
 
@@ -471,7 +475,14 @@ def _off_drug_stop(text: str) -> bool:
 
 def _not_for_stop(text: str) -> bool:
     """True when the line says the patient is not for a named drug."""
+    if _negated_off_keep(text):
+        return False
     return _pattern_names_drug(text, _NOT_FOR)
+
+
+def _refused_stop(text: str) -> bool:
+    """True when the patient declined or refused a named drug."""
+    return _pattern_names_drug(text, _REFUSED)
 
 
 def _come_off_stop(text: str) -> bool:
@@ -583,6 +594,7 @@ def _ungoverned_caution(text: str) -> bool:
         or _no_longer_stop(text)
         or _off_drug_stop(text)
         or _not_for_stop(text)
+        or _refused_stop(text)
     )
 
 

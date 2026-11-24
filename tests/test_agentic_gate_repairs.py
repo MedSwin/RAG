@@ -421,6 +421,53 @@ def test_a_chart_order_to_resume_or_switch_conflicts_with_that_drug():
         assert blocked[0].reason.startswith("Chart caution:")
 
 
+def test_a_patient_mention_does_not_conflict_with_the_drug_warning():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("Which dose?", QuerySpec(canonical_terms=["dose"]))
+
+    def passage(chunk_id: str, text: str, source: SourceType = SourceType.CPG) -> CandidatePassage:
+        return CandidatePassage(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=source,
+            text=text,
+            section="Recommendations",
+            calibrated_score=0.90,
+            evidence_grade_score=0.95,
+        )
+
+    def pairs_for(note: str, other: str):
+        source = SourceType.SAFETY if other.lower().startswith("avoid") else SourceType.CPG
+        return detect_contradictions(
+            build_retrieval_ledger(
+                [passage("note", note), passage("other", other, source)],
+                facets,
+            )
+        )
+
+    for note in (
+        "The patient discussed warfarin.",
+        "The patient asked about warfarin.",
+        "Consider warfarin for the patient.",
+        "The patient is a candidate for warfarin.",
+        "The patient is eligible for warfarin.",
+        "The patient is waiting for warfarin levels.",
+        "The patient has never taken warfarin.",
+        "Counsel the patient about warfarin.",
+        "History of warfarin use.",
+    ):
+        assert pairs_for(note, "Avoid warfarin.") == [], note
+        assert pairs_for(note, "Warfarin is recommended.") == [], note
+    taking = pairs_for("The patient takes warfarin.", "Avoid warfarin.")
+    assert len(taking) == 1
+    assert "warfarin" in taking[0].reason
+    assert pairs_for("The patient takes warfarin.", "Warfarin is recommended.") == []
+    ordered = pairs_for("The patient is for warfarin.", "Avoid warfarin.")
+    assert len(ordered) == 1
+    assert "warfarin" in ordered[0].reason
+
+
 def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():
     from app.medswin.cds import _chart_caution_line
 
@@ -1201,6 +1248,9 @@ def test_a_stop_order_conflicts_with_the_same_drug_recommendation():
         "The patient is not due for warfarin.",
         "The patient does not need warfarin.",
         "The patient does not require warfarin.",
+        "The patient declined warfarin.",
+        "The patient refused warfarin.",
+        "The patient does not take warfarin.",
         "Wean off warfarin.",
         "Wean the patient off warfarin.",
         "Wean warfarin.",

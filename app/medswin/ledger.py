@@ -582,6 +582,7 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         _NO_LONGER,
         _OFF_DRUG,
         _NOT_FOR,
+        _REFUSED,
         _away_split,
         _negated_away_split,
     )
@@ -599,7 +600,7 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         _STOP_ORDER.finditer(sentence or "")
     ) + list(_COME_OFF.finditer(sentence or "")) + list(_NO_LONGER.finditer(sentence or "")) + list(
         _OFF_DRUG.finditer(sentence or "")
-    ) + list(_NOT_FOR.finditer(sentence or "")):
+    ) + list(_NOT_FOR.finditer(sentence or "")) + list(_REFUSED.finditer(sentence or "")):
         window = sentence[max(0, item.start() - 48):item.start()]
         if _LOCAL_NEGATION.search(window):
             continue
@@ -673,6 +674,7 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         or _NO_LONGER.fullmatch(match.group(0) or "")
         or _OFF_DRUG.fullmatch(match.group(0) or "")
         or _NOT_FOR.fullmatch(match.group(0) or "")
+        or _REFUSED.fullmatch(match.group(0) or "")
     ) and not before and after:
         limit = min(len(words), anchor + 9)
         split_at = None
@@ -1280,6 +1282,7 @@ def _chart_caution_text(chart: str) -> str:
         _no_longer_stop,
         _off_drug_stop,
         _not_for_stop,
+        _refused_stop,
         _negated_away_split,
         _ungoverned_caution,
     )
@@ -1297,6 +1300,7 @@ def _chart_caution_text(chart: str) -> str:
                 or _no_longer_stop(sentence)
                 or _off_drug_stop(sentence)
                 or _not_for_stop(sentence)
+                or _refused_stop(sentence)
             ):
                 kept.append(named_caution_text(sentence))
             else:
@@ -1499,6 +1503,26 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
     return pairs
 
 
+def _weak_patient_mention(entry: EvidenceLedgerEntry, claim: EvidenceClaim) -> bool:
+    """True when a patient word names the drug but the line is not an order."""
+    from app.scoring.coverage import _LOCAL_NEGATION
+
+    if claim.facet != "patient_applicability":
+        return False
+    text = _pairing_text(entry, claim) or (entry.text or "")
+    if _has_recommendation_verb(text) or _is_continuation_sentence(text):
+        return False
+    for match in re.finditer(r"\b(?:takes?|taking)\b", text, re.I):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window):
+            continue
+        if _object_is_drug(text[match.end():]):
+            return False
+    if re.search(r"\b(?:lists?|listed|listing)\b", text, re.I) and intervention_tokens(text):
+        return False
+    return True
+
+
 def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[ContradictionPair]:
     by_facet: Dict[str, Dict[str, List[EvidenceLedgerEntry]]] = {}
     for entry in ledger:
@@ -1547,6 +1571,8 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
                 ]
                 for support_claim in support_claims:
                     for conflict_claim in conflict_claims:
+                        if _weak_patient_mention(support, support_claim):
+                            continue
                         support_text = _support_text(support, support_claim)
                         conflict_text = _conflict_text(conflict, conflict_claim)
                         if not same_intervention(support_text, conflict_text):
@@ -1577,6 +1603,8 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
             ):
                 other_supports.append((entry, claim))
     for support_entry, support_claim in other_supports:
+        if _weak_patient_mention(support_entry, support_claim):
+            continue
         for warning_entry, warning_claim in safety_warnings:
             # A safety warning crosses facets only when both sides name the same drug.
             # An unnamed caution still covers the safety facet. It does not veto every guideline.
@@ -1608,6 +1636,8 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
             elif claim.polarity == EvidencePolarity.SUPPORTS:
                 plain_supports.append((entry, claim))
     for support_entry, support_claim in plain_supports:
+        if _weak_patient_mention(support_entry, support_claim):
+            continue
         for qualify_entry, qualify_claim in qualifies:
             if not intervention_tokens(_support_text(support_entry, support_claim)) or not intervention_tokens(
                 _conflict_text(qualify_entry, qualify_claim)
@@ -1635,6 +1665,8 @@ def detect_contradictions(ledger: List[EvidenceLedgerEntry]) -> List[Contradicti
         if extra:
             unscored.append((entry, extra[0], extra[1]))
     for support_entry, support_claim in plain_supports:
+        if _weak_patient_mention(support_entry, support_claim):
+            continue
         support_text = _support_text(support_entry, support_claim)
         if not intervention_tokens(support_text):
             continue
