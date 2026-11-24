@@ -193,6 +193,22 @@ def test_a_path_that_only_starts_with_health_requires_a_token(monkeypatch):
     assert response.status_code == 401
 
 
+def test_public_health_hides_the_model_names(monkeypatch):
+    from app.main import _visible_health
+
+    full = {
+        "status": "healthy",
+        "database": "connected",
+        "generation_model": "named-model",
+        "embedding_model": "named-embedder",
+        "index_provenance_error": "dimension mismatch",
+    }
+    monkeypatch.setattr(settings, "SYSTEM_EVAL_MODE", False)
+    assert _visible_health(full) == {"status": "healthy", "database": "connected"}
+    monkeypatch.setattr(settings, "SYSTEM_EVAL_MODE", True)
+    assert _visible_health(full)["generation_model"] == "named-model"
+
+
 def test_health_stays_open_when_auth_is_on(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_AUTH", True)
     monkeypatch.setattr(settings, "AUTH_JWT_SECRET", None)

@@ -369,7 +369,19 @@ def main() -> None:
             assert build_data["success"] is True and build_data["total_vectors"] >= 40
 
             api_health_indexed = client.get("/health").json()
-            assert api_health_indexed["active_index_ready"] is True, api_health_indexed
+            stats_resp = client.get(
+                "/api/v1/storage/stats",
+                headers=operator_headers,
+                params={"org_id": ORG_ID},
+            )
+            assert stats_resp.status_code == 200, stats_resp.text
+            stats = stats_resp.json()
+            assert stats["index_exists"] is True, stats
+            assert stats["index_provenance_valid"] is True, stats
+            api_health_indexed = {
+                "status": api_health_indexed.get("status"),
+                "active_index_ready": True,
+            }
             print(
                 f"      Stored {ingest_data['success_count']} chunks & built 1024-d HNSW "
                 f"({build_data['total_vectors']} vectors, active_index_ready={api_health_indexed['active_index_ready']})",

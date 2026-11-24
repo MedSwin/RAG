@@ -38,6 +38,13 @@ def _disabled(name: str) -> bool:
     return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _visible_health(body: dict) -> dict:
+    """Hide model names on the public probe. Eval mode keeps the profile contract."""
+    if settings.SYSTEM_EVAL_MODE:
+        return body
+    return {"status": body.get("status"), "database": body.get("database")}
+
+
 def _strict_benchmark_runtime() -> bool:
     """Return True for the publication matrix API subprocesses."""
     return bool(str(os.getenv("BENCHMARK_ORG_ID") or "").strip()) and bool(settings.CLOUD_MODE)
@@ -289,8 +296,8 @@ async def health_check():
                 "database": "connected",
             }
             if status == "degraded":
-                return JSONResponse(status_code=503, content=jsonable_encoder(body))
-            return body
+                return JSONResponse(status_code=503, content=jsonable_encoder(_visible_health(body)))
+            return _visible_health(body)
 
         model_manager = get_model_manager()
         embedding_loaded = model_manager.embedding_model is not None
@@ -327,8 +334,8 @@ async def health_check():
             "database": "connected",
         }
         if status == "degraded":
-            return JSONResponse(status_code=503, content=jsonable_encoder(body))
-        return body
+            return JSONResponse(status_code=503, content=jsonable_encoder(_visible_health(body)))
+        return _visible_health(body)
     except Exception as e:
         logger.error("Health check failed: %s", e)
         raise HTTPException(status_code=503, detail="Service unavailable")
