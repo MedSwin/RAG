@@ -159,6 +159,9 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "Taking warfarin.",
         "The patient is taking warfarin 5 mg.",
         "Patients are taking warfarin.",
+        "The patient is on long-term warfarin.",
+        "The patient is on oral warfarin.",
+        "The patient is currently on regular warfarin.",
         "Continue warfarin and monitor the INR.",
     ):
         pairs = chart_contradictions(chart, [warning, other])
@@ -215,6 +218,8 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
         "Counsel the patient about taking warfarin.",
         "Discuss taking warfarin.",
         "The patient has never taken warfarin.",
+        "The note is on long-term warfarin dosing.",
+        "The patient is on the warfarin pathway.",
     ):
         assert chart_contradictions(chart, [warning, other]) == [], chart
     recommendation = _entry(

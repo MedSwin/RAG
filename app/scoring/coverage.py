@@ -424,6 +424,11 @@ _ON_TOPIC = re.compile(
     r"discussion|agenda|review|notes?|chart|lists?)$",
     re.I,
 )
+_ON_MODIFIER = re.compile(
+    r"^(?:long-?term|regular|daily|oral|chronic|ongoing|maintenance|current|"
+    r"usual|therapeutic|low-?dose|high-?dose)$",
+    re.I,
+)
 _MED_LIST = re.compile(
     r"\b(?:medications?|medicines?|meds)(?:\s+list)?\b(?P<mid>(?:\s+\w+){0,4})\s*(?P<mark>includes?\b|:)",
     re.I,
@@ -522,11 +527,22 @@ def _on_object_is_drug(text: str) -> bool:
             continue
         skipping = False
         content.append(word)
-        if len(content) >= 2:
+        if len(content) >= 3:
             break
-    if not content or not _token_names_drug(content[0]):
+    if not content:
         return False
-    return not (len(content) >= 2 and _ON_TOPIC.match(content[1]))
+    if _token_names_drug(content[0]):
+        drug_at = 0
+    elif (
+        len(content) >= 2
+        and _ON_MODIFIER.match(content[0])
+        and _token_names_drug(content[1])
+    ):
+        drug_at = 1
+    else:
+        return False
+    nxt = content[drug_at + 1] if drug_at + 1 < len(content) else ""
+    return not (nxt and _ON_TOPIC.match(nxt))
 
 
 def _med_list_kind(text: str) -> str:
