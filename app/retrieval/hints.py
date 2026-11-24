@@ -8,6 +8,9 @@ from app.core.config import settings
 from app.schemas.enums import SourceType
 
 
+_FACET_QUERY_STOP = {"safety", "patient", "evidence", "quality"}
+
+
 SYNONYM_MAP = {
     "metformin": ["biguanide", "glucophage"],
     "renal": ["kidney", "egfr", "creatinine", "ckd"],
@@ -46,7 +49,7 @@ def expand_query(query: str, hints: Optional[Dict[str, Any]]) -> str:
         for facet in missing:
             for word in str(facet).replace("_", " ").split():
                 key = word.lower()
-                if key in lower or key in seen:
+                if key in lower or key in seen or key in _FACET_QUERY_STOP:
                     continue
                 seen.add(key)
                 extras.append(word)
