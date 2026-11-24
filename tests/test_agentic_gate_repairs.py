@@ -710,6 +710,21 @@ def test_live_report_status_does_not_pass_when_the_answerable_query_abstains():
     ) is False
 
 
+def test_a_stored_facet_score_cannot_cover_text_that_lacks_the_facet():
+    passage = _passage("cpg-1", "Metformin is first-line for type 2 diabetes.")
+    passage.metadata = {"facet_scores": {"safety_contraindications": 1.0, "guideline_concordance": 0.95}}
+    facets = [
+        ClinicalFacet(name="guideline_concordance", keywords=["metformin"], threshold=0.70),
+        ClinicalFacet(name="safety_contraindications", keywords=["contraindicated"], threshold=0.70),
+    ]
+    scores = score_passage_facets(passage, facets)
+    assert scores["safety_contraindications"] == 0.0
+    assert scores["guideline_concordance"] >= 0.95
+    ledger = build_retrieval_ledger([passage], facets)
+    assert "safety_contraindications" not in ledger[0].facets
+    assert "guideline_concordance" in ledger[0].facets
+
+
 def test_a_specialist_confidence_cannot_cover_a_facet_the_passage_does_not_support():
     passage = _passage("cpg-1", "Metformin is first-line for type 2 diabetes.")
     passage.calibrated_score = 1.0

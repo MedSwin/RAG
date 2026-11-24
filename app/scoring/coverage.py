@@ -57,12 +57,9 @@ def score_passage_facets(
 ) -> Dict[str, float]:
     """Score passage-to-facet alignment (paper Eq. facet-alignment)."""
     text = passage.text.lower()
-    explicit_scores = passage.facet_scores or passage.metadata.get("facet_scores", {})
+    explicit_scores = passage.facet_scores or passage.metadata.get("facet_scores", {}) or {}
     scores: Dict[str, float] = {}
     for facet in facets:
-        if facet.name in explicit_scores:
-            scores[facet.name] = clamp(explicit_scores[facet.name])
-            continue
         source_bonus = _source_policy_score(passage.source_type, facet.source_policy)
         matched = [keyword for keyword in facet.keywords if keyword_in_text(keyword, text)]
         keyword_score = min(0.65, len(matched) * 0.18)
@@ -71,9 +68,14 @@ def score_passage_facets(
         if not matched and safety_bonus == 0.0 and source_bonus <= 0.45:
             # Source-policy affinity alone must not mark an unrelated facet as covered.
             # An exact source match is 0.45. It still needs a keyword or a safety hit.
-            scores[facet.name] = 0.0
+            text_score = 0.0
         else:
-            scores[facet.name] = clamp(0.20 + source_bonus + keyword_score + 0.15 * section_score + safety_bonus)
+            text_score = clamp(0.20 + source_bonus + keyword_score + 0.15 * section_score + safety_bonus)
+        explicit = explicit_scores.get(facet.name) if isinstance(explicit_scores, dict) else None
+        if text_score <= 0.0 or not isinstance(explicit, (int, float)) or isinstance(explicit, bool):
+            scores[facet.name] = text_score
+        else:
+            scores[facet.name] = max(text_score, clamp(explicit))
     passage.facet_scores = scores
     return scores
 
