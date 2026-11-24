@@ -36,11 +36,12 @@ def retrieval_filter(
         if mapped:
             filter_dict["source_type"] = mapped
 
-    if patient_id and (
+    emr_requested = (
         source_type_filter == SourceType.EMR
         or str(source_policy).upper() == "EMR_ONLY"
         or constraints.get("patient_scope_only") is True
-    ):
+    )
+    if patient_id and emr_requested:
         filter_dict["patient_id"] = patient_id
     elif patient_id:
         filter_dict["$and"] = filter_dict.get("$and", []) + [
@@ -48,6 +49,13 @@ def retrieval_filter(
                 {"source_type": {"$ne": SourceType.EMR.value}},
                 {"patient_id": patient_id},
             ]}
+        ]
+    elif emr_requested:
+        # A chart search with no patient matches no rows.
+        filter_dict["$and"] = filter_dict.get("$and", []) + [{"patient_id": {"$in": []}}]
+    else:
+        filter_dict["$and"] = filter_dict.get("$and", []) + [
+            {"source_type": {"$ne": SourceType.EMR.value}}
         ]
 
     if settings.CLOUD_MODE:
