@@ -3624,6 +3624,59 @@ def test_another_users_session_id_is_not_reused():
     assert created == [new_id]
 
 
+def test_a_drug_after_the_claim_cut_still_conflicts_with_the_same_warning():
+    filler = "Background note about atrial fibrillation care. " * 40
+    facets = [
+        ClinicalFacet(
+            name="guideline_concordance",
+            keywords=["recommended", "warfarin", "apixaban"],
+            threshold=0.5,
+        ),
+        ClinicalFacet(
+            name="safety_contraindications",
+            keywords=["avoid", "warfarin"],
+            threshold=0.5,
+        ),
+    ]
+
+    def scored(chunk_id: str, text: str, source: SourceType) -> CandidatePassage:
+        passage = _passage(chunk_id, text, source)
+        passage.calibrated_score = 0.9
+        passage.fusion_score = 0.9
+        passage.evidence_grade_score = 0.95
+        return passage
+
+    support = scored("rec", filler + "Warfarin is recommended.", SourceType.CPG)
+    warning = scored("war", "Avoid warfarin.", SourceType.SAFETY)
+    ledger = build_retrieval_ledger([support, warning], facets)
+    rec_claims = [claim.claim for entry in ledger if entry.chunk_id == "rec" for claim in entry.claims]
+    assert rec_claims
+    assert all(len(claim) == 280 for claim in rec_claims)
+    assert all(claim.lower().startswith("warfarin ") for claim in rec_claims)
+    assert "warfarin" not in support.text[:80].lower()
+    pairs = detect_contradictions(ledger)
+    assert len(pairs) == 1
+    assert "warfarin" in pairs[0].reason
+
+    late = detect_contradictions(
+        build_retrieval_ledger(
+            [
+                scored("rec2", "Warfarin is recommended.", SourceType.CPG),
+                scored("late", filler + "Avoid warfarin.", SourceType.SAFETY),
+            ],
+            facets,
+        )
+    )
+    assert len(late) == 1
+    assert "warfarin" in late[0].reason
+    assert detect_contradictions(
+        build_retrieval_ledger(
+            [scored("other", filler + "Apixaban is recommended.", SourceType.CPG), warning],
+            facets,
+        )
+    ) == []
+
+
 def test_an_ann_neighbour_from_another_organisation_is_dropped():
     from app.indexes.hybrid import keeps_ann_neighbour
 
