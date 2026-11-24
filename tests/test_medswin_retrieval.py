@@ -188,6 +188,36 @@ def test_the_local_reranker_drops_a_phone_in_the_passage():
     assert "Creatinine is 1.4." in seen["client_passages"][0]
 
 
+def test_the_local_reranker_scores_a_late_caution():
+    import torch
+    from app.services.reranker import DocumentReranker
+
+    reranker = DocumentReranker.__new__(DocumentReranker)
+    reranker.model_type = "bge-m3"
+    reranker.device = torch.device("cpu")
+    seen = {}
+
+    class _Tokenizer:
+        def __call__(self, queries, documents, truncation, padding, max_length, return_tensors):
+            seen["documents"] = list(documents)
+            ids = torch.ones((len(documents), 2), dtype=torch.long)
+            return {"input_ids": ids, "attention_mask": ids}
+
+    class _Model:
+        def __call__(self, **inputs):
+            class _Out:
+                logits = torch.zeros((inputs["input_ids"].shape[0], 1))
+
+            return _Out()
+
+    reranker.tokenizer = _Tokenizer()
+    reranker.model = _Model()
+    filler = "History note. " * 80
+    reranker.compute_relevance_scores("Which dose?", [f"{filler} Avoid apixaban."])
+    assert seen["documents"][0].startswith("Avoid apixaban.")
+    assert "History note." in seen["documents"][0]
+
+
 def test_document_reranker_scores_text_and_content_chunks():
     from app.services.reranker import DocumentReranker
 

@@ -7,7 +7,7 @@ from typing import List, Dict, Tuple, Union
 import json
 
 from app.models.pooling import inference_device
-from app.services.medswin.governance import redact_phi_text
+from app.services.medswin.governance import lead_with_caution, redact_phi_text
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,7 @@ class DocumentReranker:
     
     def compute_relevance_score(self, query: str, document: str) -> float:
         """Compute relevance score between query and document."""
+        document = lead_with_caution(document or "")
         if self.model_type == "bge-m3":
             inputs = self._prepare_input_bge_m3(query, document)
             return self._compute_score_bge_m3(inputs)
@@ -140,6 +141,7 @@ class DocumentReranker:
         """Compute relevance scores in batches on GPU/MPS/CPU."""
         if not documents:
             return []
+        documents = [lead_with_caution(document or "") for document in documents]
         if self.model_type != "bge-m3":
             return [self.compute_relevance_score(query, doc) for doc in documents]
         scores: List[float] = []
@@ -175,7 +177,7 @@ class DocumentReranker:
         scored_documents = []
         
         for doc in documents:
-            content = redact_phi_text(doc.get('text') or doc.get('content', '') or "")
+            content = lead_with_caution(redact_phi_text(doc.get('text') or doc.get('content', '') or ""))
             if not content:
                 logger.warning(f"Empty content for document {doc.get('chunk_id', 'unknown')}")
                 continue
