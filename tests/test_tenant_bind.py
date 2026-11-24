@@ -42,6 +42,47 @@ def _token(secret: str, claims: dict) -> str:
     return f"{header}.{body}.{_b64url(signature)}"
 
 
+def test_a_session_read_hides_another_clinician_in_the_same_org(monkeypatch):
+    secret = "clinical-secret-value"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "ENABLE_RBAC", False)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    monkeypatch.setattr(settings, "AUTH_JWT_AUDIENCE", None)
+    monkeypatch.setattr(settings, "AUTH_JWT_ISSUER", None)
+
+    class _Sessions:
+        async def get_by_id(self, session_id, org_id):
+            return {
+                "user_id": "dr-chen",
+                "created_at": "t0",
+                "last_active": "t1",
+                "metadata": {"note": "private"},
+            }
+
+    monkeypatch.setattr(pipelines, "SessionRepository", lambda: _Sessions())
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(pipelines.router, prefix="/pipelines")
+    client = TestClient(app)
+    other = _token(secret, {"sub": "dr-other", "org_id": "org-a", "exp": int(time.time()) + 60})
+    owner = _token(secret, {"sub": "dr-chen", "org_id": "org-a", "exp": int(time.time()) + 60})
+    hidden = client.get(
+        "/pipelines/sessions/sess-1",
+        headers={"Authorization": f"Bearer {other}"},
+        params={"org_id": "org-a"},
+    )
+    shown = client.get(
+        "/pipelines/sessions/sess-1",
+        headers={"Authorization": f"Bearer {owner}"},
+        params={"org_id": "org-a"},
+    )
+    assert hidden.status_code == 404
+    assert "private" not in hidden.text
+    assert shown.status_code == 200
+    assert shown.json()["user_id"] == "dr-chen"
+
+
 def test_unsigned_request_keeps_the_body_organisation():
     user_id, org_id = bind_tenant(_Request(), "clinician-1", "org-a")
     assert (user_id, org_id) == ("clinician-1", "org-a")

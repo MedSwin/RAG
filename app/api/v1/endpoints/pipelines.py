@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.tenant import bind_org, bind_tenant
+from app.api.tenant import bind_org, bind_tenant, fhir_id
 from app.core.config import settings
 from app.medswin.naive import NaiveRAGOrchestrator
 from app.medswin.orchestrator import MedSwinOrchestrator
@@ -214,9 +214,11 @@ async def pipeline_trace(trace_id: str, org_id: str, http_request: Request, incl
 
 @router.get("/sessions/{session_id}")
 async def pipeline_session(session_id: str, org_id: str, http_request: Request):
+    token_user = fhir_id(str(getattr(http_request.state, "user_id", "") or ""))
     org_id = bind_org(http_request, org_id)
     session = await SessionRepository().get_by_id(session_id, org_id)
-    if not session:
+    owner = fhir_id(str((session or {}).get("user_id") or ""))
+    if not session or (token_user and owner != token_user):
         raise HTTPException(status_code=404, detail="Session not found")
     return {
         "session_id": session_id,
