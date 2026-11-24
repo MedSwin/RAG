@@ -116,10 +116,10 @@ async def cds_service(
         raise HTTPException(status_code=404, detail="Unknown CDS service")
     if body.hook != "patient-view":
         raise HTTPException(status_code=400, detail="This service expects the patient-view hook")
+    user_id, org_id = _cds_caller(request, body)
     question = " ".join((body.context.question or "").split())
     if not question:
         return {"cards": []}
-    user_id, org_id = _cds_caller(request, body)
     response = await chat(
         question=question,
         user_id=user_id,
@@ -133,11 +133,24 @@ async def cds_service(
 async def cds_feedback(
     service_id: str,
     body: FeedbackRequest,
+    request: Request,
     record: FeedbackFunc = Depends(get_feedback_recorder),
 ) -> Dict[str, Any]:
     if service_id != SERVICE_ID:
         raise HTTPException(status_code=404, detail="Unknown CDS service")
+    token_user = str(getattr(request.state, "user_id", "") or "").strip()
+    user_id = None
+    org_id = None
+    if token_user:
+        token_org = str(getattr(request.state, "org_id", "") or "").strip()
+        user_id, org_id = bind_tenant(request, token_user, token_org)
     recorded_at = datetime.now(timezone.utc).isoformat()
-    documents = feedback_documents(service_id, body.feedback, recorded_at)
+    documents = feedback_documents(
+        service_id,
+        body.feedback,
+        recorded_at,
+        user_id=user_id,
+        org_id=org_id,
+    )
     await record(service_id, documents)
     return {}

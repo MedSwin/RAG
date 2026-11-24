@@ -229,3 +229,78 @@ def test_feedback_document_keeps_the_audit_fields():
             "recorded_at": "2026-11-24T00:00:00+00:00",
         }
     ]
+
+
+def test_authenticated_feedback_binds_caller_and_redacts_phi(monkeypatch):
+    import base64
+    import hashlib
+    import hmac
+    import json
+    import time
+
+    def _sign(secret: str, payload: dict) -> str:
+        def _enc(obj):
+            return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
+
+        head = _enc({"alg": "HS256", "typ": "JWT"})
+        body = _enc(payload)
+        sig = hmac.new(secret.encode(), f"{head}.{body}".encode(), hashlib.sha256).digest()
+        return f"{head}.{body}.{base64.urlsafe_b64encode(sig).rstrip(b'=').decode()}"
+
+    secret = "cds-audit-secret"
+    monkeypatch.setattr(settings, "ENABLE_AUTH", True)
+    monkeypatch.setattr(settings, "ENABLE_RBAC", False)
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", secret)
+    monkeypatch.setattr(settings, "AUTH_JWT_ALGORITHM", "HS256")
+    recorded = []
+
+    async def record(service_id, documents):
+        recorded.append((service_id, documents))
+
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(router)
+    app.dependency_overrides[get_feedback_recorder] = lambda: record
+    client = TestClient(app)
+
+    good = _sign(secret, {"sub": "clinician-7", "org_id": "org-a", "exp": int(time.time()) + 60})
+    response = client.post(
+        "/cds-services/medswin-evidence/feedback",
+        headers={"Authorization": f"Bearer {good}"},
+        json={
+            "feedback": [
+                {
+                    "card": "card-2",
+                    "outcome": "overridden",
+                    "overrideReason": {
+                        "reason": {"code": "patient-allergy"},
+                        "userComment": "Patient MRN: 123456 reported rash; email jane@example.com.",
+                    },
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    doc = recorded[0][1][0]
+    assert doc["user_id"] == "clinician-7"
+    assert doc["org_id"] == "org-a"
+    assert "123456" not in doc["override_comment"]
+    assert "jane@example.com" not in doc["override_comment"]
+    assert "[REDACTED_PATIENT_ID]" in doc["override_comment"]
+    assert "[REDACTED_EMAIL]" in doc["override_comment"]
+
+    no_org = _sign(secret, {"sub": "clinician-7", "exp": int(time.time()) + 60})
+    denied = client.post(
+        "/cds-services/medswin-evidence/feedback",
+        headers={"Authorization": f"Bearer {no_org}"},
+        json={"feedback": [{"card": "card-3", "outcome": "accepted"}]},
+    )
+    assert denied.status_code == 403
+    assert len(recorded) == 1
+
+    wrong_org = client.post(
+        "/cds-services/medswin-evidence",
+        headers={"Authorization": f"Bearer {good}"},
+        json={"hook": "patient-view", "hookInstance": "hook-2", "context": {"orgId": "org-b"}},
+    )
+    assert wrong_org.status_code == 403

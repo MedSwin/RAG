@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Sequence
 
 from app.schemas.enums import PolicyAction
 from app.schemas.traces import ChatResponse
+from app.services.medswin.governance import redact_phi_text
 
 SERVICE_ID = "medswin-evidence"
 SOURCE_LABEL = "MedSwin"
@@ -80,6 +81,9 @@ def feedback_documents(
     service_id: str,
     items: Sequence[Any],
     recorded_at: str,
+    *,
+    user_id: str | None = None,
+    org_id: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Shape one CDS Hooks feedback body into audit documents."""
     documents: List[Dict[str, Any]] = []
@@ -90,18 +94,22 @@ def feedback_documents(
         for suggestion in item.acceptedSuggestions or []:
             if isinstance(suggestion, dict) and suggestion.get("id"):
                 suggestions.append(str(suggestion["id"]))
-        documents.append(
-            {
-                "service_id": service_id,
-                "card": item.card,
-                "outcome": item.outcome,
-                "accepted_suggestions": suggestions,
-                "override_code": coded.get("code"),
-                "override_comment": reason.userComment if reason else None,
-                "outcome_timestamp": item.outcomeTimestamp,
-                "recorded_at": recorded_at,
-            }
-        )
+        comment = redact_phi_text(reason.userComment) if reason and reason.userComment else None
+        document: Dict[str, Any] = {
+            "service_id": service_id,
+            "card": item.card,
+            "outcome": item.outcome,
+            "accepted_suggestions": suggestions,
+            "override_code": coded.get("code"),
+            "override_comment": comment,
+            "outcome_timestamp": item.outcomeTimestamp,
+            "recorded_at": recorded_at,
+        }
+        if user_id is not None:
+            document["user_id"] = user_id
+        if org_id is not None:
+            document["org_id"] = org_id
+        documents.append(document)
     return documents
 
 
