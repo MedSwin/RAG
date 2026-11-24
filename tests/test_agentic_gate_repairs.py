@@ -1351,6 +1351,55 @@ def test_a_failed_caution_fit_keeps_the_filler():
     assert "warfarin" not in kept
 
 
+def test_a_new_drug_caution_keeps_the_required_literature_note():
+    from app.scoring.utility import select_bundle
+
+    facet = ClinicalFacet(
+        name="treatment_evidence",
+        required=True,
+        source_policy="LIT",
+        keywords=["therapy"],
+    )
+    strong = CandidatePassage(
+        chunk_id="strong",
+        doc_id="strong",
+        source_type=SourceType.CPG,
+        text="Recommend apixaban for stroke prevention.",
+        calibrated_score=0.90,
+        fusion_score=0.99,
+        token_count=40,
+    )
+    literature = CandidatePassage(
+        chunk_id="lit",
+        doc_id="lit",
+        source_type=SourceType.LIT,
+        text="Treatment therapy evidence from the literature.",
+        calibrated_score=0.90,
+        fusion_score=0.70,
+        token_count=50,
+    )
+    caution = CandidatePassage(
+        chunk_id="warfarin",
+        doc_id="warfarin",
+        source_type=SourceType.SAFETY,
+        text="Avoid warfarin in this patient.",
+        calibrated_score=0.80,
+        fusion_score=0.10,
+        safety_score=0.80,
+        token_count=50,
+    )
+    selected = select_bundle(
+        [strong, literature, caution],
+        facets=[facet],
+        token_budget=90,
+        max_chunks=3,
+    )
+    kept = {item.chunk_id for item in selected}
+    assert "lit" in kept
+    assert "strong" in kept
+    assert "warfarin" not in kept
+
+
 def test_a_new_drug_caution_replaces_a_filler_passage():
     from app.scoring.utility import select_bundle
 

@@ -93,6 +93,16 @@ def marginal_utility(
     )
 
 
+def _required_source_names(facets: Optional[List[ClinicalFacet]]) -> set:
+    if not facets:
+        return set()
+    return {
+        str(facet.source_policy).upper()
+        for facet in facets
+        if facet.required and facet.source_policy and str(facet.source_policy).upper() in {"LIT", "EMR", "CPG", "SAFETY"}
+    }
+
+
 def _preserve_required_sources(
     selected: List[CandidatePassage],
     remaining: List[CandidatePassage],
@@ -101,11 +111,7 @@ def _preserve_required_sources(
 ) -> None:
     if not facets or not remaining:
         return
-    required_sources = {
-        str(facet.source_policy).upper()
-        for facet in facets
-        if facet.required and facet.source_policy and str(facet.source_policy).upper() in {"LIT", "EMR", "CPG", "SAFETY"}
-    }
+    required_sources = _required_source_names(facets)
     if not required_sources:
         return
     selected_sources = {item.source_type.value for item in selected}
@@ -232,6 +238,7 @@ def _preserve_safety(
     selected: List[CandidatePassage],
     remaining: List[CandidatePassage],
     token_budget: int,
+    protected_sources: Optional[set] = None,
 ) -> None:
     if not remaining:
         return
@@ -247,7 +254,12 @@ def _preserve_safety(
         if not _adds_a_new_drug_warning(item, selected):
             continue
         tokens = token_count(item)
-        fitted = _try_fit(selected, token_budget, tokens)
+        fitted = _try_fit(
+            selected,
+            token_budget,
+            tokens,
+            protected_sources=protected_sources,
+        )
         if fitted is None:
             continue
         item.selected_reason = "protected_critical_safety_or_contradiction"
@@ -296,7 +308,7 @@ def select_bundle(
         chosen.selected_reason = f"marginal_utility_per_token={best_score:.6f}"
         used_tokens += token_count(chosen)
         selected.append(chosen)
-    _preserve_safety(selected, remaining, token_budget)
+    _preserve_safety(selected, remaining, token_budget, _required_source_names(facets))
     _preserve_required_sources(selected, remaining, token_budget, facets)
     return selected
 
