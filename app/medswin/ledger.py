@@ -825,6 +825,8 @@ _TAKING = re.compile(
     r"(?:^|\b(?:is|was|were|are|am|been|being|patient)\s+)taking\b",
     re.I,
 )
+_TAKES_AT_HOME = re.compile(r"\btakes\b", re.I)
+_AT_HOME = re.compile(r"\bat\s+home\b", re.I)
 _RECEIVING = re.compile(
     r"(?:^|\b(?:is|was|were|are|am|been|being|patient)\s+)receiv(?:e|es|ed|ing)\b",
     re.I,
@@ -1040,6 +1042,8 @@ def _is_continuation_sentence(sentence: str) -> bool:
         return True
     if _taking_drug(sentence):
         return True
+    if _takes_at_home(sentence):
+        return True
     if _receiving_drug(sentence):
         return True
     if _using_drug(sentence):
@@ -1173,6 +1177,32 @@ def _taking_drug(sentence: str) -> bool:
             continue
         if _object_is_drug(text[match.end():]):
             return True
+    return False
+
+
+def _takes_at_home(sentence: str) -> bool:
+    """True when the patient takes a named drug at home."""
+    from app.scoring.coverage import _LOCAL_NEGATION, _ON_TOPIC, _on_object_is_drug
+
+    text = sentence or ""
+    if _COUNSEL_ON.search(text):
+        return False
+    for match in _TAKES_AT_HOME.finditer(text):
+        window = text[max(0, match.start() - 48): match.start()]
+        if _LOCAL_NEGATION.search(window) or re.search(r"\bnever\b", window, re.I):
+            continue
+        home = _AT_HOME.search(text, match.end())
+        if home is None:
+            continue
+        between = text[match.end(): home.start()]
+        if not _on_object_is_drug(between):
+            continue
+        words = re.findall(r"[A-Za-z0-9'-]+", between)
+        content = [word for word in words if word.lower() not in {"to", "the", "a", "an", "his", "her", "their", "this", "that"}]
+        nxt = content[1] if len(content) >= 2 else ""
+        if nxt and _ON_TOPIC.match(nxt):
+            continue
+        return True
     return False
 
 
