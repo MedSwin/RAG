@@ -165,16 +165,17 @@ class DocumentReranker:
     
     def rerank_documents(self, query: str, documents: List[Dict], top_k: int = 3) -> List[Dict]:
         """Rerank documents based on relevance to query."""
+        query = redact_phi_text(query or "")
         logger.info(
             "Reranking %s documents for query: %s",
             len(documents),
-            redact_phi_text(query)[:100],
+            query[:100],
         )
         
         scored_documents = []
         
         for doc in documents:
-            content = doc.get('text') or doc.get('content', '')
+            content = redact_phi_text(doc.get('text') or doc.get('content', '') or "")
             if not content:
                 logger.warning(f"Empty content for document {doc.get('chunk_id', 'unknown')}")
                 continue

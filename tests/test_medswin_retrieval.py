@@ -115,6 +115,52 @@ def test_the_reranker_log_keeps_the_query_phone_out(caplog):
     assert "RuntimeError" in caplog.text
 
 
+def test_the_local_reranker_drops_a_phone_in_the_passage():
+    import asyncio
+
+    from app.services.adapters.reranker import RerankerClient
+    from app.services.reranker import DocumentReranker
+
+    seen = {}
+
+    def score(query, doc):
+        seen["query"] = query
+        seen["doc"] = doc
+        return 0.4
+
+    reranker = DocumentReranker.__new__(DocumentReranker)
+    reranker.compute_relevance_score = score
+    reranker.rerank_documents(
+        "dose for 555-234-5678",
+        [{"chunk_id": "a", "text": "Call 555-234-5678. Creatinine is 1.4. Continue metformin."}],
+    )
+    assert "555-234-5678" not in seen["query"]
+    assert "555-234-5678" not in seen["doc"]
+    assert "[REDACTED_PHONE]" in seen["doc"]
+    assert "Creatinine is 1.4." in seen["doc"]
+    assert "metformin" in seen["doc"]
+
+    client = RerankerClient.__new__(RerankerClient)
+    client.provider = "local"
+
+    async def local(query, passages):
+        seen["client_query"] = query
+        seen["client_passages"] = passages
+        return [{"index": 0, "score": 0.5}]
+
+    client._wants_inprocess_local = lambda: True
+    client._local_rerank = local
+    asyncio.run(
+        client.rerank(
+            "dose for 555-234-5678",
+            ["Call 555-234-5678. Creatinine is 1.4. Continue metformin."],
+        )
+    )
+    assert "555-234-5678" not in seen["client_query"]
+    assert "555-234-5678" not in seen["client_passages"][0]
+    assert "Creatinine is 1.4." in seen["client_passages"][0]
+
+
 def test_document_reranker_scores_text_and_content_chunks():
     from app.services.reranker import DocumentReranker
 
