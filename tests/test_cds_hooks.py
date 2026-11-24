@@ -179,6 +179,33 @@ def test_a_passed_gate_with_an_unstructured_answer_is_not_called_insufficient():
     assert "did not accept" not in withheld_card["detail"]
 
 
+def test_the_warning_card_names_the_caution_drug():
+    from app.schemas.evidence import ContradictionPair
+
+    response = _response(accepted=False)
+    response.evidence_bundle.passages.append(
+        CandidatePassage(
+            chunk_id="caution",
+            doc_id="doc-caution",
+            source_type=SourceType.SAFETY,
+            text="Avoid apixaban.",
+        )
+    )
+    response.contradictions = [
+        ContradictionPair(
+            facet="guideline_concordance",
+            chunk_id_a="chunk-1",
+            chunk_id_b="caution",
+            severity="low",
+            reason="Same-drug caution qualifies this recommendation.",
+        )
+    ]
+    card = cards_from_chat(response)[0]
+    assert card["indicator"] == "warning"
+    assert card["summary"] == "An unresolved caution qualifies apixaban."
+    assert "apixaban" in card["detail"].lower()
+
+
 def test_a_low_caution_is_named_on_the_warning_card():
     from app.schemas.evidence import ContradictionPair
 

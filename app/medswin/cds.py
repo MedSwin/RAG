@@ -89,8 +89,9 @@ def cards_from_chat(
         summary = "The model did not return a structured clinical answer."
     else:
         indicator = "warning"
+        caution_name = _caution_drug_name(passages, decision, contradictions)
         summary = (
-            "An unresolved caution qualifies this recommendation."
+            _caution_summary(caution_name)
             if _has_unresolved_caution(decision, contradictions)
             else "The available evidence is insufficient."
         )
@@ -102,6 +103,7 @@ def cards_from_chat(
         passage_ids=passage_ids,
         contradiction_count=len(contradictions),
         qualifying=_has_unresolved_caution(decision, contradictions),
+        caution_name=_caution_drug_name(passages, decision, contradictions),
     )
     card: Dict[str, Any] = {
         "uuid": response.trace_id or str(uuid.uuid4()),
@@ -175,6 +177,40 @@ def _clip(text: str) -> str:
     return compact[: _SUMMARY_LIMIT - 1].rstrip() + "…"
 
 
+def _caution_summary(drug_name: str) -> str:
+    """Name the caution drug when the passage states one."""
+    if drug_name:
+        return _clip(f"An unresolved caution qualifies {drug_name}.")
+    return "An unresolved caution qualifies this recommendation."
+
+
+def _caution_drug_name(passages: List[Any], decision: Any, contradictions: List[Any]) -> str:
+    """Return the drugs named by an unresolved caution passage."""
+    from app.medswin.ledger import intervention_tokens
+    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+    ids = set()
+    pairs = list(contradictions or [])
+    if decision is not None:
+        pairs.extend(list(getattr(decision, "contradictions", []) or []))
+    for item in pairs:
+        if item.resolved or item.severity == "high":
+            continue
+        ids.add(item.chunk_id_a)
+        ids.add(item.chunk_id_b)
+    found: List[str] = []
+    for passage in passages or []:
+        if getattr(passage, "chunk_id", None) not in ids:
+            continue
+        text = getattr(passage, "text", "") or ""
+        if not (_ungoverned_caution(text) or _QUALIFY.search(text)):
+            continue
+        for drug in sorted(intervention_tokens(text)):
+            if drug not in found:
+                found.append(drug)
+    return ", ".join(found)
+
+
 def _has_unresolved_caution(decision: Any, contradictions: List[Any]) -> bool:
     """True when a non-high pair still blocks the card."""
     pairs = list(contradictions or [])
@@ -192,6 +228,7 @@ def _detail(
     contradiction_count: int,
     synthesis_failed: bool = False,
     qualifying: bool = False,
+    caution_name: str = "",
 ) -> str:
     missing_text = ", ".join(missing) if missing else "none"
     passage_text = ", ".join(passage_ids) if passage_ids else "none"
@@ -206,7 +243,7 @@ def _detail(
         outcome = "The evidence gate did not accept this card."
     lead = outcome if synthesis_failed else f"{outcome} {reason}"
     if qualifying:
-        lead = f"{lead} An unresolved caution qualifies this recommendation."
+        lead = f"{lead} {_caution_summary(caution_name)}"
     return (
         f"{lead} "
         f"Missing facets: {missing_text}. "
