@@ -96,6 +96,16 @@ def _local_generation_window() -> bool:
     return settings.resolved_generation_backend() in _LOCAL_GENERATION_BACKENDS
 
 
+def _is_prompt_caution(passage: CandidatePassage) -> bool:
+    """A safety row or a caution sentence can use a local prompt slot."""
+    if passage.source_type.value == "SAFETY" or float(passage.safety_score or 0.0) >= 0.3:
+        return True
+    from app.scoring.coverage import _QUALIFY, _ungoverned_caution
+
+    text = passage.text or ""
+    return bool(_ungoverned_caution(text) or _QUALIFY.search(text))
+
+
 def passage_priority_key(passage: CandidatePassage, index: int) -> tuple:
     """Rank contraindications and high-scoring passages ahead of filler."""
     safety = 1 if passage.source_type.value == "SAFETY" or float(passage.safety_score or 0.0) >= 0.3 else 0
@@ -152,10 +162,16 @@ def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
     configured_limit = max(1, configured_limit)
     configured_chars = max(128, configured_chars)
     selected = prioritize_passages(passages)
+    if compact:
+        cautions = [passage for passage in selected if _is_prompt_caution(passage)]
+        others = [passage for passage in selected if passage not in cautions]
+        selected = cautions + others
     total_cap = _COMPACT_PASSAGE_BLOCK_CHARS if compact else None
     blocks: List[str] = []
     for passage in selected:
-        if len(blocks) >= configured_limit:
+        if len(blocks) >= limit:
+            break
+        if len(blocks) >= configured_limit and not (compact and _is_prompt_caution(passage)):
             break
         header = f"[{passage.chunk_id}|{passage.source_type.value}|doc={passage.doc_id}]"
         redacted = lead_with_caution(redact_phi_text(passage.text or ""))

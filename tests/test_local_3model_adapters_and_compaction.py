@@ -499,6 +499,28 @@ def test_local_passage_context_keeps_safety_inside_2048_envelope(monkeypatch):
     assert "[lit-1|LIT|doc=doc-lit-1]" not in explicit
 
 
+def test_a_fifth_short_caution_stays_in_the_local_passage(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    monkeypatch.setattr(settings, "GENERATION_BACKEND", None)
+    monkeypatch.delenv("GENERATION_BACKEND", raising=False)
+    monkeypatch.delenv("AGENT_PASSAGE_LIMIT", raising=False)
+    monkeypatch.delenv("AGENT_PASSAGE_MAX_CHARS", raising=False)
+    drugs = ["apixaban", "warfarin", "heparin", "enoxaparin", "metformin"]
+    passages = [
+        _passage(f"lit-{index}", SourceType.LIT, "alpha " * 40, calibrated_score=0.99 - (index * 0.01))
+        for index in range(4)
+    ]
+    passages.extend(
+        _passage(f"caution-{drug}", SourceType.EMR, f"Avoid {drug}.", calibrated_score=0.1)
+        for drug in drugs
+    )
+    rendered = passage_context(passages)
+    lowered = rendered.lower()
+    assert len(rendered) <= 1400
+    for drug in drugs:
+        assert f"avoid {drug}." in lowered
+
+
 @pytest.mark.asyncio
 async def test_local_synthesis_bounds_evidence_and_reads_inline_chunk_ids():
     safety = _passage("safety-1", SourceType.SAFETY, "Contraindicated in anaphylaxis. " + ("warn " * 300), calibrated_score=0.2)
