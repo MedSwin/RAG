@@ -1152,6 +1152,49 @@ def test_a_second_drug_caution_stays_in_the_bundle():
     assert "apixaban-repeat" not in kept
 
 
+def test_a_required_chart_replaces_a_filler_passage():
+    from app.scoring.utility import select_bundle
+
+    facet = ClinicalFacet(
+        name="patient_applicability",
+        required=True,
+        source_policy="EMR",
+        keywords=["patient"],
+    )
+    strong = CandidatePassage(
+        chunk_id="strong",
+        doc_id="strong",
+        source_type=SourceType.CPG,
+        text="A guideline note about follow-up.",
+        calibrated_score=0.90,
+        fusion_score=0.95,
+        token_count=50,
+    )
+    filler = CandidatePassage(
+        chunk_id="filler",
+        doc_id="filler",
+        source_type=SourceType.LIT,
+        text="A literature note about follow-up.",
+        calibrated_score=0.90,
+        fusion_score=0.90,
+        token_count=40,
+    )
+    chart = CandidatePassage(
+        chunk_id="chart",
+        doc_id="chart",
+        source_type=SourceType.EMR,
+        text="Patient history shows renal disease.",
+        calibrated_score=0.80,
+        fusion_score=0.40,
+        token_count=30,
+    )
+    selected = select_bundle([strong, filler, chart], facets=[facet], token_budget=90, max_chunks=2)
+    kept = {item.chunk_id for item in selected}
+    assert "chart" in kept
+    assert "strong" in kept
+    assert "filler" not in kept
+
+
 def test_a_new_drug_caution_replaces_a_filler_passage():
     from app.scoring.utility import select_bundle
 

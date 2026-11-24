@@ -116,6 +116,7 @@ def _preserve_required_sources(
             continue
         item = max(candidates, key=lambda c: (max((c.facet_scores or {}).values(), default=0.0), c.fusion_score or 0.0))
         tokens = token_count(item)
+        current_tokens = _make_room(selected, token_budget, tokens)
         if current_tokens + tokens <= token_budget and len(selected) < settings.MMR_MAX_EVIDENCE_CHUNKS:
             item.selected_reason = f"protected_required_source={source}"
             selected.append(item)
