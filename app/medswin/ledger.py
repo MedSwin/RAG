@@ -515,7 +515,19 @@ def named_caution_text(text: str) -> str:
         if not sentence.strip():
             continue
         if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
-            span = LexicalRetriever._caution_span(sentence).strip()
+            recommendation, clause = _caution_clause(sentence)
+            recommendation_drugs = intervention_tokens(recommendation)
+            clause_drugs = intervention_tokens(clause)
+            order = _chart_recommendation_text(recommendation) or _chart_continuation_text(recommendation)
+            if (
+                order
+                and recommendation_drugs
+                and clause_drugs
+                and recommendation_drugs.isdisjoint(clause_drugs)
+            ):
+                span = clause
+            else:
+                span = LexicalRetriever._caution_span(sentence).strip()
             if span:
                 spans.append(span)
     caution = " ".join(spans)
@@ -559,8 +571,27 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
             anchor = index
             break
     drug_at = [index for index, word in enumerate(words) if intervention_tokens(word)]
+    before = [index for index in drug_at if index < anchor]
+    after = [index for index in drug_at if index > anchor]
+    before_drugs: set[str] = set()
+    after_drugs: set[str] = set()
+    for index in before:
+        before_drugs.update(intervention_tokens(words[index]))
+    for index in after:
+        after_drugs.update(intervention_tokens(words[index]))
+    after_near = [index for index in after if index <= anchor + 4]
+    hard_caution = bool(_CAUTION.fullmatch(match.group(0)))
     nearby = [index for index in drug_at if anchor - 4 <= index <= anchor + 4]
-    if nearby:
+    if (
+        hard_caution
+        and before_drugs
+        and after_drugs
+        and before_drugs.isdisjoint(after_drugs)
+        and after_near
+    ):
+        clause_begin = anchor
+        clause_end = max([anchor, *after_near]) + 1
+    elif nearby:
         clause_begin = min([anchor, *nearby])
         clause_end = max([anchor, *nearby]) + 1
     else:

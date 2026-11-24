@@ -960,6 +960,71 @@ def test_a_recommendation_that_cannot_use_warfarin_does_not_conflict_with_that_w
     assert all(pair.chunk_id_b != "war" for pair in blocked)
 
 
+def test_an_order_before_a_rejected_drug_keeps_that_order():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("Which dose?", QuerySpec(canonical_terms=["dose"]))
+
+    def passage(chunk_id: str, text: str, source: SourceType = SourceType.CPG) -> CandidatePassage:
+        return CandidatePassage(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=source,
+            text=text,
+            section="Recommendations",
+            calibrated_score=0.90,
+            evidence_grade_score=0.95,
+        )
+
+    def pairs_for(note: str, other: str, source: SourceType = SourceType.CPG):
+        return detect_contradictions(
+            build_retrieval_ledger(
+                [passage("note", note), passage("other", other, source)],
+                facets,
+            )
+        )
+
+    for note in (
+        "Start warfarin for patients who should not take apixaban.",
+        "Give warfarin to patients who should not take apixaban.",
+    ):
+        blocked = pairs_for(note, "Avoid warfarin.", SourceType.SAFETY)
+        assert len(blocked) == 1, note
+        assert blocked[0].severity == "high"
+        assert "warfarin" in blocked[0].reason
+        assert "apixaban" not in blocked[0].reason
+        assert pairs_for(note, "Avoid apixaban.", SourceType.SAFETY) == []
+        assert pairs_for(note, "Warfarin is recommended.") == []
+        kept = pairs_for(note, "Apixaban is recommended.")
+        assert len(kept) == 1
+        assert "apixaban" in kept[0].reason
+        assert "warfarin" not in kept[0].reason
+        chart = chart_contradictions("Avoid warfarin.", build_retrieval_ledger([passage("note", note)], facets))
+        assert len(chart) == 1
+        assert chart[0].chunk_id_b == "patient-chart"
+        assert "warfarin" in chart[0].reason
+        assert "apixaban" not in chart[0].reason
+    reverse = "Start apixaban for patients who should not take warfarin."
+    apixaban_block = pairs_for(reverse, "Avoid apixaban.", SourceType.SAFETY)
+    assert len(apixaban_block) == 1
+    assert "apixaban" in apixaban_block[0].reason
+    assert "warfarin" not in apixaban_block[0].reason
+    assert pairs_for(reverse, "Avoid warfarin.", SourceType.SAFETY) == []
+    assert pairs_for(reverse, "Apixaban is recommended.") == []
+    warfarin_block = pairs_for(reverse, "Warfarin is recommended.")
+    assert len(warfarin_block) == 1
+    assert "warfarin" in warfarin_block[0].reason
+    later = "Patients who should not take warfarin should start apixaban."
+    assert pairs_for(later, "Avoid warfarin.", SourceType.SAFETY) == []
+    later_pairs = pairs_for(later, "Avoid apixaban.", SourceType.SAFETY)
+    assert len(later_pairs) == 1
+    assert "apixaban" in later_pairs[0].reason
+    assert pairs_for("Do not start warfarin.", "Avoid warfarin.", SourceType.SAFETY) == []
+    still = pairs_for("Warfarin should not be used.", "Warfarin is recommended.")
+    assert len(still) == 1
+    assert "warfarin" in still[0].reason
+
+
 def test_a_caution_clause_in_the_recommendation_does_not_conflict_with_that_warning():
     support = _entry(
         "note",
