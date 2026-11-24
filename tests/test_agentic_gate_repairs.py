@@ -710,6 +710,55 @@ def test_a_two_term_caution_survives_packing():
     assert "caution" in {item.chunk_id for item in selected}
 
 
+def test_a_second_drug_caution_stays_in_the_bundle():
+    from app.scoring.utility import select_bundle
+
+    strong = CandidatePassage(
+        chunk_id="strong",
+        doc_id="strong",
+        source_type=SourceType.CPG,
+        text="Guideline recommendation for apixaban.",
+        calibrated_score=0.90,
+        fusion_score=0.95,
+        token_count=80,
+    )
+    apixaban = CandidatePassage(
+        chunk_id="apixaban",
+        doc_id="apixaban",
+        source_type=SourceType.SAFETY,
+        text="Avoid apixaban. Apixaban is contraindicated.",
+        calibrated_score=0.80,
+        fusion_score=0.60,
+        contradiction_score=0.32,
+        token_count=20,
+    )
+    warfarin = CandidatePassage(
+        chunk_id="warfarin",
+        doc_id="warfarin",
+        source_type=SourceType.SAFETY,
+        text="Avoid warfarin. Warfarin is contraindicated.",
+        calibrated_score=0.80,
+        fusion_score=0.60,
+        contradiction_score=0.32,
+        token_count=20,
+    )
+    repeat = CandidatePassage(
+        chunk_id="apixaban-repeat",
+        doc_id="apixaban-repeat",
+        source_type=SourceType.SAFETY,
+        text="Apixaban is not recommended.",
+        calibrated_score=0.80,
+        fusion_score=0.59,
+        contradiction_score=0.32,
+        token_count=20,
+    )
+    selected = select_bundle([strong, apixaban, warfarin, repeat], token_budget=200, max_chunks=1)
+    kept = {item.chunk_id for item in selected}
+    assert "apixaban" in kept
+    assert "warfarin" in kept
+    assert "apixaban-repeat" not in kept
+
+
 def test_a_passage_below_inclusion_is_not_packed():
     from app.scoring.utility import select_bundle
 

@@ -122,6 +122,30 @@ def _preserve_required_sources(
             current_tokens += tokens
 
 
+def _is_critical_caution(item: CandidatePassage) -> bool:
+    return (item.safety_score or 0.0) >= 0.32 or (item.contradiction_score or 0.0) >= 0.32
+
+
+def _adds_a_new_drug_warning(item: CandidatePassage, selected: List[CandidatePassage]) -> bool:
+    """Keep a caution when it names a drug that no selected caution has named."""
+    from app.medswin.ledger import intervention_tokens
+
+    drugs = intervention_tokens(item.text or "")
+    warned: set[str] = set()
+    unnamed = False
+    for chosen in selected:
+        if not _is_critical_caution(chosen):
+            continue
+        named = intervention_tokens(chosen.text or "")
+        if named:
+            warned |= named
+        else:
+            unnamed = True
+    if drugs:
+        return not drugs <= warned
+    return not unnamed and not warned
+
+
 def _preserve_safety(
     selected: List[CandidatePassage],
     remaining: List[CandidatePassage],
@@ -132,18 +156,19 @@ def _preserve_safety(
     selected_ids = {item.chunk_id for item in selected}
     critical = [
         item for item in remaining
-        if item.chunk_id not in selected_ids
-        and ((item.safety_score or 0.0) >= 0.32 or (item.contradiction_score or 0.0) >= 0.32)
+        if item.chunk_id not in selected_ids and _is_critical_caution(item)
     ]
     if not critical:
         return
     current_tokens = sum(token_count(item) for item in selected)
     for item in sorted(critical, key=lambda c: ((c.safety_score or 0.0) + (c.contradiction_score or 0.0), c.fusion_score or 0.0), reverse=True):
+        if not _adds_a_new_drug_warning(item, selected):
+            continue
         tokens = token_count(item)
         if current_tokens + tokens <= token_budget and len(selected) < settings.MMR_MAX_EVIDENCE_CHUNKS:
             item.selected_reason = "protected_critical_safety_or_contradiction"
             selected.append(item)
-            return
+            current_tokens += tokens
 
 
 def select_bundle(
