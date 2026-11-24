@@ -830,12 +830,10 @@ def _content_words(text: str) -> list[str]:
     return content
 
 
-def _dose_order_object(text: str, reduction: bool = False) -> bool:
+def _dose_order_object(text: str) -> bool:
     """True when the dose change names the drug, not a level or a clearance."""
     if not _direct_drug_object(text):
         return False
-    if not reduction:
-        return True
     content = _content_words(text)
     drug_at = 2 if content and content[0].lower() == "dose" else 0
     return not (drug_at + 1 < len(content) and _NOT_DOSE_NOUN.match(content[drug_at + 1]))
@@ -987,7 +985,7 @@ def _has_recommendation_verb(text: str) -> bool:
         tail = text[match.end():]
         if _RECORD_NOT_ORDER.search(tail):
             continue
-        if _dose_order_object(tail, reduction=bool(_DOSE_REDUCTION.fullmatch(match.group(0)))):
+        if _dose_order_object(tail):
             return True
     if _DRUG_OF_CHOICE.search(text or "") and intervention_tokens(text) and not _MONITOR_WORD.search(text or ""):
         return True

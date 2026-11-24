@@ -405,6 +405,8 @@ def test_a_chart_dose_change_conflicts_with_the_same_drug_warning():
         "Add a note about warfarin.",
         "Add warfarin to the allergy list.",
         "Increase the INR on warfarin.",
+        "Increase warfarin levels.",
+        "Increased warfarin clearance.",
         "Ongoing monitoring of warfarin.",
         "Increased bleeding on warfarin.",
         "Decrease the INR on warfarin.",
