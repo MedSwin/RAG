@@ -241,6 +241,27 @@ def _passage_heads(content: str, width: int) -> str:
     return marker + "\n\n".join(blocks)
 
 
+def _clip_question(text: str, limit: int = 240) -> str:
+    """Keep a warning when a long question is cut."""
+    raw = " ".join((text or "").split())
+    if len(raw) <= limit:
+        return raw
+    from app.retrieval.lexical import LexicalRetriever
+
+    kept = []
+    for span in LexicalRetriever._caution_sentences(raw):
+        span = span.strip()
+        if span and span not in kept:
+            kept.append(span)
+    caution = " ".join(kept)
+    head = raw[:limit]
+    if not caution or caution.lower() in head.lower():
+        return head
+    if len(caution) >= limit:
+        return caution[:limit]
+    return f"{raw[: limit - len(caution) - 1].rstrip()} {caution}".strip()
+
+
 def _query_line(content: str) -> str:
     if "Query:" not in content:
         return ""
@@ -250,8 +271,8 @@ def _query_line(content: str) -> str:
         index = rest.find(header)
         if index >= 0:
             stop = min(stop, index)
-    line = f"Query:{rest[:stop]}".strip()
-    return line[:240]
+    body = _clip_question(rest[:stop], 233)
+    return f"Query: {body}".strip()
 
 
 def _specialist_tail(content: str, kept: str) -> str:
@@ -291,11 +312,11 @@ def _compact_user_message(content: str, width: int) -> str:
     if passages:
         question = _query_line(content)
     elif "Patient chart:\n" in content:
-        question = content.split("Patient chart:\n", 1)[0].strip()[:240]
+        question = _clip_question(content.split("Patient chart:\n", 1)[0])
     elif "Evidence:\n" in content:
-        question = content.split("Evidence:\n", 1)[0].strip()[:240]
+        question = _clip_question(content.split("Evidence:\n", 1)[0])
     else:
-        question = content[:240]
+        question = _clip_question(content)
     parts = [part for part in (passages, question, chart, evidence) if part]
     kept = "\n\n".join(parts)
     tail = _specialist_tail(content, kept)

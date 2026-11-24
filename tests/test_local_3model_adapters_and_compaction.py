@@ -786,6 +786,26 @@ async def test_local_llm_defaults_and_clamps_completion_inside_2048(monkeypatch)
     assert "max_tokens" not in seen["json"]
 
 
+def test_the_local_query_keeps_a_warning_at_the_end_of_a_long_question():
+    question = " ".join(f"history{index}" for index in range(400)) + " Avoid apixaban."
+    content = (
+        f"Query: {question}\n\n"
+        "Patient chart:\nAge 80.\n\n"
+        "Evidence:\n[c1] A general note.\n\n"
+        "Valid chunk_ids: c1\n"
+    )
+    fitted = fit_local_messages(
+        [
+            {"role": "system", "content": "Return one JSON object. " * 40},
+            {"role": "user", "content": content},
+        ],
+        384,
+    )
+    text = fitted[-1]["content"]
+    assert "apixaban" in text.lower()
+    assert _estimate_message_tokens(fitted) + 384 <= 1980
+
+
 def test_the_chart_window_keeps_every_drug_that_fits():
     from app.services.adapters.llm import _chart_block
 
