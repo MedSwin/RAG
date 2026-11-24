@@ -238,6 +238,21 @@ def test_shared_index_build_requires_an_operator(monkeypatch):
     )
     assert rejected.status_code == 400
     assert len(built) == 1
+    scoped = client.post(
+        "/api/v1/storage/index/build",
+        headers={"Authorization": f"Bearer {operator}"},
+        json={"force_rebuild": True, "org_id": "org-a"},
+    )
+    assert scoped.status_code == 400
+    assert len(built) == 1
+
+
+def test_operator_index_notice_names_the_shared_index():
+    from app.cli.operator import shared_index_notice
+
+    text = shared_index_notice("org-a")
+    assert "org=org-a" in text
+    assert "shared index" in text
 
 
 def test_operator_can_build_the_index_when_rbac_is_on(monkeypatch):

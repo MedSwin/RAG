@@ -163,9 +163,17 @@ def cmd_open(args: argparse.Namespace) -> int:
     return 0
 
 
+def shared_index_notice(org_id: str) -> str:
+    """Say which organisation is refreshed, and that the index is shared."""
+    return (
+        f"Refreshing embeddings for org={org_id}. "
+        "The following rebuild is the shared index for every organisation."
+    )
+
+
 def cmd_index(args: argparse.Namespace) -> int:
     ensure_api(args.base_url, host=args.host, port=args.port)
-    print(f"Refreshing embeddings for org={args.org_id} ...")
+    print(shared_index_notice(args.org_id))
     try:
         status, refresh = http_json(
             "POST",
@@ -177,13 +185,13 @@ def cmd_index(args: argparse.Namespace) -> int:
         print(f"Embedding refresh failed: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(refresh, indent=2, default=str) if args.json else f"refresh HTTP {status}")
-    print(f"Building ANN index for org={args.org_id} ...")
+    print("Building the shared index ...")
     try:
         status, built = http_json(
             "POST",
             join_url(args.base_url, "/api/v1/storage/index/build"),
             timeout=args.timeout,
-            payload={"force_rebuild": True, "org_id": args.org_id},
+            payload={"force_rebuild": True},
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Index build failed: {exc}", file=sys.stderr)

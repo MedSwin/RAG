@@ -39,6 +39,7 @@ class BuildIndexRequest(BaseModel):
     index_path: Optional[str] = None
     mapping_path: Optional[str] = None
     force_rebuild: bool = False
+    org_id: Optional[str] = None
 
 
 class BuildIndexResponse(BaseModel):
@@ -344,6 +345,11 @@ async def build_index(
 ):
     """Rebuild the one shared ordinary ANN over all active tenant vectors."""
     require_operator(http_request)
+    if request.org_id:
+        raise HTTPException(
+            status_code=400,
+            detail="The shared index is not limited to one organisation",
+        )
     if request.index_path or request.mapping_path:
         raise HTTPException(status_code=400, detail="The index path comes from the server configuration")
     try:
