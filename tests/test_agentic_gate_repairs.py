@@ -1145,7 +1145,22 @@ def test_a_switch_away_conflicts_with_the_stopped_drug():
         assert "warfarin" in chart[0].reason
         assert "apixaban" not in chart[0].reason
     assert pairs_for("Switch to apixaban.", "Warfarin is recommended.") == []
-    assert pairs_for("Do not switch from warfarin to apixaban.", "Avoid warfarin.") == []
+    for note in (
+        "Do not switch from warfarin to apixaban.",
+        "Do not change from warfarin to apixaban.",
+        "Do not replace warfarin with apixaban.",
+        "Should not switch the patient from warfarin to apixaban.",
+    ):
+        assert pairs_for(note, "Warfarin is recommended.") == [], note
+        assert pairs_for(note, "Avoid apixaban.") == [], note
+        kept = pairs_for(note, "Avoid warfarin.")
+        assert len(kept) == 1, note
+        assert "warfarin" in kept[0].reason
+        assert "apixaban" not in kept[0].reason
+        blocked = pairs_for(note, "Apixaban is recommended.")
+        assert len(blocked) == 1, note
+        assert "apixaban" in blocked[0].reason
+        assert "warfarin" not in blocked[0].reason
 
 
 def test_a_named_intolerance_conflicts_with_the_same_drug_order():

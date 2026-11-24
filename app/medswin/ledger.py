@@ -579,8 +579,12 @@ def _caution_clause(sentence: str) -> tuple[str, str]:
         _QUALIFY,
         _STOP_ORDER,
         _away_split,
+        _negated_away_split,
     )
 
+    negated = _negated_away_split(sentence)
+    if negated:
+        return negated
     away = _away_split(sentence)
     if away:
         return away
@@ -1024,14 +1028,20 @@ def _chart_continuation_text(chart: str) -> str:
 def _chart_caution_text(chart: str) -> str:
     """Keep caution sentences from a chart note. A later drug sentence stays out."""
     from app.retrieval.lexical import LexicalRetriever
-    from app.scoring.coverage import _QUALIFY, _STOP_ORDER, _away_split, _ungoverned_caution
+    from app.scoring.coverage import (
+        _QUALIFY,
+        _STOP_ORDER,
+        _away_split,
+        _negated_away_split,
+        _ungoverned_caution,
+    )
 
     kept = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", chart or ""):
         if not sentence.strip():
             continue
         if _ungoverned_caution(sentence) or _QUALIFY.search(sentence):
-            if _STOP_ORDER.search(sentence) or _away_split(sentence):
+            if _STOP_ORDER.search(sentence) or _away_split(sentence) or _negated_away_split(sentence):
                 kept.append(named_caution_text(sentence))
             else:
                 kept.append(LexicalRetriever._caution_span(sentence))
