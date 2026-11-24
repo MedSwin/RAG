@@ -106,7 +106,7 @@ async def chunk_data(request: ChunkingRequest):
         raise
     except Exception as exc:
         logger.error("Error chunking data: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Chunking failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Chunking failed: {type(exc).__name__}")
 
 
 @router.post("/upload-and-chunk", response_model=ChunkingResponse)
@@ -161,10 +161,10 @@ async def upload_and_chunk_file(
     except HTTPException:
         raise
     except (json.JSONDecodeError, ValueError, pd.errors.ParserError) as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid upload content: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Invalid upload content: {type(exc).__name__}") from exc
     except Exception as exc:
         logger.error("Error processing uploaded file: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"File processing failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"File processing failed: {type(exc).__name__}")
 
 
 @router.get("/preprocessing/info")
@@ -194,4 +194,4 @@ async def validate_chunks(chunks: List[Dict[str, Any]]):
         raise
     except Exception as exc:
         logger.error("Error validating chunks: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Chunk validation failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Chunk validation failed: {type(exc).__name__}")

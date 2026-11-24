@@ -108,7 +108,7 @@ async def embed_text(request: EmbeddingRequest):
         raise
     except Exception as exc:
         logger.error("Error embedding text: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Embedding failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {type(exc).__name__}")
 
 
 @router.post("/embed/batch", response_model=BatchEmbeddingResponse)
@@ -141,7 +141,7 @@ async def embed_texts_batch(request: BatchEmbeddingRequest):
         raise
     except Exception as exc:
         logger.error("Error embedding text batch: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch embedding failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Batch embedding failed: {type(exc).__name__}")
 
 
 @router.get("/info")

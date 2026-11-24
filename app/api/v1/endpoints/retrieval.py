@@ -229,7 +229,7 @@ async def get_index_info():
         raise
     except Exception as exc:
         logger.error("Failed to read index info: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get index info: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to get index info: {type(exc).__name__}")
     finally:
         if hasattr(builder.mapping, "close"):
             builder.mapping.close()

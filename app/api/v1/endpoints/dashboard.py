@@ -942,7 +942,7 @@ async def start_dataset_ingestion(
         return IngestionResponse(
             success=False,
             dataset_name=dataset_name,
-            error=str(e)
+            error=type(e).__name__
         )
 
 @router.get("/dataset/{dataset_name}")
@@ -957,7 +957,7 @@ async def get_dataset_details(
         
     except Exception as e:
         logger.error(f"Error getting dataset details for {dataset_name}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get dataset details: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get dataset details: {type(e).__name__}")
 
 @router.get("/status")
 async def get_ingestion_statuses(ingestion_service = Depends(get_ingestion_service)):
@@ -968,7 +968,7 @@ async def get_ingestion_statuses(ingestion_service = Depends(get_ingestion_servi
         
     except Exception as e:
         logger.error(f"Error getting ingestion statuses: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get ingestion statuses: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get ingestion statuses: {type(e).__name__}")
 
 @router.get("/models")
 async def get_models_info(model_service = Depends(get_model_service)):
@@ -979,7 +979,7 @@ async def get_models_info(model_service = Depends(get_model_service)):
         
     except Exception as e:
         logger.error(f"Error getting models info: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get models info: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get models info: {type(e).__name__}")
 
 @router.post("/download-models")
 async def download_models(http_request: Request, model_service = Depends(get_model_service)):
@@ -991,4 +991,4 @@ async def download_models(http_request: Request, model_service = Depends(get_mod
         
     except Exception as e:
         logger.error(f"Error downloading models: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to download models: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to download models: {type(e).__name__}")

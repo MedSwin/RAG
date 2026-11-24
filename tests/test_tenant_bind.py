@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.api.auth import AuthMiddleware
 from app.api.cds import get_cds_chat, router as cds_router
 from app.api.tenant import bind_org, bind_tenant, require_operator
-from app.api.v1.endpoints import dashboard, pipelines, retrieval, storage
+from app.api.v1.endpoints import dashboard, embedding, pipelines, preprocessing, retrieval, storage
 from app.services.ingestion import IngestionPipelineService
 from app.core.config import settings
 from app.services import storage as storage_service
@@ -222,6 +222,61 @@ def test_pipeline_token_uses_the_token_organisation(monkeypatch):
     )
     assert denied.status_code == 403
     assert seen == [(PipelineId.TWO_STAGE, "clinician-1", "org-a")]
+
+
+def test_a_service_error_hides_the_exception_text(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_AUTH", False)
+    monkeypatch.setattr(settings, "CLOUD_MODE", True)
+
+    async def _cloud_embed(texts, input_type):
+        raise RuntimeError("vector 555-234-5678")
+
+    class _Chunker:
+        async def chunk_medical_dialogues(self, frame, target_chunk_size):
+            raise RuntimeError("note 555-234-5678")
+
+    class _Datasets:
+        async def get_dataset_info(self, name):
+            raise RuntimeError("repo 555-234-5678")
+
+    class _Path:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+        def exists(self):
+            return True
+
+    class _Builder:
+        def __init__(self, _dimension):
+            self.mapping = type("Mapping", (), {"close": staticmethod(lambda: None)})()
+
+        def load(self, *_args):
+            raise RuntimeError("index 555-234-5678")
+
+    monkeypatch.setattr(embedding, "_cloud_embed", _cloud_embed)
+    monkeypatch.setattr(preprocessing, "get_preprocessing_service", lambda: _Chunker())
+    monkeypatch.setattr(retrieval, "Path", _Path)
+    monkeypatch.setattr(retrieval, "HNSWIndexBuilder", _Builder)
+    app = FastAPI()
+    app.include_router(embedding.router, prefix="/api/v1/embedding")
+    app.include_router(preprocessing.router, prefix="/api/v1/preprocessing")
+    app.include_router(dashboard.router, prefix="/api/v1/dashboard")
+    app.include_router(retrieval.router, prefix="/api/v1/retrieval")
+    app.dependency_overrides[dashboard.get_hf_service] = lambda: _Datasets()
+    client = TestClient(app)
+    embedded = client.post("/api/v1/embedding/embed", json={"text": "dose"})
+    chunked = client.post("/api/v1/preprocessing/chunk", json={"data": [{"text": "dose"}]})
+    listed = client.get("/api/v1/dashboard/dataset/medqa")
+    indexed = client.get("/api/v1/retrieval/index/info")
+    assert embedded.status_code == 500
+    assert embedded.json()["detail"] == "Embedding failed: RuntimeError"
+    assert chunked.status_code == 500
+    assert chunked.json()["detail"] == "Chunking failed: RuntimeError"
+    assert listed.status_code == 500
+    assert listed.json()["detail"] == "Failed to get dataset details: RuntimeError"
+    assert indexed.status_code == 500
+    assert indexed.json()["detail"] == "Failed to get index info: RuntimeError"
+    assert "555-234-5678" not in embedded.text + chunked.text + listed.text + indexed.text
 
 
 def test_a_storage_error_hides_the_exception_text(monkeypatch):
