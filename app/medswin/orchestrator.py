@@ -259,6 +259,22 @@ def _fit_row(text: str, allowance: int) -> List[str]:
     return f"{' '.join(caution_bits)} {' '.join(leading)}".split()[:allowance]
 
 
+def _model_question(question: str, retrieval_query: str) -> str:
+    """Give the model the chart synopsis. The chart is not a citable passage."""
+    marker = "Patient retrieval context:\n"
+    raw = retrieval_query or ""
+    index = raw.find(marker)
+    if index < 0:
+        return question
+    chart = raw[index + len(marker):].strip()
+    if not chart:
+        return question
+    return (
+        f"{question}\n\nPatient chart:\n{chart}\n"
+        "The patient chart is context. Cite only a chunk_id from the evidence."
+    )
+
+
 def _specialist_candidates(ranked: List, limit: int = 40) -> List:
     """Show specialists the ranked cautions, not the first retrieved rows."""
     return prioritize_passages(list(ranked))[:limit]
@@ -493,7 +509,7 @@ class MedSwinOrchestrator:
 
             synthesis_started = time.perf_counter()
             answer, provenance, answer_artifact = await self.synthesis_agent.synthesize_with_artifact(
-                query,
+                _model_question(query, trace.retrieval_query or ""),
                 evidence_bundle,
                 facet_coverage=evidence_bundle.facet_coverage,
                 safety_notes=[n for n in [decision.reason if decision else None] if n],
@@ -875,7 +891,7 @@ class MedSwinOrchestrator:
             missing = (hints or {}).get("missing_facets") or []
             ranked_candidates = self.retriever.rank(all_candidates, facets=facets)
             batches = await self._dispatch_agents(
-                query=query,
+                query=_model_question(query, retrieval_query),
                 candidates=_specialist_candidates(ranked_candidates),
                 facets=facets,
                 patient_id=patient_id,

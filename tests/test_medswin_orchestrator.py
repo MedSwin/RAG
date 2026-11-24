@@ -823,3 +823,109 @@ def test_failed_request_does_not_leak_previous_ranked_evidence():
     assert stored[0].retrieval_traces[0].query == "q1"
     assert "normalizer failed" not in (stored[-1].final_answer or "")
 
+
+def test_the_answer_model_sees_the_patient_chart():
+    import asyncio
+
+    from app.agents.synthesis import SynthesisAgent
+    from app.schemas.evidence import EvidenceBundle, PolicyDecision
+
+    class Sessions:
+        async def create(self, session, org_id):
+            return {}
+
+    class Traces:
+        async def create(self, trace, org_id):
+            return {}
+
+    class Normalizer:
+        async def normalize(self, query, trace):
+            return QuerySpec(canonical_terms=["dose"])
+
+        def build_facets(self, query, query_spec, constraints, patient_id):
+            return []
+
+    class _Client:
+        backend = "foundry"
+        calls = []
+
+        async def call_llm(self, messages, json_schema=None, **kwargs):
+            self.calls.append(messages)
+            return {"content": '{"answer":"Review the chart dose.","evidence_used":[],"insufficient_evidence":false}'}
+
+    passage = CandidatePassage(
+        chunk_id="c1",
+        doc_id="d1",
+        source_type=SourceType.CPG,
+        text="Apixaban is recommended.",
+        section="Recommendations",
+        calibrated_score=0.9,
+    )
+    bundle = EvidenceBundle(
+        passages=[passage],
+        total_tokens=20,
+        cpg_count=1,
+        emr_count=0,
+        lit_count=0,
+        policy_decision=PolicyDecision(passed=True, action=PolicyAction.ACCEPT, reason="Evidence is sufficient."),
+    )
+
+    async def _retrieve(**kwargs):
+        kwargs["trace"].retrieval_query = "Which dose?\n\nPatient retrieval context:\nASA 100mg daily"
+        return bundle, type("Check", (), {"iteration": 0})()
+
+    client = _Client()
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.TWO_STAGE
+    )
+    orchestrator.session_repo = Sessions()
+    orchestrator.trace_repo = Traces()
+    orchestrator.normalizer = Normalizer()
+    orchestrator.synthesis_agent = SynthesisAgent(client)
+    orchestrator._retrieve_with_sufficiency = _retrieve
+    asyncio.run(orchestrator.chat(query="Which dose?", user_id="u1", org_id="org1", patient_id="pt-1"))
+    user = client.calls[0][1]["content"]
+    assert "Patient chart:" in user
+    assert "ASA 100mg daily" in user
+    assert "Cite only a chunk_id from the evidence." in user
+    assert user.index("ASA 100mg daily") < user.index("Evidence:")
+
+
+def test_the_specialist_sees_the_patient_chart():
+    import asyncio
+
+    from app.schemas.agents import AgentClaimBatch
+
+    seen = []
+
+    class Agent:
+        async def explore(self, query, passages, facets, patient_id=None):
+            seen.append(query)
+            return AgentClaimBatch(agent_id="emr", claims=[])
+
+    class Charts:
+        async def get_by_patient_id(self, patient_id, org_id, **_kwargs):
+            return [{"source_type": "EMR", "text": "ASA 100mg daily"}]
+
+    orchestrator = MedSwinOrchestrator(
+        embedding_client=FakeEmbeddingClient(), reranker_client=None, pipeline=PipelineId.FULL
+    )
+    orchestrator.chunk_repo = Charts()
+    orchestrator.retriever = FakeRetriever()
+    for name in ("emr_agent", "guideline_agent", "safety_agent", "quality_agent", "critic_agent"):
+        setattr(orchestrator, name, Agent())
+    trace = AuditTrace(trace_id="t", session_id="s", user_id="u", org_id="org", query="Which dose?")
+    asyncio.run(
+        orchestrator._retrieve_with_sufficiency(
+            "Which dose?",
+            QuerySpec(canonical_terms=["dose"]),
+            "org",
+            "pt-1",
+            {},
+            trace,
+        )
+    )
+    assert seen
+    assert all("Patient chart:" in query for query in seen)
+    assert all("ASA 100mg daily" in query for query in seen)
+
