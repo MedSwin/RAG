@@ -165,6 +165,40 @@ def test_a_chart_order_to_continue_warfarin_conflicts_with_the_warning():
     assert caution[0].chunk_id_b == PATIENT_CHART_ID
 
 
+def test_a_chart_continuation_qualifies_against_the_same_drug():
+    caution = _entry(
+        "q",
+        "guideline_concordance",
+        "Use warfarin with caution.",
+        EvidencePolarity.QUALIFIES,
+        grade=0.95,
+    )
+    other = _entry(
+        "aq",
+        "guideline_concordance",
+        "Use apixaban with caution.",
+        EvidencePolarity.QUALIFIES,
+        grade=0.95,
+    )
+    pairs = chart_contradictions("Continue warfarin.", [caution, other])
+    assert len(pairs) == 1
+    assert pairs[0].chunk_id_b == "q"
+    assert pairs[0].severity == "low"
+    assert "warfarin" in pairs[0].reason
+    assert "apixaban" not in pairs[0].reason
+    assert chart_contradictions("Continue monitoring warfarin.", [caution]) == []
+    warning = _entry(
+        "war",
+        "safety_contraindications",
+        "Avoid warfarin.",
+        EvidencePolarity.SAFETY,
+        grade=0.95,
+    )
+    both = chart_contradictions("Warfarin should be continued.", [warning, caution, other])
+    assert {pair.chunk_id_b for pair in both} == {"war", "q"}
+    assert {pair.severity for pair in both} == {"high", "low"}
+
+
 def test_do_not_discontinue_warfarin_still_conflicts_with_the_warfarin_warning():
     warning = _entry(
         "war",

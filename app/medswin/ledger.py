@@ -801,12 +801,18 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
             if entry.chunk_id == PATIENT_CHART_ID:
                 continue
             for claim in entry.claims:
-                if claim.polarity not in {EvidencePolarity.SAFETY, EvidencePolarity.CONTRADICTS}:
+                if claim.polarity == EvidencePolarity.QUALIFIES:
+                    severity = "low"
+                    base = "Same-drug caution qualifies this recommendation."
+                elif claim.polarity in {EvidencePolarity.SAFETY, EvidencePolarity.CONTRADICTS}:
+                    severity = "high" if entry.evidence_grade.score >= 0.80 else "medium"
+                    base = "Same-drug safety warning conflicts with this recommendation."
+                else:
                     continue
                 conflict_text = _conflict_text(entry, claim)
                 if not intervention_tokens(conflict_text) or not same_intervention(continuation, conflict_text):
                     continue
-                key = (claim.facet, entry.chunk_id)
+                key = (claim.facet, entry.chunk_id, severity)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -816,11 +822,8 @@ def chart_contradictions(chart: str, ledger: List[EvidenceLedgerEntry]) -> List[
                         facet=claim.facet,
                         chunk_id_a=PATIENT_CHART_ID,
                         chunk_id_b=entry.chunk_id,
-                        severity="high" if entry.evidence_grade.score >= 0.80 else "medium",
-                        reason=(
-                            f"Chart continuation: {span} | "
-                            f"{_reason_with_drug('Same-drug safety warning conflicts with this recommendation.', continuation, conflict_text)}"
-                        ),
+                        severity=severity,
+                        reason=f"Chart continuation: {span} | {_reason_with_drug(base, continuation, conflict_text)}",
                         grade_a=0.0,
                         grade_b=entry.evidence_grade.score,
                     )
