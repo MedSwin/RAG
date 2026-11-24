@@ -221,7 +221,12 @@ class LexicalRetriever:
                 if nearby[0] < anchor:
                     begin = nearby[0]
                 end = nearby[-1] + 1
+                spans.append((begin, end))
+                continue
             spans.append((begin, end))
+            later = [index for index in drug_at if anchor < index <= anchor + 12]
+            if later:
+                spans.append((later[0], later[0] + 1))
         merged = []
         for begin, end in spans:
             if merged and begin <= merged[-1][1]:
