@@ -521,6 +521,42 @@ def test_a_fifth_short_caution_stays_in_the_local_passage(monkeypatch):
         assert f"avoid {drug}." in lowered
 
 
+def test_a_later_drug_stays_when_repeated_cautions_fill_the_local_passage(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_MODE", False)
+    monkeypatch.setattr(settings, "GENERATION_BACKEND", None)
+    monkeypatch.delenv("GENERATION_BACKEND", raising=False)
+    monkeypatch.delenv("AGENT_PASSAGE_LIMIT", raising=False)
+    monkeypatch.delenv("AGENT_PASSAGE_MAX_CHARS", raising=False)
+    body = "Avoid warfarin. " + ("monitoring plan details " * 40)
+    passages = [
+        _passage(f"c-{index}", SourceType.EMR, body, calibrated_score=0.2)
+        for index in range(12)
+    ]
+    passages.append(_passage("apix", SourceType.EMR, "Avoid apixaban.", calibrated_score=0.1))
+    rendered = passage_context(passages)
+    lowered = rendered.lower()
+    assert len(rendered) <= 1400
+    assert "avoid warfarin." in lowered
+    assert "avoid apixaban." in lowered
+
+
+def test_a_later_drug_stays_when_repeated_cautions_fill_the_local_answer():
+    from app.agents.synthesis import _bounded_local_evidence
+
+    body = "Avoid warfarin. " + ("monitoring plan details " * 40)
+    passages = [
+        _passage(f"c-{index}", SourceType.EMR, body, calibrated_score=0.2)
+        for index in range(12)
+    ]
+    passages.append(_passage("apix", SourceType.EMR, "Avoid apixaban.", calibrated_score=0.1))
+    evidence, shown = _bounded_local_evidence(passages)
+    lowered = evidence.lower()
+    assert len(evidence) <= 2800
+    assert "avoid warfarin." in lowered
+    assert "avoid apixaban." in lowered
+    assert "apix" in shown
+
+
 def test_a_later_drug_stays_when_earlier_cautions_are_long(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_MODE", False)
     monkeypatch.setattr(settings, "GENERATION_BACKEND", None)

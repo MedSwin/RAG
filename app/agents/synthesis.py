@@ -5,7 +5,12 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Sequence
 
-from app.agents.base import _caution_head, _is_prompt_caution, prioritize_passages
+from app.agents.base import (
+    _caution_head,
+    _is_prompt_caution,
+    _make_room_for_new_drug,
+    prioritize_passages,
+)
 from app.schemas.evidence import AnswerArtifact, AnswerProvenance, CandidatePassage, EvidenceBundle
 from app.schemas.facets import FacetCoverage
 from app.services.adapters.llm import LLMClient
@@ -39,9 +44,13 @@ def _bounded_local_evidence(passages: Sequence[CandidatePassage]) -> tuple[str, 
         return "\n\n".join(f"[{chunk_id}] {body}" for chunk_id, body, _caution in items)
 
     for passage in cautions + others:
+        caution = _is_prompt_caution(passage)
+        if caution:
+            parts = _make_room_for_new_drug(
+                parts, lambda item: item[1], passage.text or "", len(parts) >= 12
+            )
         if len(parts) >= 12:
             break
-        caution = _is_prompt_caution(passage)
         if len(parts) >= 6 and not caution:
             break
         body = lead_with_caution(redact_phi_text(passage.text or ""))[:450]

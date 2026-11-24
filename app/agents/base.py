@@ -146,6 +146,40 @@ def _caution_head(text: str) -> str:
     return span or (text or "")
 
 
+def _text_drugs(text: str) -> set:
+    from app.medswin.ledger import intervention_tokens
+
+    return set(intervention_tokens(text or ""))
+
+
+def _drop_repeated_drug_parts(parts: List[tuple], text_of) -> List[tuple]:
+    """Keep the first passage for a drug. Drop a later copy of that drug."""
+    kept: List[tuple] = []
+    seen: set = set()
+    for item in parts:
+        drugs = _text_drugs(text_of(item))
+        if drugs and drugs <= seen:
+            continue
+        kept.append(item)
+        seen |= drugs
+    return kept
+
+
+def _make_room_for_new_drug(parts: List[tuple], text_of, passage_text: str, full: bool) -> List[tuple]:
+    """Drop a repeated drug when a new drug needs a prompt slot."""
+    if not full:
+        return parts
+    novel = _text_drugs(passage_text)
+    if not novel:
+        return parts
+    shown: set = set()
+    for item in parts:
+        shown |= _text_drugs(text_of(item))
+    if novel <= shown:
+        return parts
+    return _drop_repeated_drug_parts(parts, text_of)
+
+
 def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
     """Render bounded specialist context.
 
@@ -181,9 +215,13 @@ def passage_context(passages: List[CandidatePassage], limit: int = 12) -> str:
         return "\n\n".join(f"{header}\n{body}" for header, body, _caution in items)
 
     for passage in selected:
+        caution = _is_prompt_caution(passage)
+        if caution:
+            parts = _make_room_for_new_drug(
+                parts, lambda item: item[1], passage.text or "", len(parts) >= limit
+            )
         if len(parts) >= limit:
             break
-        caution = _is_prompt_caution(passage)
         if len(parts) >= configured_limit and not (compact and caution):
             break
         header = f"[{passage.chunk_id}|{passage.source_type.value}|doc={passage.doc_id}]"
