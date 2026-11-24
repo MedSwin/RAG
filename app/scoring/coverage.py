@@ -214,7 +214,7 @@ _BENIGN_DO_NOT = re.compile(
 )
 _QUALIFY = re.compile(r"\b(?:unless|except|cautions?|precautions?|monitor)\b", re.I)
 _NAMED_SAFETY = re.compile(
-    r"\b(?:allerg(?:y|ic|ies)|anaphylaxis|anaphylactic|hypersensitivity|adverse|toxicity|interaction|interacts)\b",
+    r"\b(?:allerg(?:y|ic|ies)|anaphylaxis|anaphylactic|hypersensitivity|adverse|toxicity|interactions?|interacts?|intoleran(?:t|ce))\b",
     re.I,
 )
 _SAFETY_LIST = re.compile(r"^\s+list\b", re.I)

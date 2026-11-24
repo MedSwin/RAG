@@ -960,6 +960,55 @@ def test_a_recommendation_that_cannot_use_warfarin_does_not_conflict_with_that_w
     assert all(pair.chunk_id_b != "war" for pair in blocked)
 
 
+def test_a_named_intolerance_conflicts_with_the_same_drug_order():
+    from app.medswin.normalize import QueryNormalizer
+
+    facets = QueryNormalizer.build_facets("Which dose?", QuerySpec(canonical_terms=["dose"]))
+
+    def passage(chunk_id: str, text: str, source: SourceType = SourceType.SAFETY) -> CandidatePassage:
+        return CandidatePassage(
+            chunk_id=chunk_id,
+            doc_id=chunk_id,
+            source_type=source,
+            text=text,
+            section="Safety",
+            calibrated_score=0.90,
+            evidence_grade_score=0.95,
+        )
+
+    def pairs_for(note: str, other: str):
+        return detect_contradictions(
+            build_retrieval_ledger(
+                [passage("note", note), passage("other", other, SourceType.CPG)],
+                facets,
+            )
+        )
+
+    for note in (
+        "Intolerant of warfarin.",
+        "Warfarin intolerance.",
+        "The patient is intolerant to warfarin.",
+        "Warfarin and aspirin interact.",
+    ):
+        pairs = pairs_for(note, "Warfarin is recommended.")
+        assert len(pairs) == 1, note
+        assert pairs[0].severity == "high"
+        assert "warfarin" in pairs[0].reason
+        assert "apixaban" not in pairs[0].reason
+    aspirin = pairs_for("Warfarin and aspirin interact.", "Aspirin is recommended.")
+    assert len(aspirin) == 1
+    assert "aspirin" in aspirin[0].reason
+    assert "warfarin" not in aspirin[0].reason
+    for note in (
+        "Not intolerant of warfarin.",
+        "No warfarin intolerance.",
+        "No known drug allergies.",
+        "Sensitive to warfarin.",
+        "Increased bleeding on warfarin.",
+    ):
+        assert pairs_for(note, "Warfarin is recommended.") == [], note
+
+
 def test_a_named_allergy_conflicts_with_the_same_drug_order():
     from app.medswin.normalize import QueryNormalizer
 
