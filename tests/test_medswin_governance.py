@@ -24,6 +24,49 @@ def test_recursive_phi_redaction_and_cds_boundary():
     assert "does not establish a final diagnosis" in answer
 
 
+def test_a_stored_trace_redacts_free_text_and_keeps_ids(monkeypatch):
+    import asyncio
+
+    from app.repositories.traces import TraceRepository
+    from app.schemas.traces import AuditTrace
+
+    class _Store:
+        def __init__(self):
+            self.saved = None
+
+        async def insert_one(self, data):
+            self.saved = data
+
+            class _Result:
+                inserted_id = "row-1"
+
+            return _Result()
+
+    monkeypatch.setattr("app.repositories.traces.settings.LOG_REDACT_PHI", True)
+    store = _Store()
+    repo = TraceRepository()
+    repo._db = { "traces": store }
+    trace = AuditTrace(
+        trace_id="trace-1",
+        session_id="sess-1",
+        user_id="dr-chen",
+        org_id="org-a",
+        patient_id="pt-1",
+        query="Call the ward at 555-234-5678 about MRN: ABCD99",
+    )
+    asyncio.run(repo.create(trace, "org-a"))
+    assert store.saved["trace_id"] == "trace-1"
+    assert store.saved["patient_id"] == "pt-1"
+    assert "555-234-5678" not in store.saved["query"]
+    assert "ABCD99" not in store.saved["query"]
+    assert "[REDACTED_PHONE]" in store.saved["query"]
+    monkeypatch.setattr("app.repositories.traces.settings.LOG_REDACT_PHI", False)
+    open_store = _Store()
+    repo._db = {"traces": open_store}
+    asyncio.run(repo.create(trace, "org-a"))
+    assert "555-234-5678" in open_store.saved["query"]
+
+
 def test_citation_contains_provenance_and_policy_metadata():
     passage = CandidatePassage(
         chunk_id="c1",

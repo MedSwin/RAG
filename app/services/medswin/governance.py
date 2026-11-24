@@ -33,6 +33,37 @@ def redact_phi_text(text: str) -> str:
     return redacted
 
 
+_TRACE_IDENTITY_KEYS = {
+    "created_at",
+    "completed_at",
+    "timestamp",
+    "trace_id",
+    "session_id",
+    "chunk_id",
+    "doc_id",
+    "org_id",
+    "user_id",
+    "patient_id",
+}
+
+
+def redact_stored_trace(payload: Any) -> Any:
+    """Redact free text in a stored trace. Keep ids and timestamps."""
+    return _redact_stored(payload, None)
+
+
+def _redact_stored(payload: Any, key: str | None) -> Any:
+    if key in _TRACE_IDENTITY_KEYS:
+        return payload
+    if isinstance(payload, str):
+        return redact_phi_text(payload)
+    if isinstance(payload, list):
+        return [_redact_stored(item, None) for item in payload]
+    if isinstance(payload, dict):
+        return {item_key: _redact_stored(value, item_key) for item_key, value in payload.items()}
+    return payload
+
+
 def redact_phi_payload(payload: Any) -> Any:
     """Recursively redact strings inside JSON-like trace payloads."""
     if isinstance(payload, str):

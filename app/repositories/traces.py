@@ -1,8 +1,10 @@
 """Trace repository with org-aware partitioning."""
 
 from typing import List, Optional, Dict, Any
+from app.core.config import settings
 from app.repositories.base import BaseRepository
 from app.models.medswin import AuditTrace
+from app.services.medswin.governance import redact_stored_trace
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,8 @@ class TraceRepository(BaseRepository):
         """Create a trace."""
         data = trace.model_dump()
         data = self._ensure_org_id(data, org_id)
+        if settings.LOG_REDACT_PHI:
+            data = redact_stored_trace(data)
         result = await self.collection.insert_one(data)
         return {"trace_id": trace.trace_id, "inserted_id": str(result.inserted_id)}
     
